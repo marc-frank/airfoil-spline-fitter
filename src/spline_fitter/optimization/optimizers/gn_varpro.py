@@ -148,6 +148,8 @@ class GNVarProOptimizer(AlgebraicOptimizer):
             initial_parameters=opt_config.custom_parameters,
             max_nfev=self.config.max_nfev or max_iters,
             max_points_per_section=opt_config.max_points_per_section,
+            knot_placement=opt_config.knot_placement,
+            grow=opt_config.grow_control_points,
             tolerance=self.config.tolerance,
             exact_jacobian=self.config.use_exact_jacobian,
             verbose=self.config.verbose,
@@ -183,6 +185,9 @@ class GNVarProOptimizer(AlgebraicOptimizer):
             regularization=self.config.regularization,
             initial_parameters=opt_config.custom_parameters,
             max_points_per_section=opt_config.max_points_per_section,
+            knot_placement=opt_config.knot_placement,
+            initial_control_points=(None if opt_config.grow_control_points
+                                    else spline_config.num_control_points),
             callback=on_refit,
         )
         return self._raw(result, result.max_deviation, max(refits, 1))

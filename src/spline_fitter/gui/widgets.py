@@ -308,6 +308,12 @@ class SweepableSpinBox(QWidget):
         self._btn_sweep.setChecked(False)
         self._on_toggle_sweep(False)
 
+    def set_sweep_allowed(self, allowed: bool) -> None:
+        """Enable or disable the sweep toggle, leaving sweep mode if needed."""
+        if not allowed and self._sweep_active:
+            self.stop_sweep()
+        self._btn_sweep.setEnabled(allowed)
+
     @property
     def is_sweep_active(self) -> bool:
         return self._sweep_active

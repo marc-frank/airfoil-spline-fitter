@@ -155,6 +155,8 @@ def fit(
     exact_jacobian: bool = True,
     verbose: int = 0,
     callback: Optional[Callback] = None,
+    knot_placement: str = "uniform",
+    grow: bool = False,
 ) -> FitResult:
     """Least-squares fit of a chain of clamped B-spline curves to ordered points.
 
@@ -200,6 +202,16 @@ def fit(
             ``callback(control_points, rms_error)`` with one control-point array
             per section. Return True to stop; the result then holds the last
             evaluated state and ``success`` is False.
+        knot_placement: ``"uniform"`` keeps the knots where they start
+            (evenly spaced with ``num_control_points``). ``"free"`` then moves
+            the interior knots to where they reduce the error most
+            (:func:`~bspline_varpro.tolerance.polish_knots`; skipped for
+            subsampled dense data).
+        grow: Start from the fewest control points the end conditions allow
+            and add knots where the fit is worst until each section has its
+            count (:func:`~bspline_varpro.tolerance.grow_to_counts`). With
+            uniform placement the knots are respaced evenly after each step.
+            Needs ``num_control_points``.
 
     Returns:
         :class:`FitResult`.
@@ -223,6 +235,10 @@ def fit(
         raise ValueError("Smoothing weight must be finite and nonnegative.")
     if max_nfev < 1:
         raise ValueError("max_nfev must be at least 1.")
+    if knot_placement not in ("uniform", "free"):
+        raise ValueError("knot_placement must be 'uniform' or 'free'.")
+    if grow and knots is not None:
+        raise ValueError("Growing the control-point count needs num_control_points, not knots.")
 
     if initial_parameters is None:
         t_sections = [centripetal_parameters(sec) for sec in sections]
@@ -231,14 +247,35 @@ def fit(
 
     options = ChainOptions(continuity, fix_junctions, fix_ends, start_tangent, end_tangent,
                            smoothing, regularization)
-    if max_points_per_section is not None and any(len(s) > max_points_per_section for s in sections):
-        if max_points_per_section < 2:
-            raise ValueError("max_points_per_section must be at least 2.")
+    if max_points_per_section is not None and max_points_per_section < 2:
+        raise ValueError("max_points_per_section must be at least 2.")
+    dense = max_points_per_section is not None and any(len(s) > max_points_per_section for s in sections)
+    if grow:
+        from .tolerance import grow_to_counts
+        result = grow_to_counts(sections, counts, degree, options, t_sections, initial_theta,
+                                max_nfev, max_points_per_section, callback, knot_placement)
+    elif dense:
         from .tolerance import fit_subsampled
         result = fit_subsampled(sections, knot_vectors, degree, options, t_sections, initial_theta,
                                 max_nfev, max_points_per_section, callback)
-        result.options = options
-        return result
+    else:
+        result = _fit_once(sections, knot_vectors, degree, options, t_sections, initial_theta,
+                           max_nfev, tolerance, exact_jacobian, verbose, callback)
+    result.options = options
+    if knot_placement == "free" and not grow and not dense and result.message != "Stopped by callback.":
+        from .tolerance import polish_knots
+        polished = polish_knots(sections, result, options)
+        if polished.rms_error <= result.rms_error:
+            # Moving the knots only refines a converged fit: keep its status.
+            polished.nfev += result.nfev
+            polished.success, polished.message = result.success, result.message
+            polished.options = options
+            result = polished
+    return result
+
+
+def _fit_once(sections, knot_vectors, degree, options: ChainOptions, t_sections, initial_theta,
+              max_nfev, tolerance, exact_jacobian, verbose, callback) -> FitResult:
     problem = options.problem(sections, knot_vectors, degree)
     theta0 = problem.theta
     if initial_theta is not None:
@@ -251,7 +288,6 @@ def fit(
         result = solve_with_continuation(problem, options, t_sections, max_nfev=max_nfev,
                                          tolerance=tolerance, exact_jacobian=exact_jacobian,
                                          verbose=verbose, callback=callback)
-    result.options = options
     return result
 
 

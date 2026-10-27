@@ -104,3 +104,57 @@ def test_no_remaining_knot_can_be_removed():
 def test_rejects_invalid_tolerance():
     with pytest.raises(ValueError, match="positive"):
         bv.fit_to_tolerance(naca_sections(21), 0.0)
+
+
+def test_uniform_knot_placement_meets_tolerance_with_even_knots():
+    sections = naca_sections(61)
+    result = bv.fit_to_tolerance(sections, 1e-5, 5, knot_placement="uniform")
+    assert result.success and result.max_deviation <= 1e-5
+    for knots, n in zip(result.knots, result.num_control_points):
+        np.testing.assert_allclose(knots, bv.open_uniform_knots(5, n))
+    for s, n in enumerate(result.num_control_points):
+        if n > 6:  # one fewer uniform control point must miss the tolerance
+            knots = list(result.knots)
+            knots[s] = bv.open_uniform_knots(5, n - 1)
+            fewer = bv.fit(sections, degree=5, knots=knots, continuity="G2", smoothing=1e-7,
+                           initial_parameters=result.parameters, max_nfev=200)
+            assert dg.max_deviation(sections, fewer.curves()) > 1e-5
+
+
+def test_fixed_count_placement_and_growth():
+    sections = naca_sections(61, code="2412")
+
+    def deviation(result):
+        return dg.max_deviation(sections, result.curves())
+
+    uniform = bv.fit(sections, 10, 5, continuity="G2", max_nfev=300)
+    free = bv.fit(sections, 10, 5, continuity="G2", max_nfev=300, knot_placement="free")
+    grown_free = bv.fit(sections, [10, 9], 5, continuity="G2", max_nfev=300,
+                        knot_placement="free", grow=True)
+    grown_uniform = bv.fit(sections, [10, 9], 5, continuity="G2", max_nfev=300, grow=True)
+    assert free.num_control_points == [10, 10]
+    assert grown_free.num_control_points == grown_uniform.num_control_points == [10, 9]
+    assert deviation(free) < 0.5 * deviation(uniform)  # the knots really move
+    assert deviation(grown_free) < deviation(uniform)
+    for knots, n in zip(grown_uniform.knots, [10, 9]):
+        np.testing.assert_allclose(knots, bv.open_uniform_knots(5, n))
+    for k in free.knots + grown_free.knots:
+        bv.validate_knots(k, 5)
+
+
+def test_tolerance_fit_can_start_from_a_control_point_count():
+    sections = naca_sections(61)
+    result = bv.fit_to_tolerance(sections, 1e-4, 5, initial_control_points=9, remove_knots=False)
+    assert result.success
+    assert min(result.num_control_points) >= 9
+    assert result.history[0]["control_points"] == [9, 9]
+
+
+def test_knot_placement_is_validated():
+    sections = naca_sections(21)
+    with pytest.raises(ValueError, match="knot_placement"):
+        bv.fit_to_tolerance(sections, 1e-4, knot_placement="adaptive")
+    with pytest.raises(ValueError, match="knot_placement"):
+        bv.fit(sections, 8, 5, knot_placement="adaptive")
+    with pytest.raises(ValueError, match="num_control_points"):
+        bv.fit(sections, degree=5, knots=bv.open_uniform_knots(5, 8), grow=True)

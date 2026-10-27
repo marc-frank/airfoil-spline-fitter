@@ -14,7 +14,11 @@ phi' = alpha > 0, phi'' = beta, phi''' = gamma (Faa di Bruno)::
 
 The shape parameters (alpha, beta, gamma) enter C linearly per coordinate, so
 the constraints remain the same for every coordinate and the fit stays separable.
-They are optimized as extra outer variables, with alpha = softplus(a) > 0.
+They are optimized as extra outer variables. alpha is kept within a factor
+ALPHA_RANGE of its natural value, the length ratio of the two sections:
+alpha = ratio * exp(R tanh(a / R)) with R = ln(ALPHA_RANGE). Unbounded, alpha
+can collapse towards 0, which stops the ending section dead at the junction
+and makes the join degenerate (any curvature satisfies "G2" at zero speed).
 
 Optional tangent directions fix a derivative up to a positive magnitude,
 ``C'(u) = tau * direction`` with tau = softplus(raw), which only moves d.
@@ -30,6 +34,22 @@ import numpy as np
 from scipy.interpolate import BSpline
 
 from .reparam import inverse_softplus, sigmoid, softplus
+
+ALPHA_RANGE = 10.0
+_LOG_RANGE = np.log(ALPHA_RANGE)
+
+
+def _alpha(a: float, ratio: float) -> Tuple[float, float]:
+    """``(alpha, d alpha / d a)`` for the bounded speed ratio of a geometric junction."""
+    x = np.tanh(a / _LOG_RANGE)
+    alpha = ratio * float(np.exp(_LOG_RANGE * x))
+    return alpha, alpha * (1.0 - x * x)
+
+
+def _alpha_parameter(alpha: float, ratio: float) -> float:
+    """Inverse of :func:`_alpha` (clipped just inside the allowed range)."""
+    x = np.clip(np.log(alpha / ratio) / _LOG_RANGE, -0.999, 0.999)
+    return float(_LOG_RANGE * np.arctanh(x))
 
 
 def end_derivative_coefficients(
@@ -208,6 +228,9 @@ class ChainConstraints:
             self._coef[key] = end_derivative_coefficients(self.knots[section], self.degree, order)
         return self._coef[key]
 
+    def _length_ratio(self, junction: int) -> float:
+        return self._section_length(junction) / self._section_length(junction + 1)
+
     def _section_length(self, s: int) -> float:
         return float(np.sum(np.linalg.norm(np.diff(self.sections[s], axis=0), axis=1))) or 1.0
 
@@ -216,8 +239,7 @@ class ChainConstraints:
         theta = np.zeros(self.num_params)
         for i, (kind, index, slot) in enumerate(self._layout):
             if kind == "shape" and slot == "alpha":
-                ratio = self._section_length(index) / self._section_length(index + 1)
-                theta[i] = inverse_softplus(np.array(ratio))
+                theta[i] = 0.0  # alpha = the section length ratio
             elif kind == "tangent":
                 theta[i] = inverse_softplus(np.array(self._section_length(index)))
         return theta
@@ -226,11 +248,11 @@ class ChainConstraints:
         """Theta of the parametric join (alpha = 1, beta = gamma = 0) with given tangent magnitudes."""
         theta = np.zeros(self.num_params)
         tangents = iter(np.asarray(tangent_theta, dtype=np.float64))
-        for i, (kind, _, slot) in enumerate(self._layout):
+        for i, (kind, index, slot) in enumerate(self._layout):
             if kind == "tangent":
                 theta[i] = next(tangents)
             elif slot == "alpha":
-                theta[i] = inverse_softplus(np.array(1.0))
+                theta[i] = _alpha_parameter(1.0, self._length_ratio(index))
         return theta
 
     @property
@@ -243,7 +265,8 @@ class ChainConstraints:
         for i, (kind, index, slot) in enumerate(self._layout):
             if kind == "shape":
                 slot_index = ("alpha", "beta", "gamma").index(slot)
-                values[index][slot_index] = float(softplus(theta[i])) if slot == "alpha" else float(theta[i])
+                values[index][slot_index] = (_alpha(theta[i], self._length_ratio(index))[0]
+                                             if slot == "alpha" else float(theta[i]))
         return [tuple(v) for v in values]
 
     def build(
@@ -294,7 +317,7 @@ class ChainConstraints:
                 continue
             if jn.geometric:
                 ia = slots[("shape", j, "alpha")]
-                alpha, dalpha = float(softplus(theta[ia])), float(sigmoid(theta[ia]))
+                alpha, dalpha = _alpha(theta[ia], self._length_ratio(j))
                 ib = slots.get(("shape", j, "beta"))
                 ig = slots.get(("shape", j, "gamma"))
                 beta = theta[ib] if ib is not None else 0.0

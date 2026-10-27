@@ -449,7 +449,7 @@ class WindowLayoutMixin:
         self._seg_goal.addItem("Fixed count", userData=False)
         self._seg_goal.setItemToolTip(
             0,
-            "Find the fewest control points (with non-uniform knots) that keep\n"
+            "Find the fewest control points that keep\n"
             "every data point within the tolerance.",
         )
         self._seg_goal.setItemToolTip(1, "Fit the given number of control points per section.")
@@ -470,7 +470,28 @@ class WindowLayoutMixin:
         self._tolerance_row = _hbox(self._spin_tolerance, self._check_auto_tolerance)
         self._lbl_tolerance = _add_row(form, "Max deviation", self._tolerance_row)
 
-        # Control points (sweepable); shares the slot with the tolerance
+        # Knot placement and growth (VarPro, both goals)
+        self._combo_knot_placement = SegmentedControl()
+        self._combo_knot_placement.addItem("Free", userData="free")
+        self._combo_knot_placement.addItem("Uniform", userData="uniform")
+        self._combo_knot_placement.setItemToolTip(
+            0, "Knots move to where they reduce the error most.")
+        self._combo_knot_placement.setItemToolTip(
+            1, "Knots stay evenly spaced in the curve parameter.")
+        self._lbl_knot_placement = _add_row(form, "Knots", self._combo_knot_placement)
+
+        self._check_grow = QCheckBox("Add where the fit is worst")
+        self._check_grow.setChecked(True)
+        self._check_grow.setToolTip(
+            "On: start from the fewest control points and add them where the\n"
+            "fit is worst, refitting after each step.\n"
+            "Off: start from the Control pts setting. In tolerance mode the\n"
+            "count can still grow or shrink from there to meet the tolerance."
+        )
+        self._lbl_grow = _add_row(form, "Grow points", self._check_grow)
+
+        # Control points (sweepable); in tolerance mode only shown as the
+        # starting count when not growing from the fewest
         self._spin_ctrl = QSpinBox()
         self._spin_ctrl.setRange(2, 200)
         self._spin_ctrl.setValue(25)

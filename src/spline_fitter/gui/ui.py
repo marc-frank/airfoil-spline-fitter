@@ -102,17 +102,23 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
             for w in widgets:
                 w.setVisible(visible)
 
-        # Method: the tolerance and the control point count share one slot
-        show(is_gn_varpro, self._lbl_goal, self._seg_goal)
+        # Method: a tolerance replaces the control point count, except as the
+        # starting count when the points are not grown from the fewest
+        start_count = tolerance_mode and not self._check_grow.isChecked()
+        show(is_gn_varpro, self._lbl_goal, self._seg_goal,
+             self._lbl_knot_placement, self._combo_knot_placement,
+             self._lbl_grow, self._check_grow)
         show(tolerance_mode, self._lbl_tolerance, self._tolerance_row)
-        show(not tolerance_mode, self._lbl_ctrl, self._sweep_ctrl)
+        show(not tolerance_mode or start_count, self._lbl_ctrl, self._sweep_ctrl)
+        self._lbl_ctrl.setText("Start count" if start_count else "Control pts")
         self._spin_tolerance.setEnabled(tolerance_mode and not self._check_auto_tolerance.isChecked())
         self._check_auto_tolerance.setEnabled(tolerance_mode)
         if tolerance_mode:
             for sweep_box in (self._sweep_ctrl, self._sweep_smoothing_weight):
                 if sweep_box.is_sweep_active:
                     sweep_box.stop_sweep()
-        self._sweep_ctrl.setEnabled(not self._is_fitting and not tolerance_mode)
+        self._sweep_ctrl.setEnabled(not self._is_fitting and (not tolerance_mode or start_count))
+        self._sweep_ctrl.set_sweep_allowed(not tolerance_mode)
 
         # Curve: geometric continuity is VarPro only
         show(is_gn_varpro, self._lbl_cont_kind, self._combo_cont_kind)
@@ -180,6 +186,9 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
 
         # Goal (tolerance or fixed count)
         self._seg_goal.currentIndexChanged.connect(
+            lambda _: self._on_optimizer_changed(self._combo_opt.currentIndex())
+        )
+        self._check_grow.toggled.connect(
             lambda _: self._on_optimizer_changed(self._combo_opt.currentIndex())
         )
         self._check_auto_tolerance.toggled.connect(
@@ -294,6 +303,8 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
             max_points_per_section=(self._spin_subsample.value()
                                     if opt_type == OptimizerType.GN_VARPRO
                                     and self._check_subsample.isChecked() else None),
+            knot_placement=self._combo_knot_placement.currentData(),
+            grow_control_points=self._check_grow.isChecked(),
         )
 
     def _apply_run_config(self, cfg: SplineConfig, opt: OptimizationConfig) -> None:
@@ -308,6 +319,9 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
             self._check_auto_tolerance.setChecked(False)
             self._spin_tolerance.setValue(opt.tolerance)
         self._check_subsample.setChecked(opt.max_points_per_section is not None)
+        self._combo_knot_placement.setCurrentIndex(
+            max(self._combo_knot_placement.findData(opt.knot_placement), 0))
+        self._check_grow.setChecked(opt.grow_control_points)
         if opt.max_points_per_section is not None:
             self._spin_subsample.setValue(opt.max_points_per_section)
 

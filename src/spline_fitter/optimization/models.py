@@ -469,6 +469,12 @@ class OptimizationConfig:
         max_points_per_section: VarPro LM only. Sections with more points are
             fitted on an evenly spaced subsample of this many points, then
             refined jointly on all points. None (default) uses every point.
+        knot_placement: VarPro LM only. "uniform" keeps knots evenly spaced;
+            "free" (default) moves them to where they reduce the error most.
+        grow_control_points: VarPro LM only. Start from the fewest control
+            points and add them where the fit is worst (default). If False,
+            start from the configured control-point count (in tolerance mode
+            it can still grow or shrink from there).
     """
     optimizer: OptimizerType = OptimizerType.DE
     metric: ErrorMetric = ErrorMetric.PARAMETRIC
@@ -482,6 +488,8 @@ class OptimizationConfig:
     custom_parameters: list[np.ndarray] | None = None
     tolerance: float | None = None
     max_points_per_section: int | None = None
+    knot_placement: str = "free"
+    grow_control_points: bool = True
 
     def __post_init__(self):
         if self.tolerance is not None and not self.tolerance > 0:
@@ -489,6 +497,8 @@ class OptimizationConfig:
         if self.max_points_per_section is not None and self.max_points_per_section < 2:
             raise ValueError(
                 f"max_points_per_section must be at least 2, got {self.max_points_per_section}")
+        if self.knot_placement not in ("uniform", "free"):
+            raise ValueError(f"knot_placement must be 'uniform' or 'free', got {self.knot_placement!r}")
 
     @property
     def random_seed(self) -> int | None:

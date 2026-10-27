@@ -80,7 +80,7 @@ def _spans(knots: np.ndarray, t: np.ndarray):
 
 
 def _new_knots(knots, t, dev, tol, min_span) -> List[float]:
-    """One knot per knot span that holds a point outside the tolerance."""
+    """One knot per knot span that holds a point outside the tolerance, worst span first."""
     breaks, index = _spans(knots, t)
     new = []
     for i in range(len(breaks) - 1):
@@ -95,8 +95,8 @@ def _new_knots(knots, t, dev, tol, min_span) -> List[float]:
         if not (np.any(ts < u) and np.any(ts > u)):
             u = float(np.median(ts))
         if u - a >= min_span and b - u >= min_span:
-            new.append(u)
-    return new
+            new.append((float(np.max(ds)), u))
+    return [u for _, u in sorted(new, reverse=True)]
 
 
 def _removal_order(knots, degree, t, dev, tol) -> List[float]:
@@ -207,6 +207,7 @@ def fit_to_tolerance(
     smoothing: float = 1e-7,
     regularization: float = 1e-12,
     initial_knots: Optional[Sequence[np.ndarray]] = None,
+    initial_control_points: Union[int, Sequence[int], None] = None,
     initial_parameters: Optional[Sequence[np.ndarray]] = None,
     max_control_points: Optional[int] = None,
     optimize_knots: bool = True,
@@ -215,6 +216,7 @@ def fit_to_tolerance(
     max_nfev: int = 200,
     max_iterations: int = 40,
     callback: Optional[ProgressCallback] = None,
+    knot_placement: str = "free",
 ) -> FitResult:
     """Fit a chain with few control points so every point lies within ``tolerance``.
 
@@ -227,6 +229,9 @@ def fit_to_tolerance(
             smoothing, regularization: As for :func:`fit`.
         initial_knots: Starting knot vectors per section (default: the fewest
             control points the end conditions allow).
+        initial_control_points: Instead of ``initial_knots``, start from this
+            many control points per section (an int or one per section) with
+            uniform knots, raised to the fewest the end conditions allow.
         initial_parameters: Starting data parameters per section.
         max_control_points: Upper limit per section.
         optimize_knots: Polish interior knot positions once the tolerance is met.
@@ -238,6 +243,11 @@ def fit_to_tolerance(
         max_iterations: Maximum insertion rounds.
         callback: ``callback(result, max_deviation)`` after every refit; return
             True to stop early (the last result is returned).
+        knot_placement: ``"free"`` inserts knots in the spans that miss the
+            tolerance, then moves them to where they reduce the error most and
+            removes the ones that are not needed. ``"uniform"`` keeps uniformly
+            spaced knots and only chooses the count per section
+            (``optimize_knots`` and ``remove_knots`` do not apply).
 
     Returns:
         :class:`FitResult` with ``max_deviation`` and a ``history`` of stages.
@@ -245,6 +255,9 @@ def fit_to_tolerance(
     """
     if not np.isfinite(tolerance) or tolerance <= 0:
         raise ValueError("Tolerance must be positive.")
+    if knot_placement not in ("free", "uniform"):
+        raise ValueError("knot_placement must be 'free' or 'uniform'.")
+    uniform = knot_placement == "uniform"
     sections = as_sections(points)
     _validate_sections(sections)
     options = ChainOptions(continuity, fix_junctions, fix_ends, start_tangent, end_tangent,
@@ -253,10 +266,16 @@ def fit_to_tolerance(
     start = End(fix_ends, None if start_tangent is None else tuple(start_tangent))
     end = End(fix_ends, None if end_tangent is None else tuple(end_tangent))
     need = minimum_control_points(junctions, degree, start, end)
-    if initial_knots is None:
-        knots = [open_uniform_knots(degree, n) for n in need]
-    else:
+    if initial_knots is not None:
         knots = [np.asarray(k, dtype=np.float64) for k in initial_knots]
+    elif initial_control_points is not None:
+        start_counts = ([int(initial_control_points)] * len(sections) if np.ndim(initial_control_points) == 0
+                        else [int(n) for n in initial_control_points])
+        if len(start_counts) != len(sections):
+            raise ValueError("Need one initial control-point count per section.")
+        knots = [open_uniform_knots(degree, max(n, m)) for n, m in zip(start_counts, need)]
+    else:
+        knots = [open_uniform_knots(degree, n) for n in need]
     limits = [min(len(sec) - 1, max_control_points or len(sec)) for sec in sections]
     if any(n > limit for n, limit in zip(need, limits)):
         raise ValueError("Sections have too few points for the requested end conditions.")
@@ -296,9 +315,14 @@ def fit_to_tolerance(
         for s in range(len(sections)):
             if np.max(devs[s]) <= tolerance:
                 continue
-            room = limits[s] - (len(knots[s]) - degree - 1)
+            count = len(knots[s]) - degree - 1
+            room = limits[s] - count
             new = _new_knots(knots[s], t_sections[s], devs[s], tolerance, min_span)[:max(room, 0)]
-            if new:
+            if uniform and room > 0:
+                # Grow by as many knots as free insertion would add, spaced uniformly.
+                knots[s] = open_uniform_knots(degree, count + max(len(new), 1))
+                inserted = True
+            elif new:
                 knots[s] = clamped_knots(degree, np.concatenate([interior_knots(knots[s], degree), new]))
                 inserted = True
         if not inserted:
@@ -306,6 +330,22 @@ def fit_to_tolerance(
                           "Tolerance not reached: no knot span can be refined further.")
     else:
         return finish(result, deviation, False, "Tolerance not reached within max_iterations.")
+
+    if uniform:
+        # Growth may overshoot: drop one uniform knot per section while the tolerance holds.
+        for s in range(len(sections)):
+            while len(result.knots[s]) - degree - 1 > need[s]:
+                trial_knots = list(result.knots)
+                trial_knots[s] = open_uniform_knots(degree, len(result.knots[s]) - degree - 2)
+                trial = _refit(sections, trial_knots, degree, options, result.parameters, result.theta,
+                               max_nfev, max_points_per_section)
+                trial_dev = _max_deviation(sections, trial)
+                if trial_dev > tolerance:
+                    break
+                result, deviation = trial, trial_dev
+                if record("remove", result, deviation):
+                    return finish(result, deviation, False, "Stopped by callback.")
+        return finish(result, deviation, True, f"Within tolerance {tolerance:g}.")
 
     dense = max_points_per_section is not None and any(len(s) > max_points_per_section for s in sections)
     polish = optimize_knots and not dense
@@ -354,3 +394,50 @@ def fit_to_tolerance(
                 record("polish", result, deviation)
 
     return finish(result, deviation, True, f"Within tolerance {tolerance:g}.")
+
+
+def grow_to_counts(sections, counts, degree, options: ChainOptions, t_sections, theta, max_nfev,
+                   max_points: Optional[int] = None, callback=None,
+                   knot_placement: str = "free") -> FitResult:
+    """Grow from the fewest control points to the given counts, refitting each step.
+
+    Each round adds one knot to every span whose largest deviation is at least
+    half the section's largest, worst span first, until each section has its
+    count. With ``"free"`` placement the knots go into those spans and are
+    finally moved to where they reduce the error most (unless subsampled);
+    with ``"uniform"`` the section is respaced evenly with the new count.
+    """
+    junctions = parse_junctions(options.continuity, len(sections) - 1, options.fix_junctions)
+    start = End(options.fix_ends, None if options.start_tangent is None else tuple(options.start_tangent))
+    end = End(options.fix_ends, None if options.end_tangent is None else tuple(options.end_tangent))
+    need = minimum_control_points(junctions, degree, start, end)
+    knots = [open_uniform_knots(degree, min(n, c)) for n, c in zip(need, counts)]
+    while True:
+        result = _refit(sections, knots, degree, options, t_sections, theta, max_nfev, max_points, callback)
+        if result.message == "Stopped by callback.":
+            return result
+        t_sections, theta = result.parameters, result.theta
+        missing = [c - (len(k) - degree - 1) for c, k in zip(counts, knots)]
+        if max(missing) <= 0:
+            break
+        devs = section_deviations(sections, result.curves())
+        inserted = False
+        for s, room in enumerate(missing):
+            if room <= 0:
+                continue
+            new = _new_knots(knots[s], t_sections[s], devs[s], 0.5 * float(np.max(devs[s])), 1e-4)[:room]
+            if knot_placement == "uniform":
+                knots[s] = open_uniform_knots(degree, len(knots[s]) - degree - 1 + max(len(new), 1))
+                inserted = True
+            elif new:
+                knots[s] = clamped_knots(degree, np.concatenate([interior_knots(knots[s], degree), new]))
+                inserted = True
+        if not inserted:
+            break
+    if knot_placement == "free" and (max_points is None or all(len(s) <= max_points for s in sections)):
+        polished = polish_knots(sections, result, options)
+        if polished.rms_error <= result.rms_error:
+            polished.nfev += result.nfev
+            polished.success, polished.message = result.success, result.message
+            result = polished
+    return result

@@ -40,7 +40,7 @@ from typing import List, Optional, Sequence, Tuple, Union
 import numpy as np
 from scipy.linalg import block_diag, lu_factor, lu_solve
 
-from .basis import basis_derivative_matrix, basis_matrix, bending_energy_matrix, validate_knots
+from .basis import basis_derivative_matrix, basis_matrix, bending_energy_matrix, matrix_root, validate_knots
 from .constraints import ChainConstraints, ContinuitySpec, End, parse_junctions
 
 
@@ -127,8 +127,7 @@ class VarProProblem:
         if smoothing > 0:
             self.bending_energy = block_diag(*[bending_energy_matrix(k, degree) for k in self.knots])
             penalty += smoothing * self.bending_energy
-        eigenvalues, eigenvectors = np.linalg.eigh(penalty)
-        self.penalty_root = np.sqrt(np.maximum(eigenvalues, 0.0))[:, None] * eigenvectors.T
+        self.penalty_root = matrix_root(penalty)
 
         self.junctions = parse_junctions(continuity, self.num_sections - 1, fix_junctions)
         self.constraints = ChainConstraints(self.sections, self.knots, degree, self.junctions, start, end)
