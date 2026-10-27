@@ -182,7 +182,7 @@ class FittingController:
                 return True
 
             # Get live preview mode: 0=Minimal, 1=Moderate, 2=Detailed
-            live_mode = w._slider_live.value()
+            live_mode = w._combo_live.currentIndex()
 
             # Check if optimizer uses direct control points (iterative algebraic)
             is_direct_cp = opt_config.optimizer.is_iterative_algebraic

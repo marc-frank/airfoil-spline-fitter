@@ -2,8 +2,8 @@
 Window Layout
 =============
 
-Widget construction for the main window: menu bar, side panel sections,
-plots, and the run controls.
+Widget construction for the main window: menu bar, sidebar sections,
+plots with their toolbars, and the run bar.
 """
 
 from __future__ import annotations
@@ -11,22 +11,26 @@ from __future__ import annotations
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
+    QAbstractSpinBox,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
-    QGroupBox,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QPushButton,
     QScrollArea,
-    QSlider,
+    QSizePolicy,
     QSpinBox,
     QSplitter,
+    QToolButton,
     QTreeWidget,
     QVBoxLayout,
     QWidget,
+    QWidgetAction,
 )
 
 from ..optimization.models import (
@@ -34,7 +38,48 @@ from ..optimization.models import (
     ErrorMetric,
     OptimizerType,
 )
-from .widgets import CollapsibleSection, SweepableDoubleSpinBox, SweepableSpinBox
+from .widgets import (
+    SIDEBAR_STYLE,
+    CollapsibleSection,
+    SegmentedControl,
+    SidebarSection,
+    SweepableDoubleSpinBox,
+    SweepableSpinBox,
+)
+
+# Width of the label column in every sidebar form, so fields line up
+# across sections.
+LABEL_WIDTH = 92
+
+
+def _form() -> QFormLayout:
+    """A sidebar form layout."""
+    form = QFormLayout()
+    form.setContentsMargins(0, 0, 0, 0)
+    form.setHorizontalSpacing(8)
+    form.setVerticalSpacing(6)
+    form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+    form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    return form
+
+
+def _add_row(form: QFormLayout, text: str, field) -> QLabel:
+    """Add a row with a fixed-width label and return the label."""
+    label = QLabel(text)
+    label.setFixedWidth(LABEL_WIDTH)
+    form.addRow(label, field)
+    return label
+
+
+def _hbox(*widgets, stretch_first: bool = True) -> QWidget:
+    """Put widgets side by side in one form field."""
+    row = QWidget()
+    lay = QHBoxLayout(row)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(6)
+    for i, w in enumerate(widgets):
+        lay.addWidget(w, stretch=1 if (i == 0 and stretch_first) else 0)
+    return row
 
 
 class WindowLayoutMixin:
@@ -54,45 +99,53 @@ class WindowLayoutMixin:
         # Menu bar
         self._build_menu_bar()
 
-        # Main horizontal splitter: [Controls] | [Plots] | [Explorer]
+        # Main horizontal splitter: [Sidebar] | [Plots] | [Explorer]
         self._main_splitter = QSplitter(Qt.Orientation.Horizontal, self)
 
-        # Left panel container (scroll area + fixed run controls)
-        left_container = QWidget(self)
-        left_container_layout = QVBoxLayout(left_container)
-        left_container_layout.setContentsMargins(0, 0, 0, 0)
-        left_container_layout.setSpacing(0)
+        # Sidebar: scrolling sections above a fixed run bar, in workflow
+        # order (data -> method -> curve -> advanced -> fit and results)
+        sidebar = QWidget(self)
+        sidebar.setObjectName("Sidebar")
+        sidebar.setStyleSheet(SIDEBAR_STYLE)
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        sidebar_layout.setSpacing(0)
 
-        # Scrollable area for controls
-        left_scroll = QScrollArea(self)
-        left_scroll.setWidgetResizable(True)
-        left_panel = QWidget()
-        left_scroll.setWidget(left_panel)
-        left_layout = QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(8, 8, 8, 8)
-        left_layout.setSpacing(4)
+        sidebar_scroll = QScrollArea(self)
+        sidebar_scroll.setWidgetResizable(True)
+        sidebar_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        sections = QWidget()
+        sections.setObjectName("Sidebar")
+        sidebar_scroll.setWidget(sections)
+        sections_layout = QVBoxLayout(sections)
+        sections_layout.setContentsMargins(0, 0, 0, 0)
+        sections_layout.setSpacing(0)
 
-        # File info bar (compact, always visible)
-        left_layout.addWidget(self._build_file_info())
+        sections_layout.addWidget(self._build_file_card())
+        sections_layout.addWidget(self._build_method_section())
+        sections_layout.addWidget(self._build_curve_section())
+        sections_layout.addWidget(self._build_advanced_section())
+        sections_layout.addStretch()
 
-        # Collapsible sections
-        left_layout.addWidget(self._build_curve_section())           # expanded
-        left_layout.addWidget(self._build_optimizer_section())       # expanded
-        left_layout.addWidget(self._build_regularization_section())  # collapsed
-        left_layout.addWidget(self._build_visualization_section())   # collapsed
-        left_layout.addStretch()
+        # Long item texts and wide spin box ranges must not widen the
+        # sidebar past its width: fields take the width the form gives them
+        for combo in sections.findChildren(QComboBox):
+            combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+            combo.setMinimumContentsLength(6)
+        for field in sections.findChildren((QComboBox, QAbstractSpinBox)):
+            field.setSizePolicy(QSizePolicy.Policy.Expanding, field.sizePolicy().verticalPolicy())
+            field.setMinimumWidth(70)
 
-        # Add scroll area to container
-        left_container_layout.addWidget(left_scroll, stretch=1)
-
-        # Fixed run controls at bottom (outside scroll area)
-        left_container_layout.addWidget(self._build_run_group())
+        sidebar_layout.addWidget(sidebar_scroll, stretch=1)
+        sidebar_layout.addWidget(self._build_run_bar())
 
         # Center panel: Plots
         center_panel = QWidget(self)
         center_layout = QVBoxLayout(center_panel)
 
-        # Main plot (airfoil visualization) — full width at top
+        # Main plot (airfoil visualization) with its display toolbar
+        center_layout.addLayout(self._build_plot_toolbar())
         self._plot = pg.PlotWidget(parent=center_panel)
         self._plot.showGrid(x=True, y=True, alpha=0.25)
         self._plot.getPlotItem().setAspectLocked(True, ratio=1)
@@ -135,10 +188,10 @@ class WindowLayoutMixin:
         explorer_panel = self._build_project_explorer()
 
         # Configure splitter
-        self._main_splitter.addWidget(left_container)
+        self._main_splitter.addWidget(sidebar)
         self._main_splitter.addWidget(center_panel)
         self._main_splitter.addWidget(explorer_panel)
-        left_container.setMinimumWidth(300)
+        sidebar.setMinimumWidth(300)
         explorer_panel.setMinimumWidth(0)
         self._main_splitter.setCollapsible(0, False)
         self._main_splitter.setCollapsible(1, False)
@@ -146,7 +199,7 @@ class WindowLayoutMixin:
         self._main_splitter.setStretchFactor(0, 0)
         self._main_splitter.setStretchFactor(1, 1)
         self._main_splitter.setStretchFactor(2, 0)
-        self._main_splitter.setSizes([360, 700, 280])
+        self._main_splitter.setSizes([330, 730, 280])
 
         self.setCentralWidget(self._main_splitter)
         self.statusBar().showMessage("Ready")
@@ -200,38 +253,100 @@ class WindowLayoutMixin:
             lambda: self.statusBar().showMessage("Airfoil Spline Fitter v1.0")
         )
 
-    # -- File Info Bar -----------------------------------------------------
+    # -- File Card ---------------------------------------------------------
 
-    def _build_file_info(self) -> QWidget:
-        """Build the compact file-info area at the top of the left panel."""
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        layout.setContentsMargins(4, 4, 4, 8)
-        layout.setSpacing(4)
+    def _build_file_card(self) -> QWidget:
+        """Build the loaded-file summary at the top of the sidebar."""
+        card = SidebarSection("Data")
+        row = QHBoxLayout()
+        row.setSpacing(8)
 
-        self._lbl_path = QLabel("No file loaded \u2014 use File \u2192 Open Airfoil")
-        self._lbl_path.setWordWrap(True)
-        self._lbl_path.setStyleSheet("font-size: 11px; color: gray;")
-        layout.addWidget(self._lbl_path)
+        text = QVBoxLayout()
+        text.setSpacing(0)
+        self._lbl_file_name = QLabel("No airfoil loaded")
+        self._lbl_file_name.setObjectName("FileName")
+        text.addWidget(self._lbl_file_name)
+        self._lbl_path = QLabel("Open a .dat file or a project")
+        self._lbl_path.setObjectName("Muted")
+        text.addWidget(self._lbl_path)
+        row.addLayout(text, stretch=1)
 
-        save_row = QHBoxLayout()
-        save_row.setSpacing(4)
-        self._btn_save_dat = QPushButton("Save Fitted")
-        self._btn_save_dat.setEnabled(False)
-        self._btn_save_dat.setToolTip("Save fitted airfoil coordinates (.dat)")
-        save_row.addWidget(self._btn_save_dat)
-        self._btn_save_spline = QPushButton("Save Spline")
-        self._btn_save_spline.setEnabled(False)
-        self._btn_save_spline.setToolTip("Save spline control points and knots (.spline.dat)")
-        save_row.addWidget(self._btn_save_spline)
-        self._btn_export_cad = QPushButton("Export CAD")
-        self._btn_export_cad.setEnabled(False)
-        self._btn_export_cad.setToolTip("Export the exact B-spline curves as STEP, IGES or DXF")
-        save_row.addWidget(self._btn_export_cad)
-        save_row.addStretch()
-        layout.addLayout(save_row)
+        self._btn_open = QPushButton("Open\u2026")
+        self._btn_open.setToolTip("Open an airfoil coordinate file (Ctrl+O)")
+        row.addWidget(self._btn_open, alignment=Qt.AlignmentFlag.AlignVCenter)
 
-        return widget
+        card.add_layout(row)
+        return card
+
+    # -- Plot Toolbar ------------------------------------------------------
+
+    def _build_plot_toolbar(self) -> QHBoxLayout:
+        """Build the display toolbar above the main plot."""
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(6)
+        toolbar.setContentsMargins(0, 0, 0, 0)
+
+        self._check_knots = QToolButton()
+        self._check_knots.setText("Knots")
+        self._check_knots.setCheckable(True)
+        self._check_knots.setToolTip("Mark the curve points at the knots of every section.")
+        toolbar.addWidget(self._check_knots)
+
+        # Curvature comb: toggle, with its settings in the drop-down
+        self._check_comb = QToolButton()
+        self._check_comb.setText("Curvature comb")
+        self._check_comb.setCheckable(True)
+        self._check_comb.setToolTip(
+            "Display curvature as perpendicular lines from the curve.\n"
+            "Use the arrow for quantity, height and density."
+        )
+        self._check_comb.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+
+        comb_settings = QWidget()
+        comb_form = _form()
+        comb_settings.setLayout(comb_form)
+        comb_form.setContentsMargins(10, 8, 10, 8)
+
+        self._combo_comb_qty = QComboBox()
+        self._combo_comb_qty.addItem("Curvature (\u03BA)", userData=0)
+        self._combo_comb_qty.addItem("Gradient (d\u03BA/ds)", userData=1)
+        self._combo_comb_qty.addItem("Acceleration (d\u00B2\u03BA/ds\u00B2)", userData=2)
+        self._combo_comb_qty.addItem("Jerk (d\u00B3\u03BA/ds\u00B3)", userData=3)
+        self._combo_comb_qty.setCurrentIndex(0)
+        comb_form.addRow("Quantity:", self._combo_comb_qty)
+
+        self._spin_comb_scale = QDoubleSpinBox()
+        self._spin_comb_scale.setRange(0.0, 1000.0)
+        self._spin_comb_scale.setDecimals(4)
+        self._spin_comb_scale.setSingleStep(0.01)
+        self._spin_comb_scale.setValue(0.05)
+        comb_form.addRow("Height:", self._spin_comb_scale)
+
+        self._spin_comb_density = QSpinBox()
+        self._spin_comb_density.setRange(5, 2000)
+        self._spin_comb_density.setValue(120)
+        comb_form.addRow("Density:", self._spin_comb_density)
+
+        comb_menu = QMenu(self._check_comb)
+        comb_action = QWidgetAction(comb_menu)
+        comb_action.setDefaultWidget(comb_settings)
+        comb_menu.addAction(comb_action)
+        self._check_comb.setMenu(comb_menu)
+        toolbar.addWidget(self._check_comb)
+
+        toolbar.addStretch()
+
+        toolbar.addWidget(QLabel("Live preview:"))
+        self._combo_live = QComboBox()
+        self._combo_live.addItems(["Minimal", "Moderate", "Detailed"])
+        self._combo_live.setCurrentIndex(1)
+        self._combo_live.setToolTip(
+            "How often the plots update while fitting.\n"
+            "Minimal: only at the end. Moderate: once a second.\n"
+            "Detailed: every iteration (slower)."
+        )
+        toolbar.addWidget(self._combo_live)
+        return toolbar
 
     # -- Loss Toolbar ------------------------------------------------------
 
@@ -312,13 +427,76 @@ class WindowLayoutMixin:
 
         return panel
 
-    # -- Curve Properties Section ------------------------------------------
+    # -- Method Section ----------------------------------------------------
 
-    def _build_curve_section(self) -> CollapsibleSection:
-        """Build the Curve Properties collapsible section."""
-        section = CollapsibleSection("Curve Properties", expanded=True)
-        form = QFormLayout()
-        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+    def _build_method_section(self) -> SidebarSection:
+        """Build the Method section: optimizer, goal, and error metric."""
+        section = SidebarSection("Method")
+        form = _form()
+
+        # Algorithm (decides which other controls apply, so it comes first)
+        self._combo_opt = QComboBox()
+        for idx, opt_type in enumerate(OptimizerType):
+            self._combo_opt.addItem(opt_type.display_name, userData=opt_type)
+            self._combo_opt.setItemData(idx, opt_type.tooltip, Qt.ItemDataRole.ToolTipRole)
+        self._combo_opt.setCurrentIndex(0)
+        self._combo_opt.currentIndexChanged.connect(self._on_optimizer_changed)
+        _add_row(form, "Optimizer", self._combo_opt)
+
+        # Goal (VarPro): meet a tolerance, or fit a fixed control point count
+        self._seg_goal = SegmentedControl()
+        self._seg_goal.addItem("Tolerance", userData=True)
+        self._seg_goal.addItem("Fixed count", userData=False)
+        self._seg_goal.setItemToolTip(
+            0,
+            "Find the fewest control points (with non-uniform knots) that keep\n"
+            "every data point within the tolerance.",
+        )
+        self._seg_goal.setItemToolTip(1, "Fit the given number of control points per section.")
+        self._lbl_goal = _add_row(form, "Goal", self._seg_goal)
+
+        self._spin_tolerance = QDoubleSpinBox()
+        self._spin_tolerance.setRange(1e-9, 1.0)
+        self._spin_tolerance.setDecimals(9)
+        self._spin_tolerance.setSingleStep(1e-6)
+        self._spin_tolerance.setValue(1e-5)
+        self._spin_tolerance.setToolTip("Maximum orthogonal distance of any data point to the curve.")
+        self._check_auto_tolerance = QCheckBox("Auto")
+        self._check_auto_tolerance.setChecked(True)
+        self._check_auto_tolerance.setToolTip(
+            "Derive the tolerance from the decimal precision of the file and\n"
+            "the estimated noise of the points."
+        )
+        self._tolerance_row = _hbox(self._spin_tolerance, self._check_auto_tolerance)
+        self._lbl_tolerance = _add_row(form, "Max deviation", self._tolerance_row)
+
+        # Control points (sweepable); shares the slot with the tolerance
+        self._spin_ctrl = QSpinBox()
+        self._spin_ctrl.setRange(2, 200)
+        self._spin_ctrl.setValue(25)
+        self._spin_ctrl.setToolTip(
+            "Control points per section.\n"
+            "More = more flexibility but more variables."
+        )
+        self._sweep_ctrl = SweepableSpinBox(self._spin_ctrl, group=self._sweep_group)
+        self._lbl_ctrl = _add_row(form, "Control pts", self._sweep_ctrl)
+
+        # Error metric
+        self._combo_err = QComboBox()
+        for metric in ErrorMetric:
+            self._combo_err.addItem(metric.display_name, userData=metric)
+        self._combo_err.setCurrentIndex(0)
+        _add_row(form, "Error metric", self._combo_err)
+
+        section.add_layout(form)
+        return section
+
+    # -- Curve Section -----------------------------------------------------
+
+    def _build_curve_section(self) -> SidebarSection:
+        """Build the Curve section: degree, sections, and continuity."""
+        section = SidebarSection("Curve")
+        form = _form()
 
         # Degree (sweepable)
         self._spin_degree = QSpinBox()
@@ -329,18 +507,7 @@ class WindowLayoutMixin:
             "Typical: 3 (cubic), 4, or 5 (quintic)."
         )
         self._sweep_degree = SweepableSpinBox(self._spin_degree, group=self._sweep_group)
-        form.addRow("Degree:", self._sweep_degree)
-
-        # Control points (sweepable)
-        self._spin_ctrl = QSpinBox()
-        self._spin_ctrl.setRange(2, 200)
-        self._spin_ctrl.setValue(25)
-        self._spin_ctrl.setToolTip(
-            "Control points per section.\n"
-            "More = more flexibility but more variables."
-        )
-        self._sweep_ctrl = SweepableSpinBox(self._spin_ctrl, group=self._sweep_group)
-        form.addRow("Control Points:", self._sweep_ctrl)
+        _add_row(form, "Degree", self._sweep_degree)
 
         # Sections
         self._spin_sections = QSpinBox()
@@ -350,25 +517,22 @@ class WindowLayoutMixin:
             "Number of spline segments.\n"
             "2 = upper/lower split at leading edge (default)"
         )
-        form.addRow("Sections:", self._spin_sections)
+        _add_row(form, "Sections", self._spin_sections)
 
-        # Smoothness
-        self._combo_cont = QComboBox()
-        self._combo_cont.addItem("0 - Position", userData=ContinuityMode.G0)
-        self._combo_cont.addItem("1 - Tangent", userData=ContinuityMode.G1)
-        self._combo_cont.addItem("2 - Curvature", userData=ContinuityMode.G2)
-        self._combo_cont.addItem("3 - Curvature rate", userData=ContinuityMode.G3)
+        # Continuity at the junctions; labels read G or C depending on the type
+        self._combo_cont = SegmentedControl()
+        cont_names = ["Position", "Tangent", "Curvature", "Curvature rate"]
+        for i, mode in enumerate(
+            (ContinuityMode.G0, ContinuityMode.G1, ContinuityMode.G2, ContinuityMode.G3)
+        ):
+            self._combo_cont.addItem(f"C{i}", userData=mode)
+            self._combo_cont.setItemToolTip(i, f"{cont_names[i]} matches across junctions")
         self._combo_cont.setCurrentIndex(2)
-        self._combo_cont.setToolTip(
-            "Smoothness at junctions:\n"
-            "0 = Position only, 1 = Tangent,\n"
-            "2 = Curvature, 3 = Curvature rate"
-        )
-        form.addRow("Smoothness:", self._combo_cont)
+        _add_row(form, "Continuity", self._combo_cont)
 
-        self._combo_cont_kind = QComboBox()
-        self._combo_cont_kind.addItem("Geometric (G)", userData=True)
-        self._combo_cont_kind.addItem("Parametric (C)", userData=False)
+        self._combo_cont_kind = SegmentedControl()
+        self._combo_cont_kind.addItem("Geometric", userData=True)
+        self._combo_cont_kind.addItem("Parametric", userData=False)
         self._combo_cont_kind.setToolTip(
             "Geometric: tangent direction, curvature and curvature rate match\n"
             "across the junction (what CAD calls G1/G2/G3).\n"
@@ -377,159 +541,47 @@ class WindowLayoutMixin:
             "Only VarPro LM supports geometric continuity; other optimizers\n"
             "always use parametric."
         )
-        form.addRow("Continuity Type:", self._combo_cont_kind)
-
-        self._edit_junctions = QLineEdit()
-        self._edit_junctions.setPlaceholderText("e.g. G2, C1  (blank = same everywhere)")
-        self._edit_junctions.setToolTip(
-            "Continuity of each junction in order, overriding the two settings\n"
-            "above. One entry per junction (sections - 1), each G0-G3 or C0-C3.\n"
-            "VarPro LM only."
-        )
-        form.addRow("Per Junction:", self._edit_junctions)
+        self._lbl_cont_kind = _add_row(form, "Type", self._combo_cont_kind)
 
         section.add_layout(form)
-
-        # Advanced subsection (collapsed)
-        adv = CollapsibleSection("Advanced", expanded=False)
-        adv_form = QFormLayout()
-        adv_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
-
-        self._check_optimize_le = QCheckBox("Optimize Junction Position")
-        self._check_optimize_le.setChecked(False)
-        self._check_optimize_le.setToolTip(
-            "Allow the leading edge junction to move during optimization."
-        )
-        adv_form.addRow("", self._check_optimize_le)
-
-        self._spin_bbox = QDoubleSpinBox()
-        self._spin_bbox.setRange(1.0, 100.0)
-        self._spin_bbox.setDecimals(2)
-        self._spin_bbox.setSingleStep(0.1)
-        self._spin_bbox.setValue(3.0)
-        self._spin_bbox.setToolTip("Multiplier for optimization search bounds.")
-        adv_form.addRow("Search Space Scale:", self._spin_bbox)
-
-        adv.add_layout(adv_form)
-        section.add_widget(adv)
-
         return section
 
-    # -- Optimizer Section -------------------------------------------------
+    # -- Advanced Section --------------------------------------------------
 
-    def _build_optimizer_section(self) -> CollapsibleSection:
-        """Build the Optimizer collapsible section (merged with param-opt)."""
-        section = CollapsibleSection("Optimizer", expanded=True)
-        form = QFormLayout()
-        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+    def _build_advanced_section(self) -> CollapsibleSection:
+        """Build the Advanced section: everything rarely changed, in one place."""
+        section = CollapsibleSection("Advanced", expanded=False)
+        self._advanced_section = section
+        form = _form()
 
-        # Algorithm
-        self._combo_opt = QComboBox()
-        for idx, opt_type in enumerate(OptimizerType):
-            self._combo_opt.addItem(opt_type.display_name, userData=opt_type)
-            self._combo_opt.setItemData(idx, opt_type.tooltip, Qt.ItemDataRole.ToolTipRole)
-        self._combo_opt.setCurrentIndex(0)
-        self._combo_opt.currentIndexChanged.connect(self._on_optimizer_changed)
-        form.addRow("Algorithm:", self._combo_opt)
-
-        # Error metric
-        self._combo_err = QComboBox()
-        for metric in ErrorMetric:
-            self._combo_err.addItem(metric.display_name, userData=metric)
-        self._combo_err.setCurrentIndex(0)
-        form.addRow("Error Metric:", self._combo_err)
-
-        section.add_layout(form)
-
-        # VarPro tolerance mode
-        self._tolerance_container = QWidget()
-        tol_form = QFormLayout(self._tolerance_container)
-        tol_form.setContentsMargins(0, 0, 0, 0)
-        tol_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
-
-        self._check_tolerance_mode = QCheckBox("Tolerance mode")
-        self._check_tolerance_mode.setChecked(True)
-        self._check_tolerance_mode.setToolTip(
-            "Find the fewest control points (with non-uniform knots) that keep\n"
-            "every data point within the tolerance. The control point count\n"
-            "setting is ignored."
+        # VarPro
+        self._edit_junctions = QLineEdit()
+        self._edit_junctions.setPlaceholderText("G2, C1  (blank = same everywhere)")
+        self._edit_junctions.setToolTip(
+            "Continuity of each junction in order, overriding the Continuity\n"
+            "setting. One entry per junction (sections - 1), each G0-G3 or C0-C3.\n"
+            "VarPro LM only."
         )
-        tol_form.addRow("", self._check_tolerance_mode)
+        self._lbl_junctions = _add_row(form, "Per junction", self._edit_junctions)
 
-        tol_row = QHBoxLayout()
-        tol_row.setSpacing(4)
-        self._spin_tolerance = QDoubleSpinBox()
-        self._spin_tolerance.setRange(1e-9, 1.0)
-        self._spin_tolerance.setDecimals(9)
-        self._spin_tolerance.setSingleStep(1e-6)
-        self._spin_tolerance.setValue(1e-5)
-        self._spin_tolerance.setToolTip("Maximum orthogonal distance of any data point to the curve.")
-        tol_row.addWidget(self._spin_tolerance, stretch=1)
-        self._check_auto_tolerance = QCheckBox("Auto")
-        self._check_auto_tolerance.setChecked(True)
-        self._check_auto_tolerance.setToolTip(
-            "Derive the tolerance from the decimal precision of the file and\n"
-            "the estimated noise of the points."
-        )
-        tol_row.addWidget(self._check_auto_tolerance)
-        tol_form.addRow("Tolerance:", tol_row)
-
-        dense_row = QHBoxLayout()
-        dense_row.setSpacing(4)
-        self._check_subsample = QCheckBox("Subsample to")
+        self._check_subsample = QCheckBox("to")
         self._check_subsample.setChecked(False)
         self._check_subsample.setToolTip(
             "For dense data: fit an evenly spaced subsample of each section, then\n"
             "refine the fit on all points. Much faster for thousands of points.\n"
             "Off: every point is used throughout."
         )
-        dense_row.addWidget(self._check_subsample)
         self._spin_subsample = QSpinBox()
         self._spin_subsample.setRange(20, 100000)
         self._spin_subsample.setValue(200)
         self._spin_subsample.setSuffix(" pts/section")
         self._spin_subsample.setEnabled(False)
         self._spin_subsample.setToolTip("Sections with more points than this are subsampled.")
-        dense_row.addWidget(self._spin_subsample, stretch=1)
-        tol_form.addRow("Dense data:", dense_row)
+        self._subsample_row = _hbox(self._check_subsample, self._spin_subsample, stretch_first=False)
+        self._subsample_row.layout().setStretch(1, 1)
+        self._lbl_subsample = _add_row(form, "Subsample", self._subsample_row)
 
-        self._tolerance_container.setVisible(False)
-        section.add_widget(self._tolerance_container)
-
-        # Algorithm Settings (collapsed subsection)
-        self._opt_advanced = CollapsibleSection("Algorithm Settings", expanded=False)
-        adv_form = QFormLayout()
-        adv_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
-
-        # Max iterations
-        self._spin_maxiter = QSpinBox()
-        self._spin_maxiter.setRange(10, 1_000_000_000)
-        self._spin_maxiter.setValue(10000)
-        self._spin_maxiter.setToolTip("Maximum optimizer iterations.")
-        self._lbl_maxiter = QLabel("Iteration Limit:")
-        adv_form.addRow(self._lbl_maxiter, self._spin_maxiter)
-
-        # Random seed
-        self._spin_seed = QSpinBox()
-        self._spin_seed.setRange(-1, 2**31 - 1)
-        self._spin_seed.setValue(-1)
-        self._spin_seed.setToolTip("Random seed (-1 = system random, \u22650 = deterministic).")
-        adv_form.addRow("Random Seed:", self._spin_seed)
-
-        # Smoothing factor (algebraic methods)
-        self._lbl_smoothing = QLabel("LSQ Smoothing:")
-        self._spin_smoothing = QDoubleSpinBox()
-        self._spin_smoothing.setRange(0.0, 1.0)
-        self._spin_smoothing.setDecimals(6)
-        self._spin_smoothing.setSingleStep(0.0001)
-        self._spin_smoothing.setValue(0.0)
-        self._spin_smoothing.setToolTip("Smoothing factor for algebraic fitting (0 = exact).")
-        self._lbl_smoothing.setVisible(False)
-        self._spin_smoothing.setVisible(False)
-        adv_form.addRow(self._lbl_smoothing, self._spin_smoothing)
-
-        # Bending energy weight (GN-VarPro, sweepable)
-        self._lbl_smoothing_weight = QLabel("Smoothing Weight:")
+        # Bending energy weight (GN-VarPro fixed count, sweepable)
         self._spin_smoothing_weight = QDoubleSpinBox()
         self._spin_smoothing_weight.setRange(0.0, 1e12)
         self._spin_smoothing_weight.setDecimals(12)
@@ -539,25 +591,35 @@ class WindowLayoutMixin:
         self._sweep_smoothing_weight = SweepableDoubleSpinBox(
             self._spin_smoothing_weight, group=self._sweep_group, default_steps=10,
         )
-        self._lbl_smoothing_weight.setVisible(False)
-        self._sweep_smoothing_weight.setVisible(False)
-        adv_form.addRow(self._lbl_smoothing_weight, self._sweep_smoothing_weight)
+        self._lbl_smoothing_weight = _add_row(form, "Smoothing", self._sweep_smoothing_weight)
 
-        # Orthogonal LSQ local bounds
-        self._check_orth_lsq_local_bounds = QCheckBox("Use local t bounds")
-        self._check_orth_lsq_local_bounds.setChecked(False)
-        self._check_orth_lsq_local_bounds.setVisible(False)
-        self._check_orth_lsq_local_bounds.setToolTip("Restrict foot-point search to local bounds.")
-        adv_form.addRow("", self._check_orth_lsq_local_bounds)
+        # Smoothing factor (algebraic methods)
+        self._spin_smoothing = QDoubleSpinBox()
+        self._spin_smoothing.setRange(0.0, 1.0)
+        self._spin_smoothing.setDecimals(6)
+        self._spin_smoothing.setSingleStep(0.0001)
+        self._spin_smoothing.setValue(0.0)
+        self._spin_smoothing.setToolTip("Smoothing factor for algebraic fitting (0 = exact).")
+        self._lbl_smoothing = _add_row(form, "LSQ smoothing", self._spin_smoothing)
 
-        # Param optimizer outer (for PARAM_OPT)
-        self._param_opt_container = QWidget()
-        param_lay = QFormLayout(self._param_opt_container)
-        param_lay.setContentsMargins(0, 0, 0, 0)
+        # Iterative optimizers
+        self._spin_maxiter = QSpinBox()
+        self._spin_maxiter.setRange(10, 1_000_000_000)
+        self._spin_maxiter.setValue(10000)
+        self._spin_maxiter.setToolTip("Maximum optimizer iterations.")
+        self._lbl_maxiter = _add_row(form, "Iteration limit", self._spin_maxiter)
 
+        self._spin_seed = QSpinBox()
+        self._spin_seed.setRange(-1, 2**31 - 1)
+        self._spin_seed.setValue(-1)
+        self._spin_seed.setSpecialValueText("Random")
+        self._spin_seed.setToolTip("Random seed (Random = system random, \u22650 = deterministic).")
+        _add_row(form, "Seed", self._spin_seed)
+
+        # Outer optimizer (parameter optimisation)
         from ..optimization.optimizers import get_optimizer
         self._combo_param_opt_outer = QComboBox()
-        for idx, opt_type in enumerate(OptimizerType):
+        for opt_type in OptimizerType:
             if opt_type.is_param_optimizer or opt_type.is_algebraic or opt_type.is_iterative_algebraic:
                 continue
             try:
@@ -571,37 +633,76 @@ class WindowLayoutMixin:
                 self._combo_param_opt_outer.count() - 1,
                 opt_type.tooltip, Qt.ItemDataRole.ToolTipRole,
             )
-        for i in range(self._combo_param_opt_outer.count()):
-            if self._combo_param_opt_outer.itemData(i) == OptimizerType.L_BFGS_B:
-                self._combo_param_opt_outer.setCurrentIndex(i)
-                break
+        idx = self._combo_param_opt_outer.findData(OptimizerType.L_BFGS_B)
+        if idx >= 0:
+            self._combo_param_opt_outer.setCurrentIndex(idx)
         self._combo_param_opt_outer.setToolTip("Outer-loop optimizer for parameter optimisation.")
-        param_lay.addRow("Outer Optimizer:", self._combo_param_opt_outer)
+        self._lbl_param_opt_outer = _add_row(form, "Outer optimizer", self._combo_param_opt_outer)
 
-        self._param_opt_container.setVisible(False)
-        adv_form.addRow(self._param_opt_container)
+        # Orthogonal LSQ local bounds
+        self._check_orth_lsq_local_bounds = QCheckBox("Use local t bounds")
+        self._check_orth_lsq_local_bounds.setChecked(False)
+        self._check_orth_lsq_local_bounds.setToolTip("Restrict foot-point search to local bounds.")
+        self._lbl_orth_lsq_local_bounds = _add_row(form, "Foot points", self._check_orth_lsq_local_bounds)
 
-        self._opt_advanced.add_layout(adv_form)
-        section.add_widget(self._opt_advanced)
+        # Search bounds and junction
+        self._spin_bbox = QDoubleSpinBox()
+        self._spin_bbox.setRange(1.0, 100.0)
+        self._spin_bbox.setDecimals(2)
+        self._spin_bbox.setSingleStep(0.1)
+        self._spin_bbox.setValue(3.0)
+        self._spin_bbox.setToolTip("Multiplier for optimization search bounds.")
+        _add_row(form, "Search scale", self._spin_bbox)
+
+        self._check_optimize_le = QCheckBox("Let it move")
+        self._check_optimize_le.setChecked(False)
+        self._check_optimize_le.setToolTip(
+            "Allow the leading edge junction to move during optimization."
+        )
+        _add_row(form, "Junction", self._check_optimize_le)
+
+        section.add_layout(form)
+        section.add_widget(self._build_regularization_box())
+
+        # "N changed" badge in the header, so non-default settings stay
+        # noticeable while the section is collapsed
+        self._advanced_defaults = [
+            (w, self._widget_value(w)) for w in (
+                self._edit_junctions, self._check_subsample, self._spin_subsample,
+                self._spin_smoothing_weight, self._spin_smoothing, self._spin_maxiter,
+                self._spin_seed, self._combo_param_opt_outer,
+                self._check_orth_lsq_local_bounds, self._spin_bbox,
+                self._check_optimize_le, self._check_fairness,
+            )
+        ]
+        for w, _ in self._advanced_defaults:
+            signal = (w.textChanged if isinstance(w, QLineEdit)
+                      else w.toggled if isinstance(w, QCheckBox)
+                      else w.currentIndexChanged if isinstance(w, QComboBox)
+                      else w.valueChanged)
+            signal.connect(self._update_advanced_badge)
 
         return section
 
-    # -- Regularization Section --------------------------------------------
-
-    def _build_regularization_section(self) -> CollapsibleSection:
-        """Build the Regularization collapsible section (collapsed)."""
-        section = CollapsibleSection("Regularization", expanded=False)
-        layout = QVBoxLayout()
+    def _build_regularization_box(self) -> QWidget:
+        """Build the fairness penalties (objective-based optimizers only)."""
+        self._regularization_box = QWidget()
+        layout = QVBoxLayout(self._regularization_box)
+        layout.setContentsMargins(0, 6, 0, 0)
         layout.setSpacing(6)
 
-        self._check_fairness = QCheckBox("Enable Regularization")
+        caption = QLabel("REGULARIZATION")
+        caption.setObjectName("SectionCaption")
+        layout.addWidget(caption)
+
+        self._check_fairness = QCheckBox("Add fairness penalties")
         self._check_fairness.setChecked(False)
         self._check_fairness.setToolTip("Add fairness penalties to the objective function.")
         layout.addWidget(self._check_fairness)
 
         self._fairness_container = QWidget()
-        wf = QFormLayout(self._fairness_container)
-        wf.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        wf = _form()
+        self._fairness_container.setLayout(wf)
 
         def _ws() -> QDoubleSpinBox:
             s = QDoubleSpinBox(); s.setRange(0.0, 1.0); s.setDecimals(4)
@@ -609,112 +710,113 @@ class WindowLayoutMixin:
 
         self._spin_w_lenvar = _ws()
         self._spin_w_lenvar.setToolTip("Penalize uneven spacing between control points")
-        wf.addRow("Uniform Edge Length:", self._spin_w_lenvar)
+        _add_row(wf, "Even edges", self._spin_w_lenvar)
 
         self._spin_w_bend = _ws()
         self._spin_w_bend.setToolTip("Penalize sharp bends in the control polygon")
-        wf.addRow("Polygon Smoothness:", self._spin_w_bend)
+        _add_row(wf, "Polygon bend", self._spin_w_bend)
 
         self._spin_w_short = _ws()
         self._spin_w_short.setToolTip("Penalize control points that are too close together")
-        wf.addRow("Minimum Spacing:", self._spin_w_short)
+        _add_row(wf, "Min spacing", self._spin_w_short)
 
         self._spin_w_tangent = _ws()
         self._spin_w_tangent.setToolTip("Penalize unusual edge lengths at curve endpoints")
-        wf.addRow("End Handle Length:", self._spin_w_tangent)
+        _add_row(wf, "End handles", self._spin_w_tangent)
 
         self._spin_w_curv = _ws()
         self._spin_w_curv.setToolTip("Minimize bending energy: \u222B\u03BA\u00B2 ds")
-        wf.addRow("Bending Energy:", self._spin_w_curv)
+        _add_row(wf, "Bending", self._spin_w_curv)
 
         self._spin_w_grad = _ws()
         self._spin_w_grad.setToolTip("Minimize wiggle energy: \u222B(d\u03BA/ds)\u00B2 ds")
-        wf.addRow("Wiggle Energy:", self._spin_w_grad)
+        _add_row(wf, "Wiggle", self._spin_w_grad)
 
         layout.addWidget(self._fairness_container)
         self._fairness_container.setEnabled(False)
+        return self._regularization_box
 
-        section.add_layout(layout)
-        return section
+    @staticmethod
+    def _widget_value(w):
+        """Current value of an input widget, for default comparison."""
+        if isinstance(w, QLineEdit):
+            return w.text().strip()
+        if isinstance(w, QCheckBox):
+            return w.isChecked()
+        if isinstance(w, QComboBox):
+            return w.currentIndex()
+        if isinstance(w, QAbstractSpinBox):
+            return w.value()
+        raise TypeError(type(w))
 
-    # -- Visualization Section ---------------------------------------------
+    def _update_advanced_badge(self, *_):
+        """Count the applicable Advanced settings that differ from their defaults."""
+        content = self._advanced_section.content_widget()
+        changed = sum(
+            1 for w, default in self._advanced_defaults
+            if w.isVisibleTo(content) and self._widget_value(w) != default
+        )
+        self._advanced_section.set_badge(f"{changed} changed" if changed else "")
 
-    def _build_visualization_section(self) -> CollapsibleSection:
-        """Build the Visualization collapsible section (collapsed)."""
-        section = CollapsibleSection("Visualization", expanded=False)
-        layout = QVBoxLayout()
-        layout.setSpacing(6)
+    # -- Run Bar -----------------------------------------------------------
 
-        # Preview frequency slider
-        preview_row = QHBoxLayout()
-        preview_row.setSpacing(6)
-        preview_row.addWidget(QLabel("Preview:"))
-        self._slider_live = QSlider(Qt.Orientation.Horizontal)
-        self._slider_live.setRange(0, 2)
-        self._slider_live.setValue(1)
-        self._slider_live.setTickPosition(QSlider.TickPosition.TicksBelow)
-        self._slider_live.setTickInterval(1)
-        self._slider_live.setFixedWidth(80)
-        preview_row.addWidget(self._slider_live)
-        self._lbl_live_mode = QLabel("Moderate")
-        self._lbl_live_mode.setFixedWidth(65)
-        preview_row.addWidget(self._lbl_live_mode)
-        preview_row.addStretch()
-        layout.addLayout(preview_row)
-
-        # Curvature comb toggle
-        self._check_comb = QCheckBox("Show Curvature Comb")
-        self._check_comb.setChecked(False)
-        self._check_comb.setToolTip("Display curvature as perpendicular lines from curve.")
-        layout.addWidget(self._check_comb)
-
-        self._check_knots = QCheckBox("Show Knots")
-        self._check_knots.setChecked(False)
-        self._check_knots.setToolTip("Mark the curve points at the knots of every section.")
-        layout.addWidget(self._check_knots)
-
-        # Comb settings (nested, collapsed)
-        comb_section = CollapsibleSection("Comb Settings", expanded=False)
-        comb_form = QFormLayout()
-        comb_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
-
-        self._combo_comb_qty = QComboBox()
-        self._combo_comb_qty.addItem("Curvature (\u03BA)", userData=0)
-        self._combo_comb_qty.addItem("Gradient (d\u03BA/ds)", userData=1)
-        self._combo_comb_qty.addItem("Acceleration (d\u00B2\u03BA/ds\u00B2)", userData=2)
-        self._combo_comb_qty.addItem("Jerk (d\u00B3\u03BA/ds\u00B3)", userData=3)
-        self._combo_comb_qty.setCurrentIndex(0)
-        comb_form.addRow("Quantity:", self._combo_comb_qty)
-
-        self._spin_comb_scale = QDoubleSpinBox()
-        self._spin_comb_scale.setRange(0.0, 1000.0)
-        self._spin_comb_scale.setDecimals(4)
-        self._spin_comb_scale.setSingleStep(0.01)
-        self._spin_comb_scale.setValue(0.05)
-        comb_form.addRow("Height:", self._spin_comb_scale)
-
-        self._spin_comb_density = QSpinBox()
-        self._spin_comb_density.setRange(5, 2000)
-        self._spin_comb_density.setValue(120)
-        comb_form.addRow("Density:", self._spin_comb_density)
-
-        comb_section.add_layout(comb_form)
-        layout.addWidget(comb_section)
-
-        section.add_layout(layout)
-        return section
-
-    # -- Run Group ---------------------------------------------------------
-
-    def _build_run_group(self) -> QGroupBox:
-        """Build the run controls group."""
-        group = QGroupBox("Run")
-        layout = QHBoxLayout(group)
+    def _build_run_bar(self) -> QWidget:
+        """Build the fixed bar under the sidebar: fit, result, and export."""
+        bar = QWidget()
+        bar.setObjectName("RunBar")
+        bar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        layout = QVBoxLayout(bar)
+        layout.setContentsMargins(12, 10, 12, 10)
         layout.setSpacing(8)
-        self._btn_fit = QPushButton("Fit Spline")
+
+        self._btn_fit = QPushButton("Fit spline")
+        self._btn_fit.setObjectName("PrimaryButton")
+        self._btn_fit.setCursor(Qt.CursorShape.PointingHandCursor)
         layout.addWidget(self._btn_fit)
         self._btn_cancel = QPushButton("Cancel")
         self._btn_cancel.setEnabled(False)
+        self._btn_cancel.setVisible(False)
         layout.addWidget(self._btn_cancel)
-        layout.addStretch()
-        return group
+
+        # Result of the current fit, with the exports for it
+        self._result_box = QWidget()
+        result_layout = QVBoxLayout(self._result_box)
+        result_layout.setContentsMargins(0, 0, 0, 0)
+        result_layout.setSpacing(8)
+
+        stats = QGridLayout()
+        stats.setHorizontalSpacing(8)
+        stats.setVerticalSpacing(0)
+        self._lbl_result_caption_dev = QLabel("Max dev")
+        self._lbl_result_dev = QLabel()
+        self._lbl_result_ctrl = QLabel()
+        self._lbl_result_time = QLabel()
+        for col, (caption, value) in enumerate((
+            (self._lbl_result_caption_dev, self._lbl_result_dev),
+            (QLabel("Ctrl pts"), self._lbl_result_ctrl),
+            (QLabel("Time"), self._lbl_result_time),
+        )):
+            caption.setObjectName("Muted")
+            stats.addWidget(caption, 0, col)
+            stats.addWidget(value, 1, col)
+        result_layout.addLayout(stats)
+
+        save_row = QHBoxLayout()
+        save_row.setSpacing(6)
+        self._btn_save_dat = QPushButton("Save .dat")
+        self._btn_save_dat.setEnabled(False)
+        self._btn_save_dat.setToolTip("Save fitted airfoil coordinates (.dat)")
+        save_row.addWidget(self._btn_save_dat)
+        self._btn_save_spline = QPushButton("Save spline")
+        self._btn_save_spline.setEnabled(False)
+        self._btn_save_spline.setToolTip("Save spline control points and knots (.spline.dat)")
+        save_row.addWidget(self._btn_save_spline)
+        self._btn_export_cad = QPushButton("Export CAD")
+        self._btn_export_cad.setEnabled(False)
+        self._btn_export_cad.setToolTip("Export the exact B-spline curves as STEP, IGES or DXF")
+        save_row.addWidget(self._btn_export_cad)
+        result_layout.addLayout(save_row)
+
+        self._result_box.setVisible(False)
+        layout.addWidget(self._result_box)
+        return bar

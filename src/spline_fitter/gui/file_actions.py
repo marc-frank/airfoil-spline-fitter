@@ -239,8 +239,8 @@ class FileActionsMixin:
             # Reset project state for new airfoil
             self._project_manager.reset()
 
-            # Update path label
-            self._lbl_path.setText(path)
+            # Update file card
+            self._show_file_info(self._airfoil, path)
 
             # Plot airfoil
             self._plot_manager.plot_airfoil(coords)

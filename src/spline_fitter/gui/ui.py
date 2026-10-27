@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ..analysis import default_tolerance
+from ..formatting import format_duration, format_error
 from ..geometry import create_airfoil_data
 from ..optimization.models import (
     AirfoilData,
@@ -92,30 +93,56 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         is_algebraic = opt_type.is_algebraic if opt_type else False
         is_param_opt = opt_type.is_param_optimizer if opt_type else False
         is_gn_varpro = opt_type == OptimizerType.GN_VARPRO if opt_type else False
+        uses_objective = opt_type is not None and not (
+            opt_type.is_algebraic or opt_type.is_iterative_algebraic
+        )
+        tolerance_mode = is_gn_varpro and self._tolerance_mode_selected()
 
-        self._lbl_maxiter.setVisible(not is_algebraic)
-        self._spin_maxiter.setVisible(not is_algebraic)
-        self._lbl_smoothing.setVisible(is_algebraic)
-        self._spin_smoothing.setVisible(is_algebraic)
-        tolerance_mode = is_gn_varpro and self._check_tolerance_mode.isChecked()
-        self._tolerance_container.setVisible(is_gn_varpro)
+        def show(visible: bool, *widgets):
+            for w in widgets:
+                w.setVisible(visible)
+
+        # Method: the tolerance and the control point count share one slot
+        show(is_gn_varpro, self._lbl_goal, self._seg_goal)
+        show(tolerance_mode, self._lbl_tolerance, self._tolerance_row)
+        show(not tolerance_mode, self._lbl_ctrl, self._sweep_ctrl)
         self._spin_tolerance.setEnabled(tolerance_mode and not self._check_auto_tolerance.isChecked())
         self._check_auto_tolerance.setEnabled(tolerance_mode)
-        self._lbl_smoothing_weight.setVisible(is_gn_varpro and not tolerance_mode)
-        self._sweep_smoothing_weight.setVisible(is_gn_varpro and not tolerance_mode)
         if tolerance_mode:
             for sweep_box in (self._sweep_ctrl, self._sweep_smoothing_weight):
                 if sweep_box.is_sweep_active:
                     sweep_box.stop_sweep()
         self._sweep_ctrl.setEnabled(not self._is_fitting and not tolerance_mode)
+
+        # Curve: geometric continuity is VarPro only
+        show(is_gn_varpro, self._lbl_cont_kind, self._combo_cont_kind)
+        self._update_continuity_labels()
+
+        # Advanced: only the settings the selected optimizer reads
+        show(is_gn_varpro, self._lbl_junctions, self._edit_junctions,
+             self._lbl_subsample, self._subsample_row)
+        show(is_gn_varpro and not tolerance_mode,
+             self._lbl_smoothing_weight, self._sweep_smoothing_weight)
         self._sweep_smoothing_weight.setEnabled(not self._is_fitting)
-        self._param_opt_container.setVisible(is_param_opt)
-        self._check_orth_lsq_local_bounds.setVisible(
-            opt_type == OptimizerType.ORTHOGONAL_LSQ
-        )
-        geometric_ok = is_gn_varpro
-        self._combo_cont_kind.setEnabled(geometric_ok and not self._is_fitting)
-        self._edit_junctions.setEnabled(geometric_ok and not self._is_fitting)
+        show(is_algebraic, self._lbl_smoothing, self._spin_smoothing)
+        show(not is_algebraic, self._lbl_maxiter, self._spin_maxiter)
+        show(is_param_opt, self._lbl_param_opt_outer, self._combo_param_opt_outer)
+        show(opt_type == OptimizerType.ORTHOGONAL_LSQ,
+             self._lbl_orth_lsq_local_bounds, self._check_orth_lsq_local_bounds)
+        show(uses_objective, self._regularization_box)
+        self._update_advanced_badge()
+
+    def _tolerance_mode_selected(self) -> bool:
+        """Whether the Goal is a tolerance (VarPro) rather than a fixed count."""
+        return bool(self._seg_goal.currentData())
+
+    def _update_continuity_labels(self, *_):
+        """Label the continuity levels G0-G3 or C0-C3 by the continuity type."""
+        geometric = (self._combo_opt.currentData() == OptimizerType.GN_VARPRO
+                     and bool(self._combo_cont_kind.currentData()))
+        prefix = "G" if geometric else "C"
+        for i in range(self._combo_cont.count()):
+            self._combo_cont.setItemText(i, f"{prefix}{i}")
 
     def _update_auto_tolerance(self):
         """Fill in the automatic tolerance for the loaded airfoil."""
@@ -145,13 +172,14 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._action_export_cad.triggered.connect(self._on_export_cad)
         self._action_fit_report.triggered.connect(self._on_fit_report)
 
-        # Save buttons
+        # File card and save buttons
+        self._btn_open.clicked.connect(self._on_open_file)
         self._btn_save_dat.clicked.connect(self._on_save_fitted)
         self._btn_save_spline.clicked.connect(self._on_save_spline)
         self._btn_export_cad.clicked.connect(self._on_export_cad)
 
-        # Tolerance mode
-        self._check_tolerance_mode.toggled.connect(
+        # Goal (tolerance or fixed count)
+        self._seg_goal.currentIndexChanged.connect(
             lambda _: self._on_optimizer_changed(self._combo_opt.currentIndex())
         )
         self._check_auto_tolerance.toggled.connect(
@@ -163,12 +191,12 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         # Spline configuration
         self._spin_degree.valueChanged.connect(self._update_ctrl_minimum)
         self._combo_cont.currentIndexChanged.connect(self._update_ctrl_minimum)
+        self._combo_cont_kind.currentIndexChanged.connect(self._update_continuity_labels)
 
         # Display options
-        self._slider_live.valueChanged.connect(self._update_live_mode_label)
         self._combo_loss_x.currentIndexChanged.connect(self._update_loss_plot_axis)
         self._combo_log_scale.currentIndexChanged.connect(self._update_loss_plot_log_scale)
-        self._check_comb.stateChanged.connect(self._update_curvature_comb)
+        self._check_comb.toggled.connect(self._update_curvature_comb)
         self._check_knots.toggled.connect(self._update_knots)
         self._combo_comb_qty.currentIndexChanged.connect(self._refresh_curvature_comb)
         self._spin_comb_scale.valueChanged.connect(self._refresh_curvature_comb)
@@ -249,7 +277,7 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
             smoothing = self._spin_smoothing.value()
 
         tolerance = None
-        if opt_type == OptimizerType.GN_VARPRO and self._check_tolerance_mode.isChecked():
+        if opt_type == OptimizerType.GN_VARPRO and self._tolerance_mode_selected():
             if self._check_auto_tolerance.isChecked() and self._airfoil is not None:
                 self._update_auto_tolerance()
             tolerance = float(self._spin_tolerance.value())
@@ -275,7 +303,7 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
                 self._combo_cont_kind.setCurrentIndex(i)
                 break
         self._edit_junctions.setText(", ".join(cfg.junction_continuity))
-        self._check_tolerance_mode.setChecked(opt.tolerance is not None)
+        self._seg_goal.setCurrentIndex(self._seg_goal.findData(opt.tolerance is not None))
         if opt.tolerance is not None:
             self._check_auto_tolerance.setChecked(False)
             self._spin_tolerance.setValue(opt.tolerance)
@@ -356,12 +384,6 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         except Exception:
             pass
 
-    def _update_live_mode_label(self):
-        """Update the live mode label when slider changes."""
-        mode_names = ["Minimal", "Moderate", "Detailed"]
-        value = self._slider_live.value()
-        self._lbl_live_mode.setText(mode_names[value])
-
     def _update_loss_plot_axis(self):
         """Update loss plot X-axis based on combo selection."""
         mode = self._combo_loss_x.currentData()
@@ -391,6 +413,32 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._action_save_spline.setEnabled(enabled)
         self._action_export_cad.setEnabled(enabled)
         self._action_fit_report.setEnabled(enabled)
+        self._update_result_summary(enabled)
+
+    def _update_result_summary(self, show: bool):
+        """Show the current fit's key numbers in the run bar."""
+        result = self._fit_result
+        show = show and result is not None
+        self._result_box.setVisible(show)
+        if not show:
+            return
+        if result.report:
+            self._lbl_result_caption_dev.setText("Max dev")
+            self._lbl_result_dev.setText(f"{result.report['max_deviation']:.2e}")
+        else:
+            self._lbl_result_caption_dev.setText("Error")
+            self._lbl_result_dev.setText(format_error(result.final_error))
+        self._lbl_result_ctrl.setText(
+            " + ".join(str(len(cp)) for cp in result.section_control_points)
+        )
+        self._lbl_result_time.setText(format_duration(result.elapsed_seconds))
+
+    def _show_file_info(self, airfoil: AirfoilData, path: str = ""):
+        """Show the loaded airfoil in the sidebar's file card."""
+        self._lbl_file_name.setText(airfoil.name or airfoil.filename or "Airfoil")
+        self._lbl_path.setText(f"{airfoil.num_points} points \u00B7 {airfoil.precision} decimals")
+        self._lbl_file_name.setToolTip(path)
+        self._lbl_path.setToolTip(path)
 
     def _set_project_save_enabled(self, enabled: bool):
         """Enable/disable project save controls."""
@@ -408,9 +456,12 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         """Enable/disable UI elements during fitting."""
         self._is_fitting = fitting
 
-        # Toggle buttons / menu actions
+        # Toggle buttons / menu actions (Cancel takes the Fit button's place)
         self._btn_fit.setEnabled(not fitting)
+        self._btn_fit.setVisible(not fitting)
         self._btn_cancel.setEnabled(fitting)
+        self._btn_cancel.setVisible(fitting)
+        self._btn_open.setEnabled(not fitting)
         self._action_open.setEnabled(not fitting)
         self._action_batch.setEnabled(not fitting)
 
@@ -419,9 +470,12 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._spin_ctrl.setEnabled(not fitting)
         self._spin_sections.setEnabled(not fitting)
         self._combo_cont.setEnabled(not fitting)
+        self._combo_cont_kind.setEnabled(not fitting)
         self._combo_opt.setEnabled(not fitting)
-        self._slider_live.setEnabled(not fitting)
-        self._tolerance_container.setEnabled(not fitting)
+        self._combo_live.setEnabled(not fitting)
+        self._seg_goal.setEnabled(not fitting)
+        self._tolerance_row.setEnabled(not fitting)
+        self._advanced_section.content_widget().setEnabled(not fitting)
         self._on_optimizer_changed(self._combo_opt.currentIndex())
 
         # Save buttons depend on fit result

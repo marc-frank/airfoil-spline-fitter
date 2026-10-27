@@ -99,9 +99,7 @@ class ProjectManager:
             self._window._airfoil = project.airfoil
 
             # Update UI state
-            self._window._lbl_path.setText(
-                f"{project.airfoil.name} ({project.airfoil.num_points} pts)"
-            )
+            self._window._show_file_info(project.airfoil, file_path)
             self._window._spin_sections.setValue(project.airfoil.num_sections)
 
             # Update project info label

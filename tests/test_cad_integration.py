@@ -228,9 +228,9 @@ def test_gui_tolerance_mode_fit_report_and_cad_export(monkeypatch, tmp_path):
     app, window = _window(monkeypatch)
     window._airfoil = naca_airfoil(decimals=5)
     window._combo_opt.setCurrentIndex(window._combo_opt.findData(OptimizerType.GN_VARPRO))
-    assert window._check_tolerance_mode.isChecked() and window._check_auto_tolerance.isChecked()
+    assert window._tolerance_mode_selected() and window._check_auto_tolerance.isChecked()
     assert not window._sweep_ctrl.isEnabled()
-    window._slider_live.setValue(2)
+    window._combo_live.setCurrentIndex(2)
     window._check_knots.setChecked(True)
     window._fitting_controller.on_fit()
     result = window._fit_result
@@ -305,7 +305,7 @@ def test_gui_subsampling_is_off_by_default_and_reaches_both_modes(monkeypatch):
     assert window._spin_subsample.isEnabled()
     window._spin_subsample.setValue(150)
     assert window._get_optimization_config().max_points_per_section == 150
-    window._check_tolerance_mode.setChecked(False)
+    window._seg_goal.setCurrentIndex(window._seg_goal.findData(False))
     assert window._get_optimization_config().max_points_per_section == 150
     window.deleteLater()
     app.processEvents()

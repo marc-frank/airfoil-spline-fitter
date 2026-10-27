@@ -6,18 +6,21 @@ Custom PyQt6 widgets used by the spline fitter GUI.
 
 This module provides:
     - Colors: Application color constants
-    - CollapsibleSection: Expandable/collapsible section widget
+    - SidebarSection / CollapsibleSection: Captioned sidebar sections
+    - SegmentedControl: Button row with a combo-box-like API
     - SweepableSpinBox: Spinbox with parameter sweep toggle
 """
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
+    QButtonGroup,
     QDoubleSpinBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -57,52 +60,57 @@ class Colors:
 
 
 # =============================================================================
-# Collapsible Section Widget
+# Sidebar Sections
 # =============================================================================
 
-class CollapsibleSection(QWidget):
-    """A collapsible section with a clickable header that toggles content visibility."""
+SIDEBAR_STYLE = """
+#Sidebar { background: palette(base); }
+#SidebarSection { border-bottom: 1px solid palette(midlight); }
+#SectionCaption { color: palette(placeholder-text); font-size: 11px; letter-spacing: 1px; }
+#SectionHeader { text-align: left; border: none; padding: 0; color: palette(placeholder-text);
+                 font-size: 11px; letter-spacing: 1px; background: transparent; }
+#SectionHeader:hover { color: palette(text); }
+#SectionBadge { color: palette(highlight); font-size: 11px; }
+#FileName { font-weight: bold; }
+#Muted { color: palette(placeholder-text); font-size: 11px; }
+#RunBar { background: palette(window); border-top: 1px solid palette(mid); }
+#PrimaryButton { background: palette(highlight); color: palette(highlighted-text);
+                 border: none; border-radius: 4px; padding: 7px; font-weight: bold; }
+#PrimaryButton:disabled { background: palette(mid); }
+"""
 
-    def __init__(self, title: str, parent=None, expanded: bool = True):
+
+class SidebarSection(QWidget):
+    """A sidebar section: a small caption above its content, divider below."""
+
+    def __init__(self, title: str, parent=None):
         super().__init__(parent)
-        self._title = title
-        self._expanded = expanded
+        self.setObjectName("SidebarSection")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
+        main_layout.setContentsMargins(12, 10, 12, 10)
+        main_layout.setSpacing(6)
+        main_layout.addWidget(self._build_header(title))
 
-        # Header button
-        self._toggle_btn = QPushButton(self._header_text())
-        self._toggle_btn.setStyleSheet(
-            "QPushButton { text-align: left; font-weight: bold; padding: 6px 8px; "
-            "border: none; border-radius: 3px; background: palette(midlight); }"
-            "QPushButton:hover { background: palette(mid); }"
-        )
-        self._toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._toggle_btn.clicked.connect(self._on_toggle)
-        main_layout.addWidget(self._toggle_btn)
-
-        # Content area
         self._content = QWidget()
         self._content_layout = QVBoxLayout(self._content)
-        self._content_layout.setContentsMargins(8, 4, 4, 8)
+        self._content_layout.setContentsMargins(0, 0, 0, 0)
         self._content_layout.setSpacing(6)
-        self._content.setVisible(expanded)
         main_layout.addWidget(self._content)
 
-    def _header_text(self) -> str:
-        arrow = "\u25BC" if self._expanded else "\u25B6"
-        return f"{arrow}  {self._title}"
-
-    def _on_toggle(self):
-        self._expanded = not self._expanded
-        self._content.setVisible(self._expanded)
-        self._toggle_btn.setText(self._header_text())
+    def _build_header(self, title: str) -> QWidget:
+        caption = QLabel(title.upper())
+        caption.setObjectName("SectionCaption")
+        return caption
 
     def content_layout(self) -> QVBoxLayout:
         """Return the layout for adding child widgets."""
         return self._content_layout
+
+    def content_widget(self) -> QWidget:
+        """Return the widget holding the section's content."""
+        return self._content
 
     def add_widget(self, widget: QWidget):
         """Add a widget to the content area."""
@@ -112,11 +120,123 @@ class CollapsibleSection(QWidget):
         """Add a layout to the content area."""
         self._content_layout.addLayout(layout)
 
+
+class CollapsibleSection(SidebarSection):
+    """A sidebar section whose caption toggles the content, with an optional badge."""
+
+    def __init__(self, title: str, parent=None, expanded: bool = True):
+        self._title = title
+        self._expanded = expanded
+        super().__init__(title, parent)
+        self._content.setVisible(expanded)
+
+    def _build_header(self, title: str) -> QWidget:
+        header = QWidget()
+        lay = QHBoxLayout(header)
+        lay.setContentsMargins(0, 0, 0, 0)
+        self._toggle_btn = QPushButton(self._header_text())
+        self._toggle_btn.setObjectName("SectionHeader")
+        self._toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._toggle_btn.clicked.connect(self._on_toggle)
+        lay.addWidget(self._toggle_btn, stretch=1)
+        self._badge = QLabel()
+        self._badge.setObjectName("SectionBadge")
+        lay.addWidget(self._badge)
+        return header
+
+    def _header_text(self) -> str:
+        arrow = "\u25BE" if self._expanded else "\u25B8"
+        return f"{arrow}  {self._title.upper()}"
+
+    def _on_toggle(self):
+        self.set_expanded(not self._expanded)
+
     def set_expanded(self, expanded: bool):
         """Programmatically expand or collapse."""
         self._expanded = expanded
         self._content.setVisible(expanded)
         self._toggle_btn.setText(self._header_text())
+
+    def set_badge(self, text: str):
+        """Show a short note at the right of the header (empty hides it)."""
+        self._badge.setText(text)
+
+
+# =============================================================================
+# Segmented Control
+# =============================================================================
+
+class SegmentedControl(QWidget):
+    """A row of mutually exclusive buttons with the item API of a QComboBox.
+
+    Supports addItem/count/itemData/itemText/setItemText/currentIndex/
+    currentData/setCurrentIndex/findData and the currentIndexChanged signal,
+    so it can stand in for a combo box whose options fit on one line.
+    """
+
+    currentIndexChanged = pyqtSignal(int)
+
+    _STYLE = (
+        "QPushButton { border: 1px solid palette(mid); border-radius: 0; margin-left: -1px;"
+        " padding: 4px 6px; background: palette(base); }"
+        "QPushButton:checked { background: palette(highlight); color: palette(highlighted-text);"
+        " border-color: palette(highlight); }"
+        "QPushButton:disabled { color: palette(placeholder-text); }"
+    )
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._layout = QHBoxLayout(self)
+        self._layout.setContentsMargins(1, 0, 0, 0)
+        self._layout.setSpacing(0)
+        self._group = QButtonGroup(self)
+        self._group.setExclusive(True)
+        self._group.idClicked.connect(self.setCurrentIndex)
+        self._data: list = []
+        self._current = -1
+        self.setStyleSheet(self._STYLE)
+
+    def addItem(self, text: str, userData=None):
+        btn = QPushButton(text)
+        btn.setCheckable(True)
+        btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._group.addButton(btn, len(self._data))
+        self._layout.addWidget(btn)
+        self._data.append(userData)
+        if self._current < 0:
+            self.setCurrentIndex(0)
+
+    def count(self) -> int:
+        return len(self._data)
+
+    def itemData(self, index: int):
+        return self._data[index] if 0 <= index < len(self._data) else None
+
+    def itemText(self, index: int) -> str:
+        return self._group.button(index).text()
+
+    def setItemText(self, index: int, text: str):
+        self._group.button(index).setText(text)
+
+    def setItemToolTip(self, index: int, text: str):
+        self._group.button(index).setToolTip(text)
+
+    def findData(self, data) -> int:
+        return self._data.index(data) if data in self._data else -1
+
+    def currentIndex(self) -> int:
+        return self._current
+
+    def currentData(self):
+        return self.itemData(self._current)
+
+    def setCurrentIndex(self, index: int):
+        if not 0 <= index < len(self._data):
+            return
+        self._group.button(index).setChecked(True)
+        if index != self._current:
+            self._current = index
+            self.currentIndexChanged.emit(index)
 
 
 # =============================================================================
