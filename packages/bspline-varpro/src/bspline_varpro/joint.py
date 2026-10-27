@@ -248,6 +248,8 @@ def solve_joint(
             except np.linalg.LinAlgError:
                 mu *= nu
                 nu *= 2
+                if mu > 1e16:
+                    return t, z, iteration, False, "Singular normal equations."
                 continue
             dt = -(g_t + W @ dz) / U_d
             t_new = t.copy()

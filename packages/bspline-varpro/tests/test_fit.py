@@ -1,3 +1,5 @@
+import threading
+
 import numpy as np
 import pytest
 from scipy.interpolate import BSpline
@@ -160,3 +162,23 @@ def test_end_derivative_coefficients_match_basis_derivatives():
         coef_end, coef_start = bv.end_derivative_coefficients(knots, 5, order)
         np.testing.assert_allclose(coef_start @ points[:order + 1], curve(0.0, nu=order))
         np.testing.assert_allclose(coef_end @ points[-order - 1:], curve(1.0, nu=order))
+
+
+def test_levenberg_marquardt_stops_on_a_non_finite_jacobian():
+    from bspline_varpro.fitting import levenberg_marquardt
+
+    outcome = []
+
+    def run():
+        outcome.append(levenberg_marquardt(
+            lambda x: np.array([x[0] - 1.0, x[1] + 2.0]),
+            lambda x: np.array([[1.0, np.nan], [0.0, 1.0]]),
+            np.zeros(2), max_nfev=50,
+        ))
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    worker.join(timeout=10)
+    assert outcome, "levenberg_marquardt did not return"
+    assert not outcome[0].success
+    assert "not finite" in outcome[0].message

@@ -203,3 +203,29 @@ def test_sample_spacings():
 def test_arc_length_of_a_line():
     line = BSpline(np.r_[[0.0] * 6, 0.3, [1.0] * 6], np.linspace([0, 0], [3, 4], 7), 5)
     assert export.arc_length(line) == pytest.approx(5.0, rel=1e-12)
+
+
+@pytest.mark.parametrize("units, code", [("mm", "4"), ("m", "6"), ("inch", "1")])
+def test_dxf_records_the_requested_units(tmp_path, fitted, units, code):
+    for text in (export.to_dxf(fitted, units=units),
+                 export.write(tmp_path / "part.dxf", fitted, units=units).read_text()):
+        pairs = _dxf_pairs(text)
+        assert pairs[pairs.index((9, "$INSUNITS")) + 1] == (70, code)
+    with pytest.raises(ValueError, match="units"):
+        export.to_dxf(fitted, units="furlong")
+
+
+def test_step_escapes_quotes_backslashes_and_non_ascii_names(tmp_path, fitted):
+    name = "Göttingen 387 \\ it's \U0001d4d0"
+    text = export.write(tmp_path / "part.step", fitted, name=name).read_text(encoding="ascii")
+    escaped = "'G\\X2\\00F6\\X0\\ttingen 387 \\\\ it''s \\X4\\0001D4D0\\X0\\'"
+    assert f"PRODUCT({escaped},{escaped}," in text
+    assert len(_step_curves(text)) == 2
+
+
+def test_iges_names_are_ascii_and_fit_one_record(tmp_path, fitted):
+    name = "Göttingen " + "x" * 100
+    text = export.write(tmp_path / "part.igs", fitted, name=name).read_text(encoding="ascii")
+    assert len(_iges_parameters(text)) == 2
+    global_section = "".join(line[:72] for line in text.splitlines() if line[72] == "G")
+    assert "60HGottingen xxx" in global_section

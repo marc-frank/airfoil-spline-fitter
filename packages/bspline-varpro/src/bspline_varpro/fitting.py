@@ -336,6 +336,7 @@ def solve_problem(
 
 
 _MESSAGES = {
+    -1: "The residual or Jacobian is not finite.",
     0: "The maximum number of function evaluations is exceeded.",
     1: "`gtol` termination condition is satisfied.",
     2: "`ftol` termination condition is satisfied.",
@@ -378,6 +379,10 @@ def _lm_run(residual, jacobian, x0, max_nfev, tolerance, verbose):
     mu, nu = 1e-3, 2.0
     status = 0
     while nfev < max_nfev:
+        # A non-finite model never yields a valid step: stop instead of raising the damping forever.
+        if not (np.isfinite(cost) and np.all(np.isfinite(A)) and np.all(np.isfinite(g))):
+            status = -1
+            break
         column_norms = np.sqrt(np.maximum(np.diag(A), 0.0))
         r_norm = np.sqrt(2 * cost)
         with np.errstate(divide="ignore", invalid="ignore"):
@@ -389,12 +394,13 @@ def _lm_run(residual, jacobian, x0, max_nfev, tolerance, verbose):
             factor = cho_factor(A + mu * np.diag(scale), check_finite=False)
             step = -cho_solve(factor, g, check_finite=False)
         except np.linalg.LinAlgError:
+            step = None
+        if step is None or not np.all(np.isfinite(step)):
             mu *= nu
             nu *= 2.0
-            continue
-        if not np.all(np.isfinite(step)):
-            mu *= nu
-            nu *= 2.0
+            if mu > 1e20:
+                status = 3
+                break
             continue
         if np.linalg.norm(scale ** 0.5 * step) <= tolerance * (tolerance + np.linalg.norm(scale ** 0.5 * x)):
             status = 3

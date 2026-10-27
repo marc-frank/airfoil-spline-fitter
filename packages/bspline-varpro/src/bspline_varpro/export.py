@@ -12,6 +12,7 @@ vector, and control points (non-rational B-splines).
 from __future__ import annotations
 
 import datetime as _dt
+import unicodedata
 from pathlib import Path
 from typing import List, Sequence, Union
 
@@ -157,7 +158,21 @@ def _step_real(v: float) -> str:
 
 
 def _step_string(text: str) -> str:
-    return "'" + text.replace("'", "''") + "'"
+    r"""STEP string literal (ISO 10303-21): ``'`` and ``\`` doubled, non-ASCII as ``\X2\...\X0\``."""
+    out = []
+    for ch in text:
+        code = ord(ch)
+        if ch == "'":
+            out.append("''")
+        elif ch == "\\":
+            out.append("\\\\")
+        elif 32 <= code < 127:
+            out.append(ch)
+        elif code <= 0xFFFF:
+            out.append(r"\X2" + f"\\{code:04X}" + r"\X0" + "\\")
+        else:
+            out.append(r"\X4" + f"\\{code:08X}" + r"\X0" + "\\")
+    return "'" + "".join(out) + "'"
 
 
 def to_step(curves: CurveInput, name: str = "curves", scale: float = 1.0, units: str = "mm") -> str:
@@ -241,7 +256,15 @@ def to_step(curves: CurveInput, name: str = "curves", scale: float = 1.0, units:
     return "\n".join(lines)
 
 
-def _hollerith(text: str) -> str:
+def _ascii(text: str) -> str:
+    """Printable ASCII approximation of ``text`` (accents dropped, other characters as ``?``)."""
+    decomposed = unicodedata.normalize("NFKD", text)
+    return "".join(c if 32 <= ord(c) < 127 else "?" for c in decomposed if not unicodedata.combining(c))
+
+
+def _hollerith(text: str, limit: int = 60) -> str:
+    """IGES Hollerith string, ASCII and at most ``limit`` characters so it fits one record."""
+    text = _ascii(text)[:limit]
     return f"{len(text)}H{text}"
 
 
@@ -314,8 +337,15 @@ def to_iges(curves: CurveInput, name: str = "curves", scale: float = 1.0, units:
     return "\n".join(start + global_lines + directory + parameter + [terminate]) + "\n"
 
 
-def to_dxf(curves: CurveInput, scale: float = 1.0, layer: str = "0") -> str:
-    """DXF R2000 text with one ``SPLINE`` entity per curve."""
+def to_dxf(curves: CurveInput, scale: float = 1.0, layer: str = "0", units: str = "mm") -> str:
+    """DXF R2000 text with one ``SPLINE`` entity per curve.
+
+    Args:
+        units: ``"mm"``, ``"m"``, or ``"inch"``, written as ``$INSUNITS``.
+    """
+    insunits = {"mm": 4, "m": 6, "inch": 1}
+    if units not in insunits:
+        raise ValueError("units must be 'mm', 'm', or 'inch'.")
     out: List[str] = []
 
     def pair(code: int, value) -> None:
@@ -325,7 +355,7 @@ def to_dxf(curves: CurveInput, scale: float = 1.0, layer: str = "0") -> str:
     handle = 0x100
     pair(0, "SECTION"); pair(2, "HEADER")
     pair(9, "$ACADVER"); pair(1, "AC1015")
-    pair(9, "$INSUNITS"); pair(70, 4)
+    pair(9, "$INSUNITS"); pair(70, insunits[units])
     pair(0, "ENDSEC")
     pair(0, "SECTION"); pair(2, "ENTITIES")
     for curve in as_curves(curves):
@@ -364,7 +394,6 @@ def write(path: Union[str, Path], curves: CurveInput, **kwargs) -> Path:
     elif suffix in (".iges", ".igs"):
         text = to_iges(curves, name=kwargs.pop("name", path.stem), **kwargs)
     elif suffix == ".dxf":
-        kwargs.pop("units", None)
         kwargs.pop("name", None)
         text = to_dxf(curves, **kwargs)
     else:
