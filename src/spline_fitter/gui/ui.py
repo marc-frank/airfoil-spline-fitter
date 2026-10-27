@@ -158,6 +158,7 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
             lambda _: (self._update_auto_tolerance(),
                        self._on_optimizer_changed(self._combo_opt.currentIndex()))
         )
+        self._check_subsample.toggled.connect(self._spin_subsample.setEnabled)
 
         # Spline configuration
         self._spin_degree.valueChanged.connect(self._update_ctrl_minimum)
@@ -262,6 +263,9 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
             smoothing_factor=smoothing,
             smoothing_weight=self._spin_smoothing_weight.value(),
             tolerance=tolerance,
+            max_points_per_section=(self._spin_subsample.value()
+                                    if opt_type == OptimizerType.GN_VARPRO
+                                    and self._check_subsample.isChecked() else None),
         )
 
     def _apply_run_config(self, cfg: SplineConfig, opt: OptimizationConfig) -> None:
@@ -275,6 +279,9 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         if opt.tolerance is not None:
             self._check_auto_tolerance.setChecked(False)
             self._spin_tolerance.setValue(opt.tolerance)
+        self._check_subsample.setChecked(opt.max_points_per_section is not None)
+        if opt.max_points_per_section is not None:
+            self._spin_subsample.setValue(opt.max_points_per_section)
 
     def _get_param_opt_settings(self) -> OptimizerType | None:
         """Get parameterization optimizer settings from UI state.

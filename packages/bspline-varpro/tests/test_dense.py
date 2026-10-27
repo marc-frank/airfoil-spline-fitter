@@ -36,6 +36,20 @@ def test_fit_with_subsampling_returns_all_parameters():
     assert all(np.all(np.diff(t) >= 0) for t in result.parameters)
 
 
+def test_subsampled_fit_reports_progress_and_can_be_stopped():
+    sections = dense_sections(401)
+    seen = []
+
+    def stop_after_three(control_points, rms_error):
+        seen.append(rms_error)
+        return len(seen) >= 3
+
+    result = bv.fit(sections, 10, 5, continuity="G2", max_points_per_section=60, callback=stop_after_three)
+    assert len(seen) == 3
+    assert not result.success and result.message == "Stopped by callback."
+    assert [len(t) for t in result.parameters] == [401, 401]
+
+
 def test_levenberg_marquardt_solves_rosenbrock():
     def residual(x):
         return np.array([10 * (x[1] - x[0] ** 2), 1 - x[0]])

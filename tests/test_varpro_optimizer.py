@@ -116,6 +116,16 @@ def test_projects_saved_with_fairing_still_load():
         assert "fairing" not in _encode_optimization_config(options)
 
 
+def test_subsampling_setting_round_trips_through_projects():
+    from spline_fitter.project_io import _decode_optimization_config, _encode_optimization_config
+    options = OptimizationConfig(optimizer=OptimizerType.GN_VARPRO, max_points_per_section=150)
+    assert _decode_optimization_config(_encode_optimization_config(options)) == options
+    old = _decode_optimization_config({"optimizer": "gn-varpro", "metric": "avg_point"})
+    assert old.max_points_per_section is None
+    with pytest.raises(ValueError, match="at least 2"):
+        OptimizationConfig(max_points_per_section=1)
+
+
 def test_projects_saved_with_automatic_selection_still_load():
     from spline_fitter.project_io import (
         _decode_fit_result,

@@ -311,7 +311,8 @@ class ProjectManager:
         ):
             return False
 
-        if eo.tolerance != opt_config.tolerance:
+        if (eo.tolerance != opt_config.tolerance
+                or eo.max_points_per_section != opt_config.max_points_per_section):
             return False
 
         # Compare optimization config

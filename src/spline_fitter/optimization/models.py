@@ -466,6 +466,9 @@ class OptimizationConfig:
         tolerance: Maximum orthogonal deviation for VarPro LM tolerance mode,
             which picks the number of control points and the knots itself.
             None fits the configured number of control points.
+        max_points_per_section: VarPro LM only. Sections with more points are
+            fitted on an evenly spaced subsample of this many points, then
+            refined jointly on all points. None (default) uses every point.
     """
     optimizer: OptimizerType = OptimizerType.DE
     metric: ErrorMetric = ErrorMetric.PARAMETRIC
@@ -478,10 +481,14 @@ class OptimizationConfig:
     smoothing_weight: float = 1e-3
     custom_parameters: list[np.ndarray] | None = None
     tolerance: float | None = None
+    max_points_per_section: int | None = None
 
     def __post_init__(self):
         if self.tolerance is not None and not self.tolerance > 0:
             raise ValueError(f"tolerance must be positive, got {self.tolerance}")
+        if self.max_points_per_section is not None and self.max_points_per_section < 2:
+            raise ValueError(
+                f"max_points_per_section must be at least 2, got {self.max_points_per_section}")
 
     @property
     def random_seed(self) -> int | None:

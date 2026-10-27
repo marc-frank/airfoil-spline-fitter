@@ -474,6 +474,25 @@ class WindowLayoutMixin:
         tol_row.addWidget(self._check_auto_tolerance)
         tol_form.addRow("Tolerance:", tol_row)
 
+        dense_row = QHBoxLayout()
+        dense_row.setSpacing(4)
+        self._check_subsample = QCheckBox("Subsample to")
+        self._check_subsample.setChecked(False)
+        self._check_subsample.setToolTip(
+            "For dense data: fit an evenly spaced subsample of each section, then\n"
+            "refine the fit on all points. Much faster for thousands of points.\n"
+            "Off: every point is used throughout."
+        )
+        dense_row.addWidget(self._check_subsample)
+        self._spin_subsample = QSpinBox()
+        self._spin_subsample.setRange(20, 100000)
+        self._spin_subsample.setValue(200)
+        self._spin_subsample.setSuffix(" pts/section")
+        self._spin_subsample.setEnabled(False)
+        self._spin_subsample.setToolTip("Sections with more points than this are subsampled.")
+        dense_row.addWidget(self._spin_subsample, stretch=1)
+        tol_form.addRow("Dense data:", dense_row)
+
         self._tolerance_container.setVisible(False)
         section.add_widget(self._tolerance_container)
 

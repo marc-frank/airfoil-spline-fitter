@@ -26,13 +26,14 @@ ProgressCallback = Callable[[FitResult, float], Optional[bool]]
 
 
 def _refit(sections, knots, degree, options: ChainOptions, t_sections, theta, max_nfev,
-           max_points: Optional[int] = None) -> FitResult:
+           max_points: Optional[int] = None, callback=None) -> FitResult:
     if max_points is not None and any(len(s) > max_points for s in sections):
-        return fit_subsampled(sections, knots, degree, options, t_sections, theta, max_nfev, max_points)
+        return fit_subsampled(sections, knots, degree, options, t_sections, theta, max_nfev, max_points,
+                              callback)
     problem = options.problem(sections, knots, degree)
     if theta is None or len(theta) != problem.num_params:
-        return solve_with_continuation(problem, options, t_sections, max_nfev=max_nfev)
-    return solve_problem(problem, t_sections, theta, max_nfev=max_nfev)
+        return solve_with_continuation(problem, options, t_sections, max_nfev=max_nfev, callback=callback)
+    return solve_problem(problem, t_sections, theta, max_nfev=max_nfev, callback=callback)
 
 
 def subsample_indices(n: int, max_points: int) -> np.ndarray:
@@ -43,11 +44,13 @@ def subsample_indices(n: int, max_points: int) -> np.ndarray:
 
 
 def fit_subsampled(sections, knots, degree, options: ChainOptions, t_sections, theta, max_nfev,
-                   max_points: int) -> FitResult:
+                   max_points: int, callback=None) -> FitResult:
     """Variable projection on a subsample, then joint refinement on all points.
 
     Variable projection costs O(n^3) per iteration in the number of points,
     the joint solver O(n k^2) in the number of control coordinates k.
+    ``callback`` (as for :func:`~bspline_varpro.fitting.fit`) sees the
+    subsample stage; if it stops the fit, the refinement is skipped.
     """
     from .diagnostics import project
     from .refinement import refine
@@ -55,7 +58,7 @@ def fit_subsampled(sections, knots, degree, options: ChainOptions, t_sections, t
     indices = [subsample_indices(len(s), max_points) for s in sections]
     subsets = [s[i] for s, i in zip(sections, indices)]
     t_sub = [np.asarray(t)[i] for t, i in zip(t_sections, indices)]
-    coarse = _refit(subsets, knots, degree, options, t_sub, theta, max_nfev)
+    coarse = _refit(subsets, knots, degree, options, t_sub, theta, max_nfev, callback=callback)
     t_all = []
     for sec, curve in zip(sections, coarse.curves()):
         t = np.maximum.accumulate(np.clip(project(sec, curve)[0], 0.0, 1.0))
@@ -63,6 +66,8 @@ def fit_subsampled(sections, knots, degree, options: ChainOptions, t_sections, t
         t_all.append(t)
     coarse.parameters = t_all
     coarse.options = options
+    if coarse.message == "Stopped by callback.":
+        return coarse
     refined = refine(sections, coarse, options)
     refined.nfev += coarse.nfev
     return refined

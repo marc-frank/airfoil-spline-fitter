@@ -43,8 +43,6 @@ class GNVarProConfig:
         tolerance_smoothing: Bending energy weight in tolerance mode (1e-7 gave
             the fewest control points and curvature extrema in the
             bspline-varpro benchmark)
-        max_points_per_section: Subsample size for the variable projection
-            stage of dense data in tolerance mode
     """
     max_iterations: int = 50
     regularization: float = 1e-12
@@ -54,7 +52,6 @@ class GNVarProConfig:
     max_nfev: int | None = None
     tolerance: float = 1e-10
     tolerance_smoothing: float = 1e-7
-    max_points_per_section: int = 200
 
 
 def accepts_preview(callback: Callable | None) -> bool:
@@ -150,6 +147,7 @@ class GNVarProOptimizer(AlgebraicOptimizer):
             regularization=self.config.regularization,
             initial_parameters=opt_config.custom_parameters,
             max_nfev=self.config.max_nfev or max_iters,
+            max_points_per_section=opt_config.max_points_per_section,
             tolerance=self.config.tolerance,
             exact_jacobian=self.config.use_exact_jacobian,
             verbose=self.config.verbose,
@@ -184,7 +182,7 @@ class GNVarProOptimizer(AlgebraicOptimizer):
             smoothing=self.config.tolerance_smoothing,
             regularization=self.config.regularization,
             initial_parameters=opt_config.custom_parameters,
-            max_points_per_section=self.config.max_points_per_section,
+            max_points_per_section=opt_config.max_points_per_section,
             callback=on_refit,
         )
         return self._raw(result, result.max_deviation, max(refits, 1))

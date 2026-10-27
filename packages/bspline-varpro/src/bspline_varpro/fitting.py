@@ -236,7 +236,7 @@ def fit(
             raise ValueError("max_points_per_section must be at least 2.")
         from .tolerance import fit_subsampled
         result = fit_subsampled(sections, knot_vectors, degree, options, t_sections, initial_theta,
-                                max_nfev, max_points_per_section)
+                                max_nfev, max_points_per_section, callback)
         result.options = options
         return result
     problem = options.problem(sections, knot_vectors, degree)
