@@ -85,7 +85,7 @@ def test_fixed_mode_geometric_continuity_uses_labels(monkeypatch):
     config = SplineConfig(degree=5, num_control_points=9, continuity=ContinuityMode.G2,
                           geometric_continuity=True)
     result = GNVarProOptimizer().fit(config, OptimizationConfig(max_iterations=200), naca_airfoil(n=31))
-    assert captured["continuity"] == ["G2"]
+    assert captured["continuity"] == "G2"
     assert result.section_knots is not None and [len(k) for k in result.section_knots] == [15, 15]
 
 

@@ -96,6 +96,7 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         is_gn_varpro = opt_type == OptimizerType.GN_VARPRO if opt_type else False
         uses_metric = opt_type.uses_error_metric if opt_type else False
         tolerance_mode = is_gn_varpro and self._tolerance_mode_selected()
+        has_junctions = self._spin_sections.value() > 1
 
         def show(visible: bool, *widgets):
             for w in widgets:
@@ -120,13 +121,16 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._sweep_ctrl.set_sweep_allowed(not tolerance_mode)
         show(uses_metric, self._lbl_err, self._combo_err)
 
-        # Curve: geometric continuity is VarPro only
-        show(is_gn_varpro, self._lbl_cont_kind, self._combo_cont_kind)
+        # Curve: continuity applies at junctions, so not to a single
+        # section; geometric continuity is VarPro only
+        show(has_junctions, self._lbl_cont, self._combo_cont)
+        show(has_junctions and is_gn_varpro, self._lbl_cont_kind, self._combo_cont_kind)
         self._update_continuity_labels()
 
         # Advanced: only the settings the selected optimizer reads
-        show(is_gn_varpro, self._lbl_junctions, self._edit_junctions,
-             self._lbl_subsample, self._subsample_row)
+        show(has_junctions and is_gn_varpro, self._lbl_junctions, self._edit_junctions)
+        show(has_junctions, self._lbl_optimize_le, self._check_optimize_le)
+        show(is_gn_varpro, self._lbl_subsample, self._subsample_row)
         show(is_gn_varpro and not tolerance_mode,
              self._lbl_smoothing_weight, self._sweep_smoothing_weight)
         self._sweep_smoothing_weight.setEnabled(not self._is_fitting)
@@ -213,8 +217,11 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._spin_comb_scale.valueChanged.connect(self._refresh_curvature_comb)
         self._spin_comb_density.valueChanged.connect(self._refresh_curvature_comb)
 
-        # Section count changes
+        # Section count changes (a single section has no junction settings)
         self._spin_sections.valueChanged.connect(self._on_sections_changed)
+        self._spin_sections.valueChanged.connect(
+            lambda _: self._on_optimizer_changed(self._combo_opt.currentIndex())
+        )
 
         # Fairness
         self._check_fairness.toggled.connect(
@@ -298,7 +305,8 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
             metric=self._combo_err.currentData(),
             max_iterations=self._spin_maxiter.value(),
             seed=self._spin_seed.value(),
-            optimize_le_position=self._check_optimize_le.isChecked(),
+            optimize_le_position=(self._check_optimize_le.isChecked()
+                                  and self._spin_sections.value() > 1),
             smoothing_factor=smoothing,
             smoothing_weight=self._spin_smoothing_weight.value(),
             tolerance=tolerance,

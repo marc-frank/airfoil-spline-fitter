@@ -551,7 +551,7 @@ class WindowLayoutMixin:
             self._combo_cont.addItem(f"C{i}", userData=mode)
             self._combo_cont.setItemToolTip(i, f"{cont_names[i]} matches across junctions")
         self._combo_cont.setCurrentIndex(3)
-        _add_row(form, "Continuity", self._combo_cont)
+        self._lbl_cont = _add_row(form, "Continuity", self._combo_cont)
 
         self._combo_cont_kind = SegmentedControl()
         self._combo_cont_kind.addItem("Geometric", userData=True)
@@ -682,7 +682,7 @@ class WindowLayoutMixin:
         self._check_optimize_le.setToolTip(
             "Allow the leading edge junction to move during optimization."
         )
-        _add_row(form, "Junction", self._check_optimize_le)
+        self._lbl_optimize_le = _add_row(form, "Junction", self._check_optimize_le)
 
         section.add_layout(form)
         section.add_widget(self._build_regularization_box())

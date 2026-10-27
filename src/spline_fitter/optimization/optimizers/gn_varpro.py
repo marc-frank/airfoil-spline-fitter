@@ -64,9 +64,14 @@ def accepts_preview(callback: Callable | None) -> bool:
         return False
 
 
-def _continuity(spline_config: SplineConfig) -> list[str]:
+def _continuity(spline_config: SplineConfig) -> str | list[str]:
+    """Continuity argument for the library: a list with one spec per junction,
+    or a single spec when there is at most one junction (a single section
+    has none, and the library rejects a list whose length does not match)."""
     specs = spline_config.junction_specs()
-    return specs if specs else ["G1"]
+    if len(specs) > 1:
+        return specs
+    return specs[0] if specs else "G1"
 
 
 def _flat(control_points: list[np.ndarray]) -> np.ndarray:
@@ -135,13 +140,11 @@ class GNVarProOptimizer(AlgebraicOptimizer):
 
         max_iters = (opt_config.max_iterations if opt_config.max_iterations > 0
                      else self.config.max_iterations)
-        specs = _continuity(spline_config)
-        continuity = specs if len(specs) > 1 or specs[0][0] == "G" else int(specs[0][1])
         result = bspline_varpro.fit(
             sections,
             num_control_points=spline_config.num_control_points,
             degree=spline_config.degree,
-            continuity=continuity,
+            continuity=_continuity(spline_config),
             fix_junctions=not opt_config.optimize_le_position,
             smoothing=self.config.smoothing_weight,
             regularization=self.config.regularization,
@@ -174,12 +177,11 @@ class GNVarProOptimizer(AlgebraicOptimizer):
                                      preview=(result.control_points, result.knots, result.degree)))
             return bool(callback(_flat(result.control_points), deviation))
 
-        specs = _continuity(spline_config)
         result = bspline_varpro.fit_to_tolerance(
             sections,
             opt_config.tolerance,
             spline_config.degree,
-            continuity=specs if len(specs) > 1 else specs[0],
+            continuity=_continuity(spline_config),
             fix_junctions=not opt_config.optimize_le_position,
             smoothing=self.config.tolerance_smoothing,
             regularization=self.config.regularization,
