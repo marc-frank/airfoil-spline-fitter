@@ -1,0 +1,4 @@
+naca2412 4 sections    STEP 1.8e-13  IGES 1.8e-13  DXF 2.2e-09  (inch, x250)
+naca2412 merged        STEP 1.1e-13  IGES 1.1e-13  DXF 2.3e-08  (inch, x250)
+naca4412 blunt + TE    STEP 5.7e-13  IGES 5.7e-13  DXF 1.2e-08  (mm, x1000)
+naca4412 merged        STEP 3.4e-16  IGES 3.4e-16  DXF 5.2e-11  (m, x1)
