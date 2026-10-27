@@ -127,8 +127,12 @@ def scipy_splprep(case: Case, tol: float) -> Optional[Attempt]:
     return [best], len(best.c)
 
 
+TOLERANCE_SMOOTHING = 1e-7
+
+
 def tolerance_fit(case: Case, tol: float, fairing: bool = False) -> Optional[Attempt]:
-    result = bv.fit_to_tolerance(case.sections, tol, DEGREE, continuity="G2", fairing=fairing)
+    result = bv.fit_to_tolerance(case.sections, tol, DEGREE, continuity="G2", fairing=fairing,
+                                 smoothing=TOLERANCE_SMOOTHING)
     if not result.success:
         return None
     return result.curves(), _chain_ctrl_count(result.curves())
@@ -160,12 +164,16 @@ def evaluate(case: Case, curves: List[BSpline], n_ctrl: int, seconds: float) -> 
 
 
 def main(argv=None) -> int:
+    global TOLERANCE_SMOOTHING
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--quick", action="store_true")
     parser.add_argument("--methods", default=",".join(METHODS))
     parser.add_argument("--cases", default="", help="Comma-separated substrings of case names.")
     parser.add_argument("--json", type=Path)
+    parser.add_argument("--smoothing", type=float, default=TOLERANCE_SMOOTHING,
+                        help="Bending-energy weight of the tolerance methods.")
     args = parser.parse_args(argv)
+    TOLERANCE_SMOOTHING = args.smoothing
 
     methods = [m for m in args.methods.split(",") if m]
     cases = reference_cases(args.quick)

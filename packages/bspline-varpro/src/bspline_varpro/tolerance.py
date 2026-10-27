@@ -199,7 +199,7 @@ def fit_to_tolerance(
     fix_ends: bool = True,
     start_tangent: Optional[Sequence[float]] = None,
     end_tangent: Optional[Sequence[float]] = None,
-    smoothing: float = 1e-5,
+    smoothing: float = 1e-7,
     regularization: float = 1e-12,
     initial_knots: Optional[Sequence[np.ndarray]] = None,
     initial_parameters: Optional[Sequence[np.ndarray]] = None,
@@ -308,39 +308,51 @@ def fit_to_tolerance(
     else:
         return finish(result, deviation, False, "Tolerance not reached within max_iterations.")
 
-    if remove_knots:
-        for s in range(len(sections)):
-            failures = 0
-            tried = set()
-            while failures < 2:
-                devs = section_deviations(sections, result.curves())
-                order = [k for k in _removal_order(result.knots[s], degree, result.parameters[s],
-                                                   devs[s], tolerance) if k not in tried]
-                if not order or len(result.knots[s]) - degree - 1 <= need[s]:
-                    break
-                k = order[0]
-                tried.add(k)
-                trial_knots = list(result.knots)
-                inner = interior_knots(result.knots[s], degree)
-                trial_knots[s] = clamped_knots(degree, np.delete(inner, np.argmin(np.abs(inner - k))))
-                trial = _refit(sections, trial_knots, degree, options, result.parameters, result.theta,
-                               max_nfev, max_points_per_section)
-                trial_dev = _max_deviation(sections, trial)
-                if trial_dev <= tolerance:
-                    result, deviation, failures = trial, trial_dev, 0
-                    tried.clear()
-                    if record("remove", result, deviation):
-                        return finish(result, deviation, False, "Stopped by callback.")
-                else:
-                    failures += 1
-
     dense = max_points_per_section is not None and any(len(s) > max_points_per_section for s in sections)
-    if optimize_knots and not dense:
-        polished = polish_knots(sections, result, options)
-        polished_dev = _max_deviation(sections, polished)
-        if polished_dev <= tolerance and polished.rms_error <= result.rms_error:
-            result, deviation = polished, polished_dev
-            record("polish", result, deviation)
+    polish = optimize_knots and not dense
+
+    def polished(result, deviation):
+        """Knot-polished result if it stays within tolerance without raising the RMS error."""
+        candidate = polish_knots(sections, result, options)
+        candidate_dev = _max_deviation(sections, candidate)
+        if candidate_dev <= tolerance and candidate.rms_error <= result.rms_error:
+            return candidate, candidate_dev, True
+        return result, deviation, False
+
+    # Polish before removing: better-placed knots make more of them redundant.
+    if polish:
+        result, deviation, improved = polished(result, deviation)
+        if improved and record("polish", result, deviation):
+            return finish(result, deviation, False, "Stopped by callback.")
+
+    if remove_knots:
+        removed_any = False
+        for s in range(len(sections)):
+            # Try every knot, least useful first; after a removal start over, since the
+            # refitted curve can make knots removable that failed before.
+            removed = True
+            while removed and len(result.knots[s]) - degree - 1 > need[s]:
+                removed = False
+                devs = section_deviations(sections, result.curves())
+                for k in _removal_order(result.knots[s], degree, result.parameters[s], devs[s], tolerance):
+                    trial_knots = list(result.knots)
+                    inner = interior_knots(result.knots[s], degree)
+                    trial_knots[s] = clamped_knots(degree, np.delete(inner, np.argmin(np.abs(inner - k))))
+                    trial = _refit(sections, trial_knots, degree, options, result.parameters, result.theta,
+                                   max_nfev, max_points_per_section)
+                    trial_dev = _max_deviation(sections, trial)
+                    if trial_dev > tolerance and polish:
+                        trial = polish_knots(sections, trial, options)
+                        trial_dev = _max_deviation(sections, trial)
+                    if trial_dev <= tolerance:
+                        result, deviation, removed, removed_any = trial, trial_dev, True, True
+                        if record("remove", result, deviation):
+                            return finish(result, deviation, False, "Stopped by callback.")
+                        break
+        if polish and removed_any:
+            result, deviation, improved = polished(result, deviation)
+            if improved:
+                record("polish", result, deviation)
 
     if fairing and sections[0].shape[1] == 2 and degree >= 3:
         from .fairing import fair

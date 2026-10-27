@@ -63,9 +63,10 @@ The procedure:
 1. Start with the fewest control points the end and junction conditions allow.
 2. Fit, measure the exact orthogonal deviation of every point, and insert knots
    in the spans that exceed the tolerance. Repeat until every point is within it.
-3. Try removing each knot (least useful first) and keep removals that stay
-   within the tolerance.
-4. Optimize the interior knot positions together with the fit.
+3. Optimize the interior knot positions together with the fit.
+4. Try removing every knot, least useful first, refitting (and re-optimizing
+   the knots) after each attempt. Keep removals that stay within the
+   tolerance and start over after each one, then optimize the knots again.
 5. Fair: minimize the curvature-slope energy ∫(dκ/ds)² ds plus the squared
    deviations, with the largest weight that keeps every point within the
    tolerance.
@@ -74,6 +75,10 @@ Dense data (more than `max_points_per_section`, default 200 per section) is
 fitted on an evenly spaced subsample and then refined jointly on all points. A
 6000-point NACA 2412 fits to 1e-5 with fairing in about 15 s
 (`benchmarks/results/speed_0.7.txt`).
+
+The bending-energy weight `smoothing` defaults to 1e-7. On the benchmark set
+it gave the fewest control points and curvature extrema of 0, 1e-7, 1e-6, and
+1e-5 (`benchmarks/results/smoothing_1.1.txt`).
 
 Useful options: `max_control_points` (per section), `fairing_tolerance`
 (allow a different deviation after fairing), `optimize_knots`, `remove_knots`,

@@ -40,8 +40,9 @@ class GNVarProConfig:
         verbose: Verbosity level (0=silent, 1=summary, 2=per-iteration)
         max_nfev: Residual evaluation limit overriding both iteration settings
         tolerance: Solver ftol/xtol/gtol
-        tolerance_smoothing: Bending energy weight in tolerance mode (kept tiny;
-            smoothness comes from the fairing stage)
+        tolerance_smoothing: Bending energy weight in tolerance mode (1e-7 gave
+            the fewest control points and curvature extrema in the
+            bspline-varpro benchmark)
         max_points_per_section: Subsample size for the variable projection
             stage of dense data in tolerance mode
     """
@@ -52,7 +53,7 @@ class GNVarProConfig:
     verbose: int = 0
     max_nfev: int | None = None
     tolerance: float = 1e-10
-    tolerance_smoothing: float = 1e-5
+    tolerance_smoothing: float = 1e-7
     max_points_per_section: int = 200
 
 

@@ -82,6 +82,25 @@ def test_warm_start_does_not_stall():
     assert warm.rms_error <= cold.rms_error * 1.01
 
 
+def test_no_remaining_knot_can_be_removed():
+    # NACA 2412 at 5 decimals used to keep removable knots: removal gave up after
+    # two failures in a row and only polished the knots afterwards.
+    pts = np.round(NACA4("2412").points(81), 5)
+    sections = [pts[:81], pts[80:]]
+    tolerance = 1e-5
+    result = bv.fit_to_tolerance(sections, tolerance, 5, smoothing=1e-5, fairing=False)
+    assert result.success
+    assert sum(result.num_control_points) <= 21
+    for s in range(len(sections)):
+        inner = bv.interior_knots(result.knots[s], 5)
+        for i in range(len(inner)):
+            knots = list(result.knots)
+            knots[s] = bv.clamped_knots(5, np.delete(inner, i))
+            trial = bv.fit(sections, degree=5, knots=knots, continuity="G2", smoothing=1e-5,
+                           initial_parameters=result.parameters, max_nfev=200)
+            assert dg.max_deviation(sections, trial.curves()) > tolerance
+
+
 def test_rejects_invalid_tolerance():
     with pytest.raises(ValueError, match="positive"):
         bv.fit_to_tolerance(naca_sections(21), 0.0)
