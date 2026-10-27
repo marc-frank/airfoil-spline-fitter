@@ -84,6 +84,7 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
 
         self._connect_signals()
         self._restore_settings()
+        self._set_advanced_baseline()
 
     # -- Optimizer Visibility Logic ----------------------------------------
 

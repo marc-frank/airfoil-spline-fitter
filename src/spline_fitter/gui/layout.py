@@ -687,25 +687,24 @@ class WindowLayoutMixin:
         section.add_layout(form)
         section.add_widget(self._build_regularization_box())
 
-        # "N changed" badge in the header, so non-default settings stay
-        # noticeable while the section is collapsed; its tooltip names them
-        self._advanced_defaults = [
-            (name, w, self._widget_value(w), self._widget_text(w)) for name, w in (
-                ("Per junction", self._edit_junctions),
-                ("Subsample", self._check_subsample),
-                ("Subsample points", self._spin_subsample),
-                ("Smoothing", self._spin_smoothing_weight),
-                ("LSQ smoothing", self._spin_smoothing),
-                ("Iteration limit", self._spin_maxiter),
-                ("Seed", self._spin_seed),
-                ("Outer optimizer", self._combo_param_opt_outer),
-                ("Foot points", self._check_orth_lsq_local_bounds),
-                ("Search scale", self._spin_bbox),
-                ("Junction", self._check_optimize_le),
-                ("Fairness penalties", self._check_fairness),
-            )
-        ]
-        for _, w, _, _ in self._advanced_defaults:
+        # "N changed" badge in the header, so settings changed this session
+        # stay noticeable while the section is collapsed; its tooltip names them
+        self._advanced_fields = (
+            ("Per junction", self._edit_junctions),
+            ("Subsample", self._check_subsample),
+            ("Subsample points", self._spin_subsample),
+            ("Smoothing", self._spin_smoothing_weight),
+            ("LSQ smoothing", self._spin_smoothing),
+            ("Iteration limit", self._spin_maxiter),
+            ("Seed", self._spin_seed),
+            ("Outer optimizer", self._combo_param_opt_outer),
+            ("Foot points", self._check_orth_lsq_local_bounds),
+            ("Search scale", self._spin_bbox),
+            ("Junction", self._check_optimize_le),
+            ("Fairness penalties", self._check_fairness),
+        )
+        self._set_advanced_baseline()
+        for _, w in self._advanced_fields:
             signal = (w.textChanged if isinstance(w, QLineEdit)
                       else w.toggled if isinstance(w, QCheckBox)
                       else w.currentIndexChanged if isinstance(w, QComboBox)
@@ -713,6 +712,18 @@ class WindowLayoutMixin:
             signal.connect(self._update_advanced_badge)
 
         return section
+
+    def _set_advanced_baseline(self):
+        """Take the current Advanced values as the ones the badge compares to.
+
+        Called after building and again once the saved settings are
+        restored, so remembered values do not count as changed.
+        """
+        self._advanced_defaults = [
+            (name, w, self._widget_value(w), self._widget_text(w))
+            for name, w in self._advanced_fields
+        ]
+        self._update_advanced_badge()
 
     def _build_regularization_box(self) -> QWidget:
         """Build the fairness penalties (objective-based optimizers only)."""
@@ -798,7 +809,7 @@ class WindowLayoutMixin:
         ]
         self._advanced_section.set_badge(
             f"{len(changed)} changed" if changed else "",
-            "Changed from the defaults:\n" + "\n".join(changed) if changed else "",
+            "Changed this session:\n" + "\n".join(changed) if changed else "",
         )
 
     # -- Run Bar -----------------------------------------------------------
