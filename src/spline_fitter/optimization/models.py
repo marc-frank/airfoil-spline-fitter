@@ -174,6 +174,15 @@ class OptimizerType(Enum):
         )
 
     @property
+    def uses_error_metric(self) -> bool:
+        """Return True if the optimizer minimizes the configured ErrorMetric.
+
+        Only the general-purpose optimizers do; the algebraic and LSQ-based
+        methods (VarPro LM included) fix their own error measure.
+        """
+        return not (self.is_algebraic or self.is_iterative_algebraic)
+
+    @property
     def is_param_optimizer(self) -> bool:
         """Return True if this is the two-stage parameterization optimizer."""
         return self == OptimizerType.PARAM_OPT

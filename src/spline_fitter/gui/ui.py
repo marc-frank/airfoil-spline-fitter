@@ -93,9 +93,7 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         is_algebraic = opt_type.is_algebraic if opt_type else False
         is_param_opt = opt_type.is_param_optimizer if opt_type else False
         is_gn_varpro = opt_type == OptimizerType.GN_VARPRO if opt_type else False
-        uses_objective = opt_type is not None and not (
-            opt_type.is_algebraic or opt_type.is_iterative_algebraic
-        )
+        uses_metric = opt_type.uses_error_metric if opt_type else False
         tolerance_mode = is_gn_varpro and self._tolerance_mode_selected()
 
         def show(visible: bool, *widgets):
@@ -119,6 +117,7 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
                     sweep_box.stop_sweep()
         self._sweep_ctrl.setEnabled(not self._is_fitting and (not tolerance_mode or start_count))
         self._sweep_ctrl.set_sweep_allowed(not tolerance_mode)
+        show(uses_metric, self._lbl_err, self._combo_err)
 
         # Curve: geometric continuity is VarPro only
         show(is_gn_varpro, self._lbl_cont_kind, self._combo_cont_kind)
@@ -135,7 +134,9 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         show(is_param_opt, self._lbl_param_opt_outer, self._combo_param_opt_outer)
         show(opt_type == OptimizerType.ORTHOGONAL_LSQ,
              self._lbl_orth_lsq_local_bounds, self._check_orth_lsq_local_bounds)
-        show(uses_objective, self._regularization_box)
+        # Fairness penalties: the objective of the general-purpose optimizers,
+        # and the bending energy of the parameter optimizer
+        show(uses_metric or is_param_opt, self._regularization_box)
         self._update_advanced_badge()
 
     def _tolerance_mode_selected(self) -> bool:

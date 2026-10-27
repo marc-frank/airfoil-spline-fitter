@@ -127,10 +127,10 @@ class FittingController:
 
         # Show initial status
         opt_name = opt_config.optimizer.display_name
-        metric_name = opt_config.metric.display_name
-        w.statusBar().showMessage(
-            f"Starting {opt_name} ({n_vars} variables, {metric_name} error)..."
-        )
+        details = f"{n_vars} variables"
+        if opt_config.optimizer.uses_error_metric:
+            details += f", {opt_config.metric.display_name} error"
+        w.statusBar().showMessage(f"Starting {opt_name} ({details})...")
         QApplication.processEvents()
 
         def iteration_callback(x: np.ndarray, error: float, preview=None) -> bool:

@@ -507,7 +507,7 @@ class WindowLayoutMixin:
         for metric in ErrorMetric:
             self._combo_err.addItem(metric.display_name, userData=metric)
         self._combo_err.setCurrentIndex(0)
-        _add_row(form, "Error metric", self._combo_err)
+        self._lbl_err = _add_row(form, "Error metric", self._combo_err)
 
         section.add_layout(form)
         return section
