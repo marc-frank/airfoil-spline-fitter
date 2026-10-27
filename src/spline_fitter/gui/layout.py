@@ -688,17 +688,24 @@ class WindowLayoutMixin:
         section.add_widget(self._build_regularization_box())
 
         # "N changed" badge in the header, so non-default settings stay
-        # noticeable while the section is collapsed
+        # noticeable while the section is collapsed; its tooltip names them
         self._advanced_defaults = [
-            (w, self._widget_value(w)) for w in (
-                self._edit_junctions, self._check_subsample, self._spin_subsample,
-                self._spin_smoothing_weight, self._spin_smoothing, self._spin_maxiter,
-                self._spin_seed, self._combo_param_opt_outer,
-                self._check_orth_lsq_local_bounds, self._spin_bbox,
-                self._check_optimize_le, self._check_fairness,
+            (name, w, self._widget_value(w), self._widget_text(w)) for name, w in (
+                ("Per junction", self._edit_junctions),
+                ("Subsample", self._check_subsample),
+                ("Subsample points", self._spin_subsample),
+                ("Smoothing", self._spin_smoothing_weight),
+                ("LSQ smoothing", self._spin_smoothing),
+                ("Iteration limit", self._spin_maxiter),
+                ("Seed", self._spin_seed),
+                ("Outer optimizer", self._combo_param_opt_outer),
+                ("Foot points", self._check_orth_lsq_local_bounds),
+                ("Search scale", self._spin_bbox),
+                ("Junction", self._check_optimize_le),
+                ("Fairness penalties", self._check_fairness),
             )
         ]
-        for w, _ in self._advanced_defaults:
+        for _, w, _, _ in self._advanced_defaults:
             signal = (w.textChanged if isinstance(w, QLineEdit)
                       else w.toggled if isinstance(w, QCheckBox)
                       else w.currentIndexChanged if isinstance(w, QComboBox)
@@ -772,14 +779,27 @@ class WindowLayoutMixin:
             return w.value()
         raise TypeError(type(w))
 
+    @staticmethod
+    def _widget_text(w) -> str:
+        """Current value of an input widget as shown to the user."""
+        if isinstance(w, QCheckBox):
+            return "on" if w.isChecked() else "off"
+        if isinstance(w, QComboBox):
+            return w.currentText()
+        return w.text().strip() or "(blank)"
+
     def _update_advanced_badge(self, *_):
         """Count the applicable Advanced settings that differ from their defaults."""
         content = self._advanced_section.content_widget()
-        changed = sum(
-            1 for w, default in self._advanced_defaults
+        changed = [
+            f"{name}: {default_text} \u2192 {self._widget_text(w)}"
+            for name, w, default, default_text in self._advanced_defaults
             if w.isVisibleTo(content) and self._widget_value(w) != default
+        ]
+        self._advanced_section.set_badge(
+            f"{len(changed)} changed" if changed else "",
+            "Changed from the defaults:\n" + "\n".join(changed) if changed else "",
         )
-        self._advanced_section.set_badge(f"{changed} changed" if changed else "")
 
     # -- Run Bar -----------------------------------------------------------
 

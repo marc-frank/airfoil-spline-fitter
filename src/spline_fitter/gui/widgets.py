@@ -157,9 +157,10 @@ class CollapsibleSection(SidebarSection):
         self._content.setVisible(expanded)
         self._toggle_btn.setText(self._header_text())
 
-    def set_badge(self, text: str):
+    def set_badge(self, text: str, tooltip: str = ""):
         """Show a short note at the right of the header (empty hides it)."""
         self._badge.setText(text)
+        self._badge.setToolTip(tooltip)
 
 
 # =============================================================================
