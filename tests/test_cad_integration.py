@@ -224,10 +224,36 @@ def _window(monkeypatch):
     return app, window
 
 
+def _varpro_tolerance(window):
+    """VarPro LM to a tolerance: free knots, grown control points, G2."""
+    window._combo_opt.setCurrentIndex(window._combo_opt.findData(OptimizerType.GN_VARPRO))
+    window._seg_goal.setCurrentIndex(window._seg_goal.findData(True))
+    window._combo_knot_placement.setCurrentIndex(window._combo_knot_placement.findData("free"))
+    window._check_grow.setChecked(True)
+    window._combo_cont.setCurrentIndex(window._combo_cont.findData(ContinuityMode.G2))
+
+
+def test_gui_defaults_to_varpro_fixed_count_uniform_g3(monkeypatch):
+    app, window = _window(monkeypatch)
+    assert window._combo_opt.currentData() == OptimizerType.GN_VARPRO
+    assert not window._tolerance_mode_selected()
+    assert window._combo_knot_placement.currentData() == "uniform"
+    assert not window._check_grow.isChecked()
+    assert window._combo_cont.currentData() == ContinuityMode.G3
+    assert window._combo_cont_kind.currentData() is True
+    config = window._get_optimization_config()
+    assert config.tolerance is None and config.knot_placement == "uniform"
+    assert not config.grow_control_points
+    spline = window._get_spline_config()
+    assert spline.continuity == ContinuityMode.G3 and spline.geometric_continuity
+    window.deleteLater()
+    app.processEvents()
+
+
 def test_gui_tolerance_mode_fit_report_and_cad_export(monkeypatch, tmp_path):
     app, window = _window(monkeypatch)
     window._airfoil = naca_airfoil(decimals=5)
-    window._combo_opt.setCurrentIndex(window._combo_opt.findData(OptimizerType.GN_VARPRO))
+    _varpro_tolerance(window)
     assert window._tolerance_mode_selected() and window._check_auto_tolerance.isChecked()
     assert not window._sweep_ctrl.isEnabled()
     window._combo_live.setCurrentIndex(2)
@@ -259,7 +285,7 @@ def test_gui_dialogs_save_export_and_report(monkeypatch, tmp_path):
     from PyQt6.QtWidgets import QDialog, QFileDialog, QInputDialog
     app, window = _window(monkeypatch)
     window._airfoil = naca_airfoil(n=41, decimals=5)
-    window._combo_opt.setCurrentIndex(window._combo_opt.findData(OptimizerType.GN_VARPRO))
+    _varpro_tolerance(window)
     window._fitting_controller.on_fit()
     assert window._fit_result is not None
     window._fit_result.report = None
@@ -305,7 +331,7 @@ def test_gui_subsampling_is_off_by_default_and_reaches_both_modes(monkeypatch):
     assert window._spin_subsample.isEnabled()
     window._spin_subsample.setValue(150)
     assert window._get_optimization_config().max_points_per_section == 150
-    window._seg_goal.setCurrentIndex(window._seg_goal.findData(False))
+    window._seg_goal.setCurrentIndex(window._seg_goal.findData(True))
     assert window._get_optimization_config().max_points_per_section == 150
     window.deleteLater()
     app.processEvents()
@@ -331,12 +357,12 @@ def test_knot_placement_and_growth_reach_both_modes(monkeypatch):
     app, window = _window(monkeypatch)
     window._combo_opt.setCurrentIndex(window._combo_opt.findData(OptimizerType.GN_VARPRO))
     options = window._get_optimization_config()
-    assert options.knot_placement == "free" and options.grow_control_points
-    assert window._combo_knot_placement.findData("auto") == -1
-    window._combo_knot_placement.setCurrentIndex(window._combo_knot_placement.findData("uniform"))
-    window._check_grow.setChecked(False)
-    options = window._get_optimization_config()
     assert options.knot_placement == "uniform" and not options.grow_control_points
+    assert window._combo_knot_placement.findData("auto") == -1
+    window._combo_knot_placement.setCurrentIndex(window._combo_knot_placement.findData("free"))
+    window._check_grow.setChecked(True)
+    options = window._get_optimization_config()
+    assert options.knot_placement == "free" and options.grow_control_points
     window.deleteLater()
     app.processEvents()
 

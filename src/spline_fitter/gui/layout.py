@@ -439,7 +439,7 @@ class WindowLayoutMixin:
         for idx, opt_type in enumerate(OptimizerType):
             self._combo_opt.addItem(opt_type.display_name, userData=opt_type)
             self._combo_opt.setItemData(idx, opt_type.tooltip, Qt.ItemDataRole.ToolTipRole)
-        self._combo_opt.setCurrentIndex(0)
+        self._combo_opt.setCurrentIndex(self._combo_opt.findData(OptimizerType.GN_VARPRO))
         self._combo_opt.currentIndexChanged.connect(self._on_optimizer_changed)
         _add_row(form, "Optimizer", self._combo_opt)
 
@@ -453,6 +453,7 @@ class WindowLayoutMixin:
             "every data point within the tolerance.",
         )
         self._seg_goal.setItemToolTip(1, "Fit the given number of control points per section.")
+        self._seg_goal.setCurrentIndex(self._seg_goal.findData(False))
         self._lbl_goal = _add_row(form, "Goal", self._seg_goal)
 
         self._spin_tolerance = QDoubleSpinBox()
@@ -478,10 +479,11 @@ class WindowLayoutMixin:
             0, "Knots move to where they reduce the error most.")
         self._combo_knot_placement.setItemToolTip(
             1, "Knots stay evenly spaced in the curve parameter.")
+        self._combo_knot_placement.setCurrentIndex(self._combo_knot_placement.findData("uniform"))
         self._lbl_knot_placement = _add_row(form, "Knots", self._combo_knot_placement)
 
         self._check_grow = QCheckBox("Add where the fit is worst")
-        self._check_grow.setChecked(True)
+        self._check_grow.setChecked(False)
         self._check_grow.setToolTip(
             "On: start from the fewest control points and add them where the\n"
             "fit is worst, refitting after each step.\n"
@@ -548,7 +550,7 @@ class WindowLayoutMixin:
         ):
             self._combo_cont.addItem(f"C{i}", userData=mode)
             self._combo_cont.setItemToolTip(i, f"{cont_names[i]} matches across junctions")
-        self._combo_cont.setCurrentIndex(2)
+        self._combo_cont.setCurrentIndex(3)
         _add_row(form, "Continuity", self._combo_cont)
 
         self._combo_cont_kind = SegmentedControl()

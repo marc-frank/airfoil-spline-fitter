@@ -6,6 +6,7 @@ from scipy.interpolate import BSpline
 
 from spline_fitter.optimization.models import (
     AirfoilData,
+    ContinuityMode,
     FairnessWeights,
     OptimizationConfig,
     OptimizerType,
@@ -180,6 +181,7 @@ def test_gui_fits_with_varpro(monkeypatch):
     window._spin_ctrl.setValue(8)
     window._combo_opt.setCurrentIndex(window._combo_opt.findData(OptimizerType.GN_VARPRO))
     window._seg_goal.setCurrentIndex(window._seg_goal.findData(False))
+    window._combo_cont.setCurrentIndex(window._combo_cont.findData(ContinuityMode.G2))
     window._spin_maxiter.setValue(300)
     window._combo_live.setCurrentIndex(2)
     assert window._sweep_ctrl.isEnabled()
