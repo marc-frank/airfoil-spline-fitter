@@ -19,6 +19,77 @@ from ..optimization.models import FitResult, SplineConfig
 from ..spline import BSplineCurve2D, compute_signed_curvature
 from .widgets import MAX_PLOT_POINTS, Colors
 
+# Curvature comb: dense grid for tooth placement and higher derivatives, and the
+# share of teeth placed by turning angle (the rest by arc length).
+COMB_FINE_SAMPLES = 4000
+COMB_TURNING_SHARE = 0.5
+
+
+def _cumulative_trapezoid(f: np.ndarray, t: np.ndarray) -> np.ndarray:
+    return np.concatenate([[0.0], np.cumsum(0.5 * (f[1:] + f[:-1]) * np.diff(t))])
+
+
+def _curvature_and_slope(derivs: dict) -> tuple[np.ndarray, np.ndarray]:
+    """Signed curvature and its arc-length derivative dκ/ds from curve derivatives."""
+    dx, dy, d2x, d2y = derivs['dx'], derivs['dy'], derivs['d2x'], derivs['d2y']
+    d3x = derivs.get('d3x', np.zeros_like(dx))
+    d3y = derivs.get('d3y', np.zeros_like(dy))
+    v = dx * dx + dy * dy
+    a = dx * d2y - dy * d2x
+    b = dx * d3y - dy * d3x
+    c = dx * d2x + dy * d2y
+    with np.errstate(divide='ignore', invalid='ignore'):
+        kappa = np.where(v > 0, a / v ** 1.5, 0.0)
+        slope = np.where(v > 0, (b * v - 3 * a * c) / v ** 3, 0.0)
+    return kappa, slope
+
+
+def _fine_grid(n: int) -> np.ndarray:
+    return np.linspace(0.0, 1.0, max(COMB_FINE_SAMPLES, 20 * n))
+
+
+def comb_parameters(curve: BSplineCurve2D, n: int,
+                    turning_share: float = COMB_TURNING_SHARE) -> np.ndarray:
+    """Parameters of ``n`` comb teeth, more of them where the curve turns quickly.
+
+    The teeth are evenly spaced in a blend of normalized arc length and
+    normalized turning angle (the integral of |κ| ds), so a leading edge that
+    turns through most of the total angle in a short distance gets a matching
+    share of the teeth.
+    """
+    t = _fine_grid(n)
+    d = curve.evaluate_derivatives(t, max_order=2)
+    speed = np.hypot(d['dx'], d['dy'])
+    kappa = compute_signed_curvature(d['dx'], d['dy'], d['d2x'], d['d2y'])
+    s = _cumulative_trapezoid(speed, t)
+    turn = _cumulative_trapezoid(np.abs(np.nan_to_num(kappa)) * speed, t)
+    if s[-1] <= 0:
+        return np.linspace(0.0, 1.0, n)
+    measure = s / s[-1]
+    if turn[-1] > 0:
+        measure = (1 - turning_share) * measure + turning_share * turn / turn[-1]
+    return np.interp(np.linspace(0.0, 1.0, n), measure, t)
+
+
+def comb_values(curve: BSplineCurve2D, t: np.ndarray, quantity: int) -> np.ndarray:
+    """Comb quantity at parameters ``t``: κ, dκ/ds, d²κ/ds² or d³κ/ds³ (0-3).
+
+    κ and dκ/ds are exact. Higher orders are differentiated numerically on a
+    dense grid, not between the (sparse) teeth.
+    """
+    if quantity <= 1:
+        kappa, slope = _curvature_and_slope(curve.evaluate_derivatives(t, max_order=3))
+        return kappa if quantity == 0 else slope
+    fine = _fine_grid(len(t))
+    d = curve.evaluate_derivatives(fine, max_order=3)
+    _, val = _curvature_and_slope(d)
+    s = _cumulative_trapezoid(np.hypot(d['dx'], d['dy']), fine)
+    keep = np.concatenate([[True], np.diff(s) > 0])
+    fine, s, val = fine[keep], s[keep], val[keep]
+    for _ in range(quantity - 1):
+        val = np.gradient(val, s, edge_order=2)
+    return np.interp(t, fine, val)
+
 
 class PlotManager:
     """Manages all pyqtgraph plot visualizations.
@@ -447,43 +518,11 @@ class PlotManager:
         quantity: int,
     ) -> None:
         """Draw curvature comb for a single curve."""
-        t = np.linspace(0.0, 1.0, density)
-        derivs = curve.evaluate_derivatives(t, max_order=min(3, curve.degree))
-
-        x = derivs['x']
-        y = derivs['y']
-        dx = derivs.get('dx', np.zeros_like(x))
-        dy = derivs.get('dy', np.zeros_like(y))
-        d2x = derivs.get('d2x', np.zeros_like(x))
-        d2y = derivs.get('d2y', np.zeros_like(y))
-
-        # Compute curvature
-        kappa = compute_signed_curvature(dx, dy, d2x, d2y)
-
-        # Compute arc length
-        speed = np.hypot(dx, dy)
-        dt = 1.0 / (density - 1) if density > 1 else 1.0
-        ds = np.maximum(0.5 * (speed[1:] + speed[:-1]) * dt, 0.0)
-        s = np.zeros_like(x)
-        s[1:] = np.cumsum(ds)
-
-        # Ensure strictly increasing s
-        mask = np.diff(s) <= 1e-14
-        if np.any(mask):
-            fix = np.maximum(np.diff(s), 1e-12)
-            s[1:] = s[0] + np.cumsum(fix)
-
-        # Compute displayed quantity
-        if quantity >= 1:
-            val = np.gradient(kappa, s, edge_order=2)
-        else:
-            val = kappa
-
-        if quantity >= 2:
-            val = np.gradient(val, s, edge_order=2)
-
-        if quantity >= 3:
-            val = np.gradient(val, s, edge_order=2)
+        t = comb_parameters(curve, density)
+        derivs = curve.evaluate_derivatives(t, max_order=1)
+        x, y = derivs['x'], derivs['y']
+        dx, dy = derivs['dx'], derivs['dy']
+        val = comb_values(curve, t, quantity)
 
         # Compute normals
         mag = np.hypot(dx, dy)
