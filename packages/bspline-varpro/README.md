@@ -76,7 +76,9 @@ The bending-energy weight `smoothing` defaults to 1e-7. On the benchmark set
 it gave the fewest control points and curvature extrema of 0, 1e-7, 1e-6, and
 1e-5 (`benchmarks/results/smoothing_1.1.txt`).
 
-Useful options: `max_control_points` (per section), `optimize_knots`, `remove_knots`,
+Useful options: `knot_placement="uniform"` (keep evenly spaced knots and only choose
+the count per section), `initial_control_points` (start from this count instead of
+the minimum), `max_control_points` (per section), `optimize_knots`, `remove_knots`,
 `start_tangent` / `end_tangent`, `fix_junctions=False` (fit the junction
 position instead of interpolating it), and `callback(result, deviation)`, which
 can return True to stop.
@@ -124,6 +126,8 @@ result = bv.fit(points, knots=[my_knots], degree=5)
 | `smoothing` | 1e-3 | Bending-energy weight (normalized to trace = control-point count) |
 | `initial_parameters`, `initial_theta` | centripetal | Warm starts from a previous fit |
 | `max_points_per_section` | None | Subsample dense sections, then refine on all points |
+| `knot_placement` | `"uniform"` | `"free"`: afterwards move the interior knots to where they reduce the error most |
+| `grow` | False | Start from the fewest control points and add knots where the fit is worst until the counts are reached |
 | `max_nfev` | 200 | Residual evaluation budget |
 | `callback` | None | `callback(control_points, rms_error)` after every evaluation; True stops |
 
@@ -309,6 +313,16 @@ derivatives, and `C P = d` encodes the end, junction, and continuity conditions.
   unchanged.
 - `fit_to_tolerance` uses `smoothing=1e-7` (was 1e-5) and tries every knot for
   removal after optimizing the knot positions.
+- Knot optimization (`polish_knots`) works: in 1.x it never moved a knot,
+  because the smoothing penalty's matrix root came from an eigendecomposition
+  that jumped between nearby knot vectors and broke the finite differences. It
+  is now a Cholesky factor.
+- `fit()` takes `knot_placement="uniform" | "free"` and `grow`;
+  `fit_to_tolerance` takes `knot_placement="free" | "uniform"` and
+  `initial_control_points`.
+- The speed ratio alpha of a geometric junction stays within a factor of 10 of
+  the section length ratio. Unbounded, it could collapse to 0, which made the
+  join degenerate (zero speed at the junction).
 
 ## License
 

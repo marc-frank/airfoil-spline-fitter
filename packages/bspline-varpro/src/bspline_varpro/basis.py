@@ -185,3 +185,18 @@ def _bending_energy(knot_bytes: bytes, degree: int, quad_order: int) -> np.ndarr
     if trace > 1e-15:
         S *= n_ctrl / trace
     return S
+
+
+def matrix_root(A: np.ndarray) -> np.ndarray:
+    """``R`` with ``R.T @ R == A`` for a symmetric positive semidefinite ``A``.
+
+    Uses the Cholesky factor, which is unique and changes smoothly with ``A``
+    (an eigendecomposition root does not: repeated eigenvalues let the
+    eigenvectors rotate freely, so finite differences across nearby problems
+    would jump). Falls back to the eigendecomposition for singular ``A``.
+    """
+    try:
+        return np.linalg.cholesky(A).T
+    except np.linalg.LinAlgError:
+        eigenvalues, eigenvectors = np.linalg.eigh(A)
+        return np.sqrt(np.maximum(eigenvalues, 0.0))[:, None] * eigenvectors.T

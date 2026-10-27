@@ -493,6 +493,25 @@ class WindowLayoutMixin:
         dense_row.addWidget(self._spin_subsample, stretch=1)
         tol_form.addRow("Dense data:", dense_row)
 
+        self._combo_knot_placement = QComboBox()
+        self._combo_knot_placement.addItem("Free", userData="free")
+        self._combo_knot_placement.addItem("Uniform", userData="uniform")
+        self._combo_knot_placement.setToolTip(
+            "Free: knots move to where they reduce the error most.\n"
+            "Uniform: knots stay evenly spaced in the curve parameter."
+        )
+        tol_form.addRow("Knot placement:", self._combo_knot_placement)
+
+        self._check_grow = QCheckBox("Grow control points")
+        self._check_grow.setChecked(True)
+        self._check_grow.setToolTip(
+            "On: start from the fewest control points and add them where the\n"
+            "fit is worst, refitting after each step.\n"
+            "Off: start from the Control Points setting. In tolerance mode the\n"
+            "count can still grow or shrink from there to meet the tolerance."
+        )
+        tol_form.addRow("", self._check_grow)
+
         self._tolerance_container.setVisible(False)
         section.add_widget(self._tolerance_container)
 

@@ -12,7 +12,6 @@ from spline_fitter.optimization.models import (
     SplineConfig,
 )
 from spline_fitter.optimization.optimizers.gn_varpro import GNVarProConfig, GNVarProOptimizer
-from spline_fitter.spline.spline import create_open_uniform_knots
 
 
 def small_airfoil(noise=0.0, n=19):
@@ -35,8 +34,9 @@ def test_adapter_returns_app_result_with_data_only_error():
     assert [len(cp) for cp in result.section_control_points] == [6, 6]
     assert result.x.shape == (2 * 6 * 2,)
     error = []
-    for sec, cp, t in zip(airfoil.sections, result.section_control_points, result.parameters, strict=False):
-        curve = BSpline(create_open_uniform_knots(3, 6), cp, 3)
+    for sec, cp, t, knots in zip(airfoil.sections, result.section_control_points, result.parameters,
+                                 result.section_knots, strict=False):
+        curve = BSpline(knots, cp, 3)
         error.extend(np.sum((curve(t) - sec) ** 2, axis=1))
     assert result.fun == pytest.approx(np.sqrt(np.mean(error)))
 
@@ -80,8 +80,9 @@ def test_callback_gets_flat_control_points_counts_evaluations_and_can_stop():
         return len(seen) == 4
 
     result = GNVarProOptimizer().fit(SplineConfig(degree=3, num_control_points=8),
-                                     OptimizationConfig(max_iterations=300), small_airfoil(0.002),
-                                     callback=callback)
+                                     OptimizationConfig(max_iterations=300, knot_placement="uniform",
+                                                        grow_control_points=False),
+                                     small_airfoil(0.002), callback=callback)
     assert seen == [(32,)] * 4
     assert get_evaluation_count() == 4
     assert not result.success and result.nit == 4
@@ -92,7 +93,9 @@ def test_engine_uses_configured_smoothing_weight():
     airfoil = small_airfoil(0.003)
     config = SplineConfig(degree=3, num_control_points=8)
     results = [run_optimization(config, OptimizationConfig(optimizer=OptimizerType.GN_VARPRO,
-                                                           max_iterations=300, smoothing_weight=w),
+                                                           max_iterations=300, smoothing_weight=w,
+                                                           knot_placement="uniform",
+                                                           grow_control_points=False),
                                 airfoil, FairnessWeights(), [])
                for w in (0.0, 1.0)]
     assert all(r.success for r in results)
@@ -124,6 +127,21 @@ def test_subsampling_setting_round_trips_through_projects():
     assert old.max_points_per_section is None
     with pytest.raises(ValueError, match="at least 2"):
         OptimizationConfig(max_points_per_section=1)
+
+
+def test_knot_settings_round_trip_and_old_projects_keep_their_behaviour():
+    from spline_fitter.project_io import _decode_optimization_config, _encode_optimization_config
+    options = OptimizationConfig(optimizer=OptimizerType.GN_VARPRO, knot_placement="uniform",
+                                 grow_control_points=False)
+    assert _decode_optimization_config(_encode_optimization_config(options)) == options
+    fixed = _decode_optimization_config({"optimizer": "gn-varpro", "metric": "avg_point"})
+    assert fixed.knot_placement == "uniform" and not fixed.grow_control_points
+    tolerance = _decode_optimization_config({"optimizer": "gn-varpro", "metric": "avg_point",
+                                             "tolerance": 1e-5})
+    assert tolerance.knot_placement == "free" and tolerance.grow_control_points
+    with pytest.raises(ValueError, match="knot_placement"):
+        OptimizationConfig(knot_placement="auto")
+
 
 
 def test_projects_saved_with_automatic_selection_still_load():

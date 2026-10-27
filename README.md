@@ -65,6 +65,11 @@ Typical workflow:
    recommended for CAD), and the continuity. Continuity is either one
    **Smoothness** order with a **Continuity Type** (Geometric or Parametric),
    or a comma-separated list in **Per Junction** with one entry per junction.
+   **Knot placement** is Free (knots move to where they reduce the error
+   most) or Uniform (evenly spaced). **Grow control points** starts from the
+   fewest control points and adds them where the fit is worst; off, the fit
+   starts from the Control Points setting (in tolerance mode the count can
+   still grow or shrink from there).
 3. **Fit Spline**. The status bar shows the maximum and RMS deviation and the
    control-point count. **Show Knots** marks the knots on the curve.
 4. **View > Fit Report** (Ctrl+R) shows deviation, fairness, and junction

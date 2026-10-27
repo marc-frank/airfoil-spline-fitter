@@ -147,6 +147,8 @@ def _encode_optimization_config(config: OptimizationConfig) -> dict[str, Any]:
         "optimize_le_position": config.optimize_le_position,
         "tolerance": config.tolerance,
         "max_points_per_section": config.max_points_per_section,
+        "knot_placement": config.knot_placement,
+        "grow_control_points": config.grow_control_points,
     }
 
 
@@ -276,6 +278,11 @@ def _decode_optimization_config(data: dict[str, Any]) -> OptimizationConfig:
         optimize_le_position=data.get("optimize_le_position", False),
         tolerance=data.get("tolerance"),
         max_points_per_section=data.get("max_points_per_section"),
+        # Projects from before these settings: fixed counts used uniform knots,
+        # tolerance mode grew the count with freely placed knots.
+        knot_placement=data.get("knot_placement",
+                                "uniform" if data.get("tolerance") is None else "free"),
+        grow_control_points=data.get("grow_control_points", data.get("tolerance") is not None),
         # Projects written before fairing was removed may still contain "fairing"; it is ignored.
     )
 

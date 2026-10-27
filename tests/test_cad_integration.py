@@ -324,3 +324,38 @@ def test_gui_subsampling_is_off_by_default_and_reaches_both_modes(monkeypatch):
     GNVarProOptimizer().fit(config, OptimizationConfig(max_iterations=50, max_points_per_section=30), airfoil)
     GNVarProOptimizer().fit(config, OptimizationConfig(tolerance=1e-4), airfoil)
     assert captured == [30, None]
+
+
+def test_knot_placement_and_growth_reach_both_modes(monkeypatch):
+    from spline_fitter.optimization.optimizers import gn_varpro
+    app, window = _window(monkeypatch)
+    window._combo_opt.setCurrentIndex(window._combo_opt.findData(OptimizerType.GN_VARPRO))
+    options = window._get_optimization_config()
+    assert options.knot_placement == "free" and options.grow_control_points
+    assert window._combo_knot_placement.findData("auto") == -1
+    window._combo_knot_placement.setCurrentIndex(window._combo_knot_placement.findData("uniform"))
+    window._check_grow.setChecked(False)
+    options = window._get_optimization_config()
+    assert options.knot_placement == "uniform" and not options.grow_control_points
+    window.deleteLater()
+    app.processEvents()
+
+    captured = []
+    for name in ("fit", "fit_to_tolerance"):
+        original = getattr(bspline_varpro, name)
+
+        def capture(*args, _original=original, _name=name, **kwargs):
+            start = kwargs["grow"] if _name == "fit" else kwargs["initial_control_points"]
+            captured.append((_name, kwargs["knot_placement"], start))
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(gn_varpro.bspline_varpro, name, capture)
+    airfoil = naca_airfoil(n=41, decimals=5)
+    config = SplineConfig(degree=5, num_control_points=9)
+    for placement, grow in (("free", True), ("uniform", False)):
+        GNVarProOptimizer().fit(config, OptimizationConfig(
+            max_iterations=50, knot_placement=placement, grow_control_points=grow), airfoil)
+        GNVarProOptimizer().fit(config, OptimizationConfig(
+            tolerance=1e-4, knot_placement=placement, grow_control_points=grow), airfoil)
+    assert captured == [("fit", "free", True), ("fit_to_tolerance", "free", None),
+                        ("fit", "uniform", False), ("fit_to_tolerance", "uniform", 9)]

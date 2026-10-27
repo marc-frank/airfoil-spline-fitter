@@ -266,6 +266,8 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
             max_points_per_section=(self._spin_subsample.value()
                                     if opt_type == OptimizerType.GN_VARPRO
                                     and self._check_subsample.isChecked() else None),
+            knot_placement=self._combo_knot_placement.currentData(),
+            grow_control_points=self._check_grow.isChecked(),
         )
 
     def _apply_run_config(self, cfg: SplineConfig, opt: OptimizationConfig) -> None:
@@ -280,6 +282,9 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
             self._check_auto_tolerance.setChecked(False)
             self._spin_tolerance.setValue(opt.tolerance)
         self._check_subsample.setChecked(opt.max_points_per_section is not None)
+        self._combo_knot_placement.setCurrentIndex(
+            max(self._combo_knot_placement.findData(opt.knot_placement), 0))
+        self._check_grow.setChecked(opt.grow_control_points)
         if opt.max_points_per_section is not None:
             self._spin_subsample.setValue(opt.max_points_per_section)
 

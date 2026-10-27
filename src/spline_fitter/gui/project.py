@@ -312,7 +312,9 @@ class ProjectManager:
             return False
 
         if (eo.tolerance != opt_config.tolerance
-                or eo.max_points_per_section != opt_config.max_points_per_section):
+                or eo.max_points_per_section != opt_config.max_points_per_section
+                or eo.knot_placement != opt_config.knot_placement
+                or eo.grow_control_points != opt_config.grow_control_points):
             return False
 
         # Compare optimization config

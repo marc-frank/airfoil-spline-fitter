@@ -16,7 +16,7 @@ from typing import Sequence, Tuple
 import numpy as np
 from scipy.linalg import block_diag
 
-from .basis import basis_derivative_matrix, basis_matrix, bending_energy_matrix
+from .basis import basis_derivative_matrix, basis_matrix, bending_energy_matrix, matrix_root
 
 
 class JointProblem:
@@ -59,9 +59,9 @@ class JointProblem:
         penalty = regularization * np.eye(self.total_ctrl)
         if smoothing > 0:
             penalty += smoothing * block_diag(*[bending_energy_matrix(k, degree) for k in self.knots])
-        eigenvalues, eigenvectors = np.linalg.eigh(penalty)
-        self.RZ = (np.sqrt(np.maximum(eigenvalues, 0.0))[:, None] * eigenvectors.T) @ self.Z
-        self.RP0 = (np.sqrt(np.maximum(eigenvalues, 0.0))[:, None] * eigenvectors.T) @ self.P0
+        root = matrix_root(penalty)
+        self.RZ = root @ self.Z
+        self.RP0 = root @ self.P0
 
         # Interior points of every section carry free parameters; section ends stay at 0 and 1.
         free = []
