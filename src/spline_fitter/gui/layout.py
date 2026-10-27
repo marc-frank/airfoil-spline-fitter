@@ -434,26 +434,27 @@ class WindowLayoutMixin:
         section = SidebarSection("Method")
         form = _form()
 
-        # Algorithm (decides which other controls apply, so it comes first)
+        # Algorithm (decides which other controls apply, so it comes first);
+        # the default, VarPro LM, heads the list
         self._combo_opt = QComboBox()
-        for idx, opt_type in enumerate(OptimizerType):
+        opt_types = sorted(OptimizerType, key=lambda t: t != OptimizerType.GN_VARPRO)
+        for idx, opt_type in enumerate(opt_types):
             self._combo_opt.addItem(opt_type.display_name, userData=opt_type)
             self._combo_opt.setItemData(idx, opt_type.tooltip, Qt.ItemDataRole.ToolTipRole)
-        self._combo_opt.setCurrentIndex(self._combo_opt.findData(OptimizerType.GN_VARPRO))
+        self._combo_opt.setCurrentIndex(0)
         self._combo_opt.currentIndexChanged.connect(self._on_optimizer_changed)
         _add_row(form, "Optimizer", self._combo_opt)
 
         # Goal (VarPro): meet a tolerance, or fit a fixed control point count
         self._seg_goal = SegmentedControl()
-        self._seg_goal.addItem("Tolerance", userData=True)
         self._seg_goal.addItem("Fixed count", userData=False)
+        self._seg_goal.addItem("Tolerance", userData=True)
+        self._seg_goal.setItemToolTip(0, "Fit the given number of control points per section.")
         self._seg_goal.setItemToolTip(
-            0,
+            1,
             "Find the fewest control points that keep\n"
             "every data point within the tolerance.",
         )
-        self._seg_goal.setItemToolTip(1, "Fit the given number of control points per section.")
-        self._seg_goal.setCurrentIndex(self._seg_goal.findData(False))
         self._lbl_goal = _add_row(form, "Goal", self._seg_goal)
 
         self._spin_tolerance = QDoubleSpinBox()
@@ -473,13 +474,12 @@ class WindowLayoutMixin:
 
         # Knot placement and growth (VarPro, both goals)
         self._combo_knot_placement = SegmentedControl()
-        self._combo_knot_placement.addItem("Free", userData="free")
         self._combo_knot_placement.addItem("Uniform", userData="uniform")
+        self._combo_knot_placement.addItem("Free", userData="free")
         self._combo_knot_placement.setItemToolTip(
-            0, "Knots move to where they reduce the error most.")
+            0, "Knots stay evenly spaced in the curve parameter.")
         self._combo_knot_placement.setItemToolTip(
-            1, "Knots stay evenly spaced in the curve parameter.")
-        self._combo_knot_placement.setCurrentIndex(self._combo_knot_placement.findData("uniform"))
+            1, "Knots move to where they reduce the error most.")
         self._lbl_knot_placement = _add_row(form, "Knots", self._combo_knot_placement)
 
         self._check_grow = QCheckBox("Add where the fit is worst")
