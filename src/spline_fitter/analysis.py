@@ -11,18 +11,17 @@ from __future__ import annotations
 
 import html
 import math
-from typing import List, Optional, Sequence
+from collections.abc import Sequence
 
 import numpy as np
-from scipy.interpolate import BSpline
-
 from bspline_varpro import airfoil as bv_airfoil
 from bspline_varpro import diagnostics
+from scipy.interpolate import BSpline
 
 from .optimization.models import FitResult
 
 
-def scipy_curves(result: FitResult) -> List[BSpline]:
+def scipy_curves(result: FitResult) -> list[BSpline]:
     """The fitted sections as SciPy B-splines with their knot vectors."""
     return [BSpline(result.knots(i), np.asarray(ctrl, dtype=np.float64), result.degree)
             for i, ctrl in enumerate(result.section_control_points)]
@@ -31,8 +30,8 @@ def scipy_curves(result: FitResult) -> List[BSpline]:
 def fit_report(
     sections: Sequence[Sequence[Sequence[float]]],
     result: FitResult,
-    precision: Optional[int] = None,
-    tolerance: Optional[float] = None,
+    precision: int | None = None,
+    tolerance: float | None = None,
 ) -> dict:
     """Quality measurements of a fit.
 
@@ -85,7 +84,7 @@ def fit_report(
     return report
 
 
-def default_tolerance(coordinates: Sequence[Sequence[float]], precision: Optional[int]) -> float:
+def default_tolerance(coordinates: Sequence[Sequence[float]], precision: int | None) -> float:
     """Tolerance from the decimal precision of the source file and the data noise."""
     return bv_airfoil.default_tolerance(np.asarray(coordinates, dtype=np.float64),
                                         decimals=precision if precision else None)

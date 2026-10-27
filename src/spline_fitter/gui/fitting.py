@@ -13,33 +13,32 @@ from __future__ import annotations
 import math
 import time
 from dataclasses import replace as dc_replace
-from typing import TYPE_CHECKING, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING
 
 import numpy as np
 from PyQt6.QtWidgets import QApplication
 
+from ..analysis import fit_report, summary_line
+from ..formatting import format_duration, format_error
+from ..geometry import compute_optimization_bounds
+from ..optimization import (
+    OptimizerErrorLogger,
+    construct_control_points,
+    get_evaluation_count,
+    increment_iteration,
+    reset_iteration_tracking,
+    run_optimization,
+)
 from ..optimization.models import (
-    SplineConfig,
-    OptimizationConfig,
     FairnessWeights,
     FitResult,
     IterationRecord,
+    OptimizationConfig,
+    SplineConfig,
 )
-from ..optimization import (
-    run_optimization,
-    construct_control_points,
-    reset_iteration_tracking,
-    get_evaluation_count,
-    increment_iteration,
-    OptimizerErrorLogger,
-)
-from ..geometry import compute_optimization_bounds
-from ..formatting import format_error, format_duration
-from ..analysis import fit_report, summary_line
 
 if TYPE_CHECKING:
     from .ui import SplineFitterWindow
-    from .widgets import SweepableSpinBox, SweepableDoubleSpinBox
 
 
 class FittingController:
@@ -47,7 +46,7 @@ class FittingController:
 
     def __init__(self, window: SplineFitterWindow):
         self._window = window
-        self._sweep_results: List[Tuple[Union[int, float], FitResult]] = []
+        self._sweep_results: list[tuple[int | float, FitResult]] = []
         self._sweep_mode = False
 
     # ------------------------------------------------------------------
@@ -276,7 +275,7 @@ class FittingController:
                     for it, err, t in zip(
                         error_logger.iterations,
                         error_logger.errors,
-                        error_logger.elapsed_times,
+                        error_logger.elapsed_times, strict=False,
                     )
                 ]
 
@@ -552,7 +551,7 @@ class FittingController:
                         for it, err, t in zip(
                             error_logger.iterations,
                             error_logger.errors,
-                            error_logger.elapsed_times,
+                            error_logger.elapsed_times, strict=False,
                         )
                     ]
 

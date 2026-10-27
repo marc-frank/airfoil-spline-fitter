@@ -7,13 +7,13 @@ Local optimization methods using scipy.optimize.minimize.
 
 from __future__ import annotations
 
-from typing import Callable, Optional, Sequence
+from collections.abc import Callable, Sequence
 
 import numpy as np
 from scipy.optimize import minimize
 
-from .base import BaseOptimizer, EarlyStopException, RawOptimResult
 from ..models import Bounds
+from .base import BaseOptimizer, EarlyStopException, RawOptimResult
 
 
 class LocalOptimizer(BaseOptimizer):
@@ -33,7 +33,7 @@ class LocalOptimizer(BaseOptimizer):
     Attributes:
         method: The scipy.optimize.minimize method name
     """
-    
+
     # Method name mapping from OptimizerType values
     METHOD_MAP = {
         "nelder-mead": "Nelder-Mead",
@@ -45,7 +45,7 @@ class LocalOptimizer(BaseOptimizer):
         "cobyla": "COBYLA",
         "slsqp": "SLSQP",
     }
-    
+
     def __init__(self, method: str = "BFGS"):
         """
         Initialize local optimizer with specified method.
@@ -55,24 +55,24 @@ class LocalOptimizer(BaseOptimizer):
         """
         # Handle both scipy method names and our internal names
         self._method = self.METHOD_MAP.get(method.lower(), method)
-    
+
     @property
     def name(self) -> str:
         return self._method
-    
+
     @property
     def supports_bounds(self) -> bool:
         """Some methods don't support bounds."""
         return self._method in ("L-BFGS-B", "TNC", "SLSQP", "COBYLA")
-    
+
     def optimize(
         self,
         objective: Callable[[np.ndarray], float],
         x0: np.ndarray,
         bounds: Sequence[Bounds],
         max_iterations: int,
-        callback: Optional[Callable[[np.ndarray, float], bool]] = None,
-        seed: Optional[int] = None,
+        callback: Callable[[np.ndarray, float], bool] | None = None,
+        seed: int | None = None,
     ) -> RawOptimResult:
         """
         Run local optimization.
@@ -90,7 +90,7 @@ class LocalOptimizer(BaseOptimizer):
         """
         last_x = x0.copy()
         iteration_count = 0
-        
+
         def local_callback(xk):
             nonlocal last_x, iteration_count
             last_x = np.asarray(xk, dtype=np.float64)
@@ -105,12 +105,12 @@ class LocalOptimizer(BaseOptimizer):
                 raise
             except Exception:
                 pass
-        
+
         try:
             options = {"maxiter": max_iterations, "disp": False}
             if self._method == "SLSQP":
                 options["ftol"] = 0
-            
+
             # Only pass bounds if method supports them
             min_kwargs = {
                 "fun": objective,
@@ -120,25 +120,25 @@ class LocalOptimizer(BaseOptimizer):
                 "tol": 0,
                 "options": options,
             }
-            
+
             if self.supports_bounds:
                 min_kwargs["bounds"] = bounds
-            
+
             result = minimize(**min_kwargs)
-            
+
             return RawOptimResult(
                 x=np.asarray(result.x, dtype=np.float64),
                 fun=float(result.fun) if np.isfinite(result.fun) else objective(result.x),
                 nit=int(getattr(result, "nit", 0)),
             )
-            
+
         except EarlyStopException:
             # Return best known solution
             try:
                 f_best = objective(last_x)
             except Exception:
                 f_best = float('inf')
-            
+
             return RawOptimResult(x=last_x, fun=f_best, nit=iteration_count)
 
 
@@ -155,7 +155,7 @@ class BFGSOptimizer(LocalOptimizer):
         - 7.8×10⁻⁵ error
         - 100% reliable
     """
-    
+
     def __init__(self):
         super().__init__("BFGS")
 
@@ -171,7 +171,7 @@ class LBFGSBOptimizer(LocalOptimizer):
         - 1.7×10⁻⁴ error
         - 100% reliable
     """
-    
+
     def __init__(self):
         super().__init__("L-BFGS-B")
 
@@ -187,7 +187,7 @@ class CGOptimizer(LocalOptimizer):
         - 1.8×10⁻⁴ error
         - 100% reliable
     """
-    
+
     def __init__(self):
         super().__init__("CG")
 
@@ -203,7 +203,7 @@ class SLSQPOptimizer(LocalOptimizer):
         - 7.0×10⁻⁵ error (best accuracy)
         - 100% reliable
     """
-    
+
     def __init__(self):
         super().__init__("SLSQP")
 
@@ -214,7 +214,7 @@ class TNCOptimizer(LocalOptimizer):
     
     Not benchmarked. Use BFGS instead.
     """
-    
+
     def __init__(self):
         super().__init__("TNC")
 
@@ -228,7 +228,7 @@ class PowellOptimizer(LocalOptimizer):
     Benchmark (41 airfoils):
         - 68% timeout rate (>5 min)
     """
-    
+
     def __init__(self):
         super().__init__("Powell")
 
@@ -242,7 +242,7 @@ class NelderMeadOptimizer(LocalOptimizer):
     Benchmark (41 airfoils):
         - 74× worse accuracy than SLSQP
     """
-    
+
     def __init__(self):
         super().__init__("Nelder-Mead")
 
@@ -256,6 +256,6 @@ class COBYLAOptimizer(LocalOptimizer):
     Benchmark (41 airfoils):
         - 41× worse accuracy than SLSQP
     """
-    
+
     def __init__(self):
         super().__init__("COBYLA")

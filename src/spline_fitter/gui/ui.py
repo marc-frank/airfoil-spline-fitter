@@ -13,32 +13,28 @@ This module provides:
 
 from __future__ import annotations
 
-from typing import Optional
-
 from PyQt6.QtCore import QSettings
 from PyQt6.QtWidgets import (
     QMainWindow,
 )
 
+from ..analysis import default_tolerance
+from ..geometry import create_airfoil_data
 from ..optimization.models import (
     AirfoilData,
-    SplineConfig,
-    OptimizationConfig,
     FairnessWeights,
     FitResult,
+    OptimizationConfig,
     OptimizerType,
+    SplineConfig,
 )
-from ..geometry import create_airfoil_data
-from ..analysis import default_tolerance
-
-from .widgets import SweepableSpinBox
+from .batch import BatchController
+from .file_actions import FileActionsMixin
+from .fitting import FittingController
+from .layout import WindowLayoutMixin
 from .plotting import PlotManager
 from .project import ProjectManager
-from .fitting import FittingController
-from .batch import BatchController
-from .layout import WindowLayoutMixin
-from .file_actions import FileActionsMixin
-
+from .widgets import SweepableSpinBox
 
 # =============================================================================
 # Main Window
@@ -61,8 +57,8 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self.setWindowTitle("Airfoil Spline Fitter")
 
         # Application state
-        self._airfoil: Optional[AirfoilData] = None
-        self._fit_result: Optional[FitResult] = None
+        self._airfoil: AirfoilData | None = None
+        self._fit_result: FitResult | None = None
         self._is_fitting = False
         self._cancel_requested = False
 
@@ -283,7 +279,7 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
             self._spin_tolerance.setValue(opt.tolerance)
         self._check_fairing.setChecked(opt.fairing)
 
-    def _get_param_opt_settings(self) -> Optional[OptimizerType]:
+    def _get_param_opt_settings(self) -> OptimizerType | None:
         """Get parameterization optimizer settings from UI state.
 
         Returns:
@@ -397,7 +393,7 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._action_save_project.setEnabled(enabled)
         self._action_save_project_as.setEnabled(enabled)
 
-    def _get_active_sweep(self) -> Optional[SweepableSpinBox]:
+    def _get_active_sweep(self) -> SweepableSpinBox | None:
         """Return the SweepableSpinBox that has sweep mode active, or None."""
         for sweep_box in self._sweep_group:
             if sweep_box.is_sweep_active:

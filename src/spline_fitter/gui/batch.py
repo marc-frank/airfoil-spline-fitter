@@ -1,23 +1,32 @@
 from __future__ import annotations
-from dataclasses import replace as dc_replace
-from typing import TYPE_CHECKING
+
 import os
 import time
+from dataclasses import replace as dc_replace
+from typing import TYPE_CHECKING
+
 import numpy as np
 from PyQt6.QtCore import QDir
 from PyQt6.QtWidgets import (
-    QApplication, QDialog, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QFileDialog,
+    QApplication,
+    QDialog,
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QVBoxLayout,
 )
-from ..optimization.models import SplineConfig
-from ..optimization import (
-    run_optimization, construct_control_points,
-    reset_iteration_tracking, get_evaluation_count,
-)
-from ..geometry import create_airfoil_data, compute_optimization_bounds
-from ..io import parse_airfoil_data, export_spline_data
-from ..formatting import format_error, format_duration
+
 from ..analysis import default_tolerance
+from ..formatting import format_duration, format_error
+from ..geometry import compute_optimization_bounds, create_airfoil_data
+from ..io import export_spline_data, parse_airfoil_data
+from ..optimization import (
+    construct_control_points,
+    get_evaluation_count,
+    reset_iteration_tracking,
+    run_optimization,
+)
 
 if TYPE_CHECKING:
     from .ui import SplineFitterWindow

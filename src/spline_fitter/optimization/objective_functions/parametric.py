@@ -22,19 +22,18 @@ Cons:
 from __future__ import annotations
 
 import numpy as np
-from typing import List, Tuple
 
 from ...spline import BSplineCurve2D
 
 # Type aliases
-PointList = List[Tuple[float, float]]
+PointList = list[tuple[float, float]]
 
 
 def compute_parametric_error(
     curve: BSplineCurve2D,
     section_points: np.ndarray,
     t_params: np.ndarray,
-) -> Tuple[float, int]:
+) -> tuple[float, int]:
     """
     Compute parametric (corresponding-point) distance error.
     
@@ -50,14 +49,14 @@ def compute_parametric_error(
         Tuple of (total_error_sum, num_points) for averaging
     """
     n_pts = len(section_points)
-    
+
     # Evaluate curve at all parameter values
     sx, sy = curve.evaluate_array(t_params)
-    
+
     # Compute Euclidean distances
     err = np.hypot(sx - section_points[:, 0], sy - section_points[:, 1])
     err_sum = float(np.sum(err))
-    
+
     if np.isfinite(err_sum):
         return (err_sum, n_pts)
     else:

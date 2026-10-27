@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
-from typing import List, Optional
 
 from ..formatting import sanitize_filename
 
@@ -49,10 +48,10 @@ class OptimizerErrorLogger:
         2,30,0.001234567890
         ...
     """
-    
+
     DEFAULT_LOG_DIR = _default_log_dir()
-    
-    def __init__(self, run_name: str = "unnamed", log_dir: Optional[str] = None):
+
+    def __init__(self, run_name: str = "unnamed", log_dir: str | None = None):
         """
         Initialize a new logger for an optimization run.
         
@@ -63,14 +62,14 @@ class OptimizerErrorLogger:
         self.run_name = run_name
         self.start_time = datetime.now()
         self.log_dir = log_dir or self.DEFAULT_LOG_DIR
-        
-        self.iterations: List[int] = []
-        self.evaluations: List[int] = []
-        self.errors: List[float] = []
-        self.elapsed_times: List[float] = []
-        
-        self._file_path: Optional[str] = None
-    
+
+        self.iterations: list[int] = []
+        self.evaluations: list[int] = []
+        self.errors: list[float] = []
+        self.elapsed_times: list[float] = []
+
+        self._file_path: str | None = None
+
     def log(self, iteration: int, evaluation: int, error: float, elapsed: float = 0.0) -> None:
         """
         Record an iteration's data.
@@ -85,8 +84,8 @@ class OptimizerErrorLogger:
         self.evaluations.append(evaluation)
         self.errors.append(error)
         self.elapsed_times.append(elapsed)
-    
-    def save(self, optimizer_key: str = "unknown", extra_info: str = "") -> Optional[str]:
+
+    def save(self, optimizer_key: str = "unknown", extra_info: str = "") -> str | None:
         """
         Save the log to a CSV file.
         
@@ -99,16 +98,16 @@ class OptimizerErrorLogger:
         """
         if not self.iterations:
             return None
-        
+
         # Ensure log directory exists
         os.makedirs(self.log_dir, exist_ok=True)
-        
+
         # Generate filename
         timestamp = self.start_time.strftime("%Y%m%d_%H%M%S")
         safe_name = sanitize_filename(self.run_name)
         filename = f"{timestamp}_{safe_name}_{optimizer_key}.csv"
         self._file_path = os.path.join(self.log_dir, filename)
-        
+
         try:
             with open(self._file_path, "w", encoding="utf-8") as f:
                 # Write header comments
@@ -128,18 +127,18 @@ class OptimizerErrorLogger:
                     f.write(f"# Total Time: {self.elapsed_times[-1]:.3f}s\n")
                 f.write("#\n")
                 f.write("iteration,evaluation,error,elapsed_s\n")
-                
+
                 # Write data
-                for it, ev, err, t in zip(self.iterations, self.evaluations, self.errors, self.elapsed_times):
+                for it, ev, err, t in zip(self.iterations, self.evaluations, self.errors, self.elapsed_times, strict=False):
                     f.write(f"{it},{ev},{err:.12e},{t:.3f}\n")
-            
+
             return self._file_path
-            
+
         except Exception as e:
             print(f"Failed to save optimizer log: {e}")
             return None
-    
+
     @property
-    def file_path(self) -> Optional[str]:
+    def file_path(self) -> str | None:
         """Return the path of the saved log file, or None if not saved."""
         return self._file_path

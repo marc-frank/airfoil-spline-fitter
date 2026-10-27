@@ -15,21 +15,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import List, Tuple, Optional, Sequence
-import numpy as np
 
+import numpy as np
 
 # =============================================================================
 # Type Aliases
 # =============================================================================
 
-Point2D = Tuple[float, float]
+Point2D = tuple[float, float]
 """A 2D point represented as (x, y) coordinates."""
 
-PointList = List[Point2D]
+PointList = list[Point2D]
 """A list of 2D points forming a polyline or point cloud."""
 
-Bounds = Tuple[float, float]
+Bounds = tuple[float, float]
 """A numeric range represented as (lower, upper) bounds."""
 
 
@@ -59,7 +58,7 @@ class ContinuityMode(Enum):
     G1 = auto()
     G2 = auto()
     G3 = auto()
-    
+
     @property
     def minimum_degree(self) -> int:
         """Return the minimum spline degree required for this continuity level."""
@@ -69,7 +68,7 @@ class ContinuityMode(Enum):
             ContinuityMode.G2: 2,
             ContinuityMode.G3: 3,
         }[self]
-    
+
     @property
     def constrained_control_points(self) -> int:
         """Return the number of control points constrained at each junction."""
@@ -79,7 +78,7 @@ class ContinuityMode(Enum):
             ContinuityMode.G2: 3,  # LE + 2 curvature control points per side
             ContinuityMode.G3: 4,  # LE + 3 curvature-rate control points per side
         }[self]
-    
+
     def minimum_control_points(self, degree: int) -> int:
         """
         Calculate minimum control points needed for given degree and continuity.
@@ -124,61 +123,61 @@ class OptimizerType(Enum):
     # Tier 1: Recommended (ordered by speed/accuracy tradeoff)
     BFGS = "bfgs"
     SLSQP = "slsqp"
-    
+
     # Tier 2: Acceptable alternatives
     L_BFGS_B = "l-bfgs-b"
     CG = "cg"
-    
+
     # Tier 3: Not recommended (poor performance in benchmarks)
     TNC = "tnc"
     POWELL = "powell"
     NELDER_MEAD = "nelder-mead"
     COBYLA = "cobyla"
-    
+
     # Global optimizers (slow but thorough search)
     DE = "de"
     DA = "da"
     BH = "bh"
-    
+
     # Algebraic (non-iterative) method
     CONSTRAINED_LSQ = "constrained-lsq"
-    
+
     # Alternating LSQ for orthogonal distance
     ORTHOGONAL_LSQ = "orthogonal-lsq"
-    
+
     # Two-stage parameterization optimizer
     PARAM_OPT = "param-opt"
-    
+
     # Direct LSQ (single-step, no iteration)
     DIRECT_LSQ = "direct-lsq"
-    
+
     # Levenberg-Marquardt variable projection (bspline-varpro library)
     GN_VARPRO = "gn-varpro"
-    
+
     @property
     def is_global(self) -> bool:
         """Return True if this is a global optimizer."""
         return self in (OptimizerType.DE, OptimizerType.DA, OptimizerType.BH)
-    
+
     @property
     def is_algebraic(self) -> bool:
         """Return True if this is an algebraic (non-iterative) method."""
         return self in (OptimizerType.CONSTRAINED_LSQ, OptimizerType.DIRECT_LSQ)
-    
+
     @property
     def is_iterative_algebraic(self) -> bool:
         """Return True if this uses iterative algebraic (LSQ) steps."""
         return self in (
-            OptimizerType.ORTHOGONAL_LSQ, 
-            OptimizerType.PARAM_OPT, 
+            OptimizerType.ORTHOGONAL_LSQ,
+            OptimizerType.PARAM_OPT,
             OptimizerType.GN_VARPRO,
         )
-    
+
     @property
     def is_param_optimizer(self) -> bool:
         """Return True if this is the two-stage parameterization optimizer."""
         return self == OptimizerType.PARAM_OPT
-    
+
     @property
     def display_name(self) -> str:
         """Return a human-readable name for the optimizer."""
@@ -208,7 +207,7 @@ class OptimizerType(Enum):
             OptimizerType.GN_VARPRO: "VarPro LM (CAD: tolerance, G1-G3)",
         }
         return names.get(self, self.value)
-    
+
     @property
     def tooltip(self) -> str:
         """Return a tooltip description with benchmark performance info."""
@@ -323,7 +322,7 @@ class ErrorMetric(Enum):
     PARAMETRIC = "avg_point"
     ORTHOGONAL = "orthogonal"
     ORTHOGONAL_LOCAL = "orthogonal_local"
-    
+
     @property
     def display_name(self) -> str:
         """Return a human-readable name for the metric."""
@@ -356,19 +355,19 @@ class AirfoilData:
         name: Airfoil name from file content (may differ from filename)
         precision: Number of decimal places in the original data
     """
-    coordinates: Tuple[Point2D, ...]
-    sections: Tuple[Tuple[Point2D, ...], ...]
-    junction_indices: Tuple[int, ...]
+    coordinates: tuple[Point2D, ...]
+    sections: tuple[tuple[Point2D, ...], ...]
+    junction_indices: tuple[int, ...]
     num_sections: int
     filename: str = ""
     name: str = ""
     precision: int = 6
-    
+
     @property
     def num_points(self) -> int:
         """Return the total number of coordinate points."""
         return len(self.coordinates)
-    
+
     def as_numpy(self) -> np.ndarray:
         """Return coordinates as a numpy array of shape (N, 2)."""
         return np.array(self.coordinates, dtype=np.float64)
@@ -398,8 +397,8 @@ class SplineConfig:
     continuity: ContinuityMode = ContinuityMode.G1
     bbox_scale: float = 3.0
     geometric_continuity: bool = False
-    junction_continuity: Tuple[str, ...] = ()
-    
+    junction_continuity: tuple[str, ...] = ()
+
     def __post_init__(self):
         """Validate configuration parameters."""
         if self.num_sections < 1:
@@ -425,13 +424,13 @@ class SplineConfig:
                 if int(spec[1]) > self.degree:
                     raise ValueError(f"{spec} continuity requires degree >= {spec[1]}")
 
-    def junction_specs(self) -> List[str]:
+    def junction_specs(self) -> list[str]:
         """Continuity of every junction as ``"G2"``/``"C1"`` style strings."""
         if self.junction_continuity:
             return list(self.junction_continuity)
         kind = "G" if self.geometric_continuity else "C"
         return [f"{kind}{self.continuity.name[1]}"] * (self.num_sections - 1)
-    
+
     @property
     def free_control_points_per_section(self) -> int:
         """
@@ -473,22 +472,22 @@ class OptimizationConfig:
     optimizer: OptimizerType = OptimizerType.DE
     metric: ErrorMetric = ErrorMetric.PARAMETRIC
     max_iterations: int = 10000
-    smoothing_factor: Optional[float] = None
+    smoothing_factor: float | None = None
     seed: int = -1
     early_stop_patience: int = 50
     relative_tolerance: float = 1e-6
     optimize_le_position: bool = False
     smoothing_weight: float = 1e-3
-    custom_parameters: Optional[List[np.ndarray]] = None
-    tolerance: Optional[float] = None
+    custom_parameters: list[np.ndarray] | None = None
+    tolerance: float | None = None
     fairing: bool = True
 
     def __post_init__(self):
         if self.tolerance is not None and not self.tolerance > 0:
             raise ValueError(f"tolerance must be positive, got {self.tolerance}")
-    
+
     @property
-    def random_seed(self) -> Optional[int]:
+    def random_seed(self) -> int | None:
         """Return the seed value, or None if random."""
         return None if self.seed < 0 else self.seed
 
@@ -518,7 +517,7 @@ class FairnessWeights:
     end_handles: float = 0.0
     curvature_squared: float = 0.0
     curvature_gradient: float = 0.0
-    
+
     @property
     def is_enabled(self) -> bool:
         """Return True if any fairness term has nonzero weight."""
@@ -530,7 +529,7 @@ class FairnessWeights:
             self.curvature_squared > 0,
             self.curvature_gradient > 0,
         ])
-    
+
     @property
     def total_weight(self) -> float:
         """Return the sum of all weights."""
@@ -542,8 +541,8 @@ class FairnessWeights:
             self.curvature_squared +
             self.curvature_gradient
         )
-    
-    def as_tuple(self) -> Tuple[float, ...]:
+
+    def as_tuple(self) -> tuple[float, ...]:
         """Return weights as a tuple for passing to optimization."""
         return (
             self.length_variance,
@@ -578,7 +577,7 @@ class FitResult:
         report: Quality report (deviation, curvature, junctions), see
             :func:`spline_fitter.analysis.fit_report`.
     """
-    section_control_points: List[PointList]
+    section_control_points: list[PointList]
     degree: int
     final_error: float
     num_iterations: int
@@ -587,9 +586,9 @@ class FitResult:
     converged: bool = True
     early_stopped: bool = False
     cancelled: bool = False
-    section_knots: Optional[List[List[float]]] = None
-    report: Optional[dict] = None
-    
+    section_knots: list[list[float]] | None = None
+    report: dict | None = None
+
     def __post_init__(self):
         """Ensure control points are stored as lists, not tuples."""
         converted_sections = []
@@ -636,7 +635,7 @@ class BoundingBox:
     x_max: float
     y_min: float
     y_max: float
-    
+
     @property
     def center(self) -> Point2D:
         """Return the center point of the bounding box."""
@@ -644,22 +643,22 @@ class BoundingBox:
             (self.x_min + self.x_max) / 2.0,
             (self.y_min + self.y_max) / 2.0,
         )
-    
+
     @property
     def width(self) -> float:
         """Return the width (x-extent) of the bounding box."""
         return self.x_max - self.x_min
-    
+
     @property
     def height(self) -> float:
         """Return the height (y-extent) of the bounding box."""
         return self.y_max - self.y_min
-    
+
     @property
     def diagonal(self) -> float:
         """Return the diagonal length of the bounding box."""
         return np.hypot(self.width, self.height)
-    
+
     def scaled(self, factor: float) -> BoundingBox:
         """
         Return a new bounding box scaled around its center.
@@ -679,11 +678,11 @@ class BoundingBox:
             y_min=cy - half_h,
             y_max=cy + half_h,
         )
-    
+
     def x_bounds(self) -> Bounds:
         """Return (x_min, x_max) as a tuple."""
         return (self.x_min, self.x_max)
-    
+
     def y_bounds(self) -> Bounds:
         """Return (y_min, y_max) as a tuple."""
         return (self.y_min, self.y_max)
@@ -754,8 +753,8 @@ class OptimizationRun:
     optimization_config: OptimizationConfig
     fairness_weights: FairnessWeights
     result: FitResult
-    loss_history: List[IterationRecord]
-    section_control_points: List[PointList]
+    loss_history: list[IterationRecord]
+    section_control_points: list[PointList]
 
 
 @dataclass
@@ -773,4 +772,4 @@ class ProjectFile:
     """
     metadata: ProjectMetadata
     airfoil: AirfoilData
-    optimization_runs: List[OptimizationRun] = field(default_factory=list)
+    optimization_runs: list[OptimizationRun] = field(default_factory=list)

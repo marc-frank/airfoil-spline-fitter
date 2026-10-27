@@ -7,13 +7,13 @@ Global optimizer using basin-hopping with random restarts.
 
 from __future__ import annotations
 
-from typing import Callable, Optional, Sequence
+from collections.abc import Callable, Sequence
 
 import numpy as np
 from scipy.optimize import basinhopping
 
-from .base import BaseOptimizer, RawOptimResult
 from ..models import Bounds
+from .base import BaseOptimizer, RawOptimResult
 
 
 class BasinHoppingOptimizer(BaseOptimizer):
@@ -27,23 +27,23 @@ class BasinHoppingOptimizer(BaseOptimizer):
         - Slow but more thorough than single local optimization
         - Use only if local optimizers fail
     """
-    
+
     @property
     def name(self) -> str:
         return "Basin-Hopping"
-    
+
     @property
     def is_global(self) -> bool:
         return True
-    
+
     def optimize(
         self,
         objective: Callable[[np.ndarray], float],
         x0: np.ndarray,
         bounds: Sequence[Bounds],
         max_iterations: int,
-        callback: Optional[Callable[[np.ndarray, float], bool]] = None,
-        seed: Optional[int] = None,
+        callback: Callable[[np.ndarray, float], bool] | None = None,
+        seed: int | None = None,
     ) -> RawOptimResult:
         """
         Run basin-hopping optimization.
@@ -66,11 +66,11 @@ class BasinHoppingOptimizer(BaseOptimizer):
                 return bool(callback(np.asarray(x), float(f)))
             except Exception:
                 return False
-        
+
         # Use provided x0 or start from midpoint of bounds
         if x0 is None or len(x0) == 0:
             x0 = np.array([(lo + hi) * 0.5 for lo, hi in bounds], dtype=np.float64)
-        
+
         result = basinhopping(
             objective,
             x0=x0,
@@ -80,7 +80,7 @@ class BasinHoppingOptimizer(BaseOptimizer):
             minimizer_kwargs={"method": "SLSQP", "bounds": bounds},
             disp=False,
         )
-        
+
         return RawOptimResult(
             x=np.asarray(result.x, dtype=np.float64),
             fun=float(result.fun) if np.isfinite(result.fun) else float('inf'),

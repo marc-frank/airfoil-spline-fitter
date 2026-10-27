@@ -13,8 +13,9 @@ The coordinates are automatically normalized to:
     - Trailing edge at (1, 0)
     - Chord length of 1.0
 """
-import os
 import math
+import os
+
 
 def get_precision(s_val):
     """Helper to find number of decimal places in a string."""
@@ -40,24 +41,24 @@ def filter_coordinate_outliers(coords, threshold_factor=5.0):
 
     # Calculate distances from the median point
     distances = [math.sqrt((p[0] - median_point[0])**2 + (p[1] - median_point[1])**2) for p in coords]
-    
+
     # Use Interquartile Range (IQR) to find a robust measure of spread
     sorted_distances = sorted(distances)
     q1 = sorted_distances[len(sorted_distances) // 4]
     q3 = sorted_distances[3 * len(sorted_distances) // 4]
     iqr = q3 - q1
-    
+
     # Define a distance threshold to identify outliers
     # Points far beyond the typical spread are considered outliers
     distance_threshold = q3 + threshold_factor * iqr
-    
+
     # Filter out the outliers
     filtered_coords = [p for i, p in enumerate(coords) if distances[i] <= distance_threshold]
-    
+
     # As a final sanity check, if filtering removes too many points, return original
     if len(filtered_coords) < len(coords) * 0.8:
         return coords
-        
+
     return filtered_coords
 
 
@@ -105,7 +106,7 @@ def normalize_coords(coords):
     # 3. Calculate chord length and angle for transformation
     chord_length = math.sqrt((te_center[0] - le[0])**2 + (te_center[1] - le[1])**2)
     if chord_length < 1e-6: # Avoid division by zero for degenerate cases
-        return coords 
+        return coords
 
     # Angle of the chord relative to the x-axis
     angle = math.atan2(te_center[1] - le[1], te_center[0] - le[0])
@@ -132,7 +133,7 @@ def parse_airfoil_data(filepath):
     Returns the airfoil name from filename, name from content, coordinates, and max precision.
     """
     lines = []
-    with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+    with open(filepath, encoding='utf-8', errors='ignore') as f:
         for line in f:
             # Remove comments and strip whitespace
             line_content = line.split('#', 1)[0].strip()
@@ -221,7 +222,7 @@ def parse_airfoil_data(filepath):
                 # Clean strings by removing parentheses before float conversion
                 x_str_clean = x_str.strip().strip('()')
                 y_str_clean = y_str.strip().strip('()')
-                
+
                 x_val, y_val = float(x_str_clean), float(y_str_clean)
 
                 coords.append((x_val, y_val))
@@ -229,7 +230,7 @@ def parse_airfoil_data(filepath):
                 max_precision = max(max_precision, precision)
         except (ValueError, IndexError):
             continue # Skip malformed coordinate lines
-    
+
     if not coords:
         return None, None, None, 0
 
@@ -304,7 +305,7 @@ def export_spline_data(filepath, degree, section_control_points, name=None, prec
         section_knots = [create_open_uniform_knots(degree, len(c)) for c in section_control_points]
     if len(section_knots) != len(section_control_points):
         raise ValueError("Need one knot vector per section.")
-    for knots, ctrl in zip(section_knots, section_control_points):
+    for knots, ctrl in zip(section_knots, section_control_points, strict=False):
         if len(knots) != len(ctrl) + degree + 1:
             raise ValueError("Knot vector length must be control points + degree + 1.")
 
@@ -321,7 +322,7 @@ def export_spline_data(filepath, degree, section_control_points, name=None, prec
         f.write(f"# sections {len(section_control_points)}\n")
         if continuity:
             f.write("# continuity " + " ".join(continuity) + "\n")
-        for section_idx, (ctrl_pts, knots) in enumerate(zip(section_control_points, section_knots), 1):
+        for section_idx, (ctrl_pts, knots) in enumerate(zip(section_control_points, section_knots, strict=False), 1):
             f.write(f"# section {section_idx} control_points {len(ctrl_pts)}\n")
             f.write(f"# knots {section_idx} " + " ".join(repr(float(k)) for k in knots) + "\n")
         # Write control points in order: section 0 fully, then section 1+ skipping first point (junction)
@@ -352,7 +353,7 @@ def parse_spline_data(filepath):
     knots = {}
     continuity = None
     points = []
-    with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+    with open(filepath, encoding="utf-8", errors="ignore") as f:
         lines = f.read().splitlines()
     for i, line in enumerate(lines):
         text = line.strip()

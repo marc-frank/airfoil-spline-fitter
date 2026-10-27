@@ -7,13 +7,13 @@ Global optimizer using simulated annealing variant.
 
 from __future__ import annotations
 
-from typing import Callable, Optional, Sequence
+from collections.abc import Callable, Sequence
 
 import numpy as np
 from scipy.optimize import dual_annealing
 
-from .base import BaseOptimizer, RawOptimResult
 from ..models import Bounds
+from .base import BaseOptimizer, RawOptimResult
 
 
 class DualAnnealingOptimizer(BaseOptimizer):
@@ -27,23 +27,23 @@ class DualAnnealingOptimizer(BaseOptimizer):
         - Very slow
         - Use only if local optimizers fail
     """
-    
+
     @property
     def name(self) -> str:
         return "Dual Annealing"
-    
+
     @property
     def is_global(self) -> bool:
         return True
-    
+
     def optimize(
         self,
         objective: Callable[[np.ndarray], float],
         x0: np.ndarray,
         bounds: Sequence[Bounds],
         max_iterations: int,
-        callback: Optional[Callable[[np.ndarray, float], bool]] = None,
-        seed: Optional[int] = None,
+        callback: Callable[[np.ndarray, float], bool] | None = None,
+        seed: int | None = None,
     ) -> RawOptimResult:
         """
         Run dual annealing optimization.
@@ -66,7 +66,7 @@ class DualAnnealingOptimizer(BaseOptimizer):
                 return bool(callback(np.asarray(x), float(f)))
             except Exception:
                 return False
-        
+
         result = dual_annealing(
             objective,
             bounds=bounds,
@@ -74,7 +74,7 @@ class DualAnnealingOptimizer(BaseOptimizer):
             maxiter=max_iterations,
             seed=seed,
         )
-        
+
         return RawOptimResult(
             x=np.asarray(result.x, dtype=np.float64),
             fun=float(result.fun) if np.isfinite(result.fun) else float('inf'),

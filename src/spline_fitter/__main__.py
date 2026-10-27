@@ -15,9 +15,8 @@ Command Line Arguments:
 
 from __future__ import annotations
 
-import sys
 import argparse
-from typing import Optional
+import sys
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -32,7 +31,7 @@ Examples:
     python -m spline_fitter --bbox-scale 5.0
         """,
     )
-    
+
     parser.add_argument(
         "--bbox-scale",
         type=float,
@@ -40,11 +39,11 @@ Examples:
         metavar="SCALE",
         help="Bounding box scale factor for control point bounds (default: 3.0)",
     )
-    
+
     return parser.parse_args()
 
 
-def main(bbox_scale: Optional[float] = None) -> int:
+def main(bbox_scale: float | None = None) -> int:
     """
     Run the spline fitter application.
     
@@ -55,25 +54,26 @@ def main(bbox_scale: Optional[float] = None) -> int:
         Exit code (0 for success)
     """
     from PyQt6.QtWidgets import QApplication
+
     from .gui.ui import SplineFitterWindow
-    
+
     # Create application
     app = QApplication(sys.argv)
-    
+
     # Create and configure main window
     window = SplineFitterWindow()
-    
+
     # Apply command-line overrides
     if bbox_scale is not None:
         try:
             window._spin_bbox.setValue(float(bbox_scale))
         except Exception:
             pass
-    
+
     # Show window
     # window.resize(1000, 600)
     window.showMaximized()
-    
+
     # Run event loop
     return app.exec()
 

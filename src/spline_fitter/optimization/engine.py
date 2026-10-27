@@ -20,37 +20,41 @@ view (a flat vector of real-valued variables) and the spline's view
 
 from __future__ import annotations
 
-from typing import (
-    List, Optional, Callable, Sequence
-)
+from collections.abc import Callable, Sequence
+
 import numpy as np
 
+from ..geometry import compute_arc_length_parameters
+from ..spline.fairness import compute_fairness_penalty
+from ..spline.spline import BSplineCurve2D
+from .constrained_fit import run_constrained_lsq_fit
+from .control_points import construct_control_points, generate_initial_guess
 from .models import (
-    PointList, AirfoilData, SplineConfig, OptimizationConfig,
-    FairnessWeights, OptimizerType, ErrorMetric,
+    AirfoilData,
     Bounds,
+    ErrorMetric,
+    FairnessWeights,
+    OptimizationConfig,
+    OptimizerType,
+    PointList,
+    SplineConfig,
 )
+from .objective_functions.orthogonal import compute_orthogonal_error
+from .objective_functions.parametric import compute_parametric_error
 from .optimizers import (
     RawOptimResult,
     get_optimizer,
 )
-from ..spline.spline import BSplineCurve2D
-from ..geometry import compute_arc_length_parameters
-from ..spline.fairness import compute_fairness_penalty
-from .objective_functions.parametric import compute_parametric_error
-from .objective_functions.orthogonal import compute_orthogonal_error
+from .run_log import OptimizerErrorLogger  # noqa: F401
+
 # Re-exported so existing ``from .engine import ...`` imports keep working
 from .tracking import (  # noqa: F401
-    reset_iteration_tracking,
-    reset_evaluation_tracking,
     get_evaluation_count,
     increment_evaluation,
     increment_iteration,
+    reset_evaluation_tracking,
+    reset_iteration_tracking,
 )
-from .run_log import OptimizerErrorLogger  # noqa: F401
-from .control_points import construct_control_points, generate_initial_guess
-from .constrained_fit import run_constrained_lsq_fit
-
 
 # =============================================================================
 # Objective Function
@@ -60,8 +64,8 @@ def compute_fitting_error(
     variables: np.ndarray,
     config: SplineConfig,
     opt_config: OptimizationConfig,
-    sections: List[PointList],
-    t_params: List[List[float]],
+    sections: list[PointList],
+    t_params: list[list[float]],
     fairness_weights: FairnessWeights,
     optimize_le_position: bool = False,
 ) -> float:
@@ -86,28 +90,28 @@ def compute_fitting_error(
         Total objective function value
     """
     increment_evaluation()
-    
+
     try:
         # Build curves from current variables
         section_ctrl_pts = construct_control_points(
             variables, config, sections,
             optimize_le_position=optimize_le_position,
         )
-        
+
         # Create BSpline curves for each section
         curves = [BSplineCurve2D(config.degree, ctrl_pts) for ctrl_pts in section_ctrl_pts]
-        
+
         # Compute data fitting error for each section
         metric = opt_config.metric
         section_errors = []
         total_points = 0
-        
-        for section_idx, (section, t_sec, curve) in enumerate(zip(sections, t_params, curves)):
+
+        for section_idx, (section, t_sec, curve) in enumerate(zip(sections, t_params, curves, strict=False)):
             section_arr = np.array(section, dtype=np.float64)
             t_arr = np.array(t_sec, dtype=np.float64)
             n_pts = len(section_arr)
             total_points += n_pts
-            
+
             if metric in (ErrorMetric.ORTHOGONAL, ErrorMetric.ORTHOGONAL_LOCAL):
                 # Orthogonal (closest-point) distance
                 local_search = (metric == ErrorMetric.ORTHOGONAL_LOCAL)
@@ -119,14 +123,14 @@ def compute_fitting_error(
                 # Parametric (corresponding-point) distance
                 error_sum, _ = compute_parametric_error(curve, section_arr, t_arr)
                 section_errors.append((error_sum, n_pts))
-        
+
         # Compute weighted average error
         if total_points > 0:
             total_error_sum = sum(e[0] for e in section_errors)
             data_error = total_error_sum / total_points
         else:
             data_error = 1e6
-        
+
         # Compute fairness regularization
         regularization = 0.0
         if fairness_weights.is_enabled:
@@ -136,11 +140,11 @@ def compute_fitting_error(
                 )
             except Exception:
                 regularization = 0.0
-        
+
         result = float(data_error) + float(regularization)
-        
+
         return result
-        
+
     except Exception:
         return 1e6
 
@@ -155,8 +159,8 @@ def run_optimization(
     airfoil: AirfoilData,
     fairness_weights: FairnessWeights,
     bounds: Sequence[Bounds],
-    callback: Optional[Callable[[np.ndarray, float], bool]] = None,
-    param_opt_outer_optimizer: Optional["OptimizerType"] = None,
+    callback: Callable[[np.ndarray, float], bool] | None = None,
+    param_opt_outer_optimizer: OptimizerType | None = None,
     orth_lsq_use_local_bounds: bool = True,
 ) -> RawOptimResult:
     """
@@ -184,11 +188,11 @@ def run_optimization(
 
     # Get the optimizer instance
     optimizer = get_optimizer(optimizer_type)
-    
+
     # -------------------------------------------------------------------------
     # Two-Stage Parameterization Optimizer
     # -------------------------------------------------------------------------
-    
+
     if optimizer_type.is_param_optimizer:
         from .optimizers.param_optimizer import ParamOptimizer
         if isinstance(optimizer, ParamOptimizer):
@@ -200,16 +204,16 @@ def run_optimization(
                 fairness_weights=fairness_weights,
                 callback=callback,
             )
-    
+
     # -------------------------------------------------------------------------
     # Algebraic and Iterative-Algebraic Methods
     # -------------------------------------------------------------------------
-    
+
     # Handle iterative-algebraic methods (with callback support)
     if opt_config.optimizer.is_iterative_algebraic:
-        from .optimizers.orthogonal_lsq import OrthogonalLSQOptimizer
         from .optimizers.gn_varpro import GNVarProOptimizer
-        
+        from .optimizers.orthogonal_lsq import OrthogonalLSQOptimizer
+
         if isinstance(optimizer, OrthogonalLSQOptimizer):
             return optimizer.fit(
                 config,
@@ -225,7 +229,7 @@ def run_optimization(
                 airfoil,
                 callback=callback,
             )
-    
+
     # Handle pure algebraic methods (no iteration)
     if optimizer.is_algebraic:
         from .optimizers.constrained_lsq import ConstrainedLSQOptimizer
@@ -246,17 +250,17 @@ def run_optimization(
                 nit=1,
                 section_control_points=section_ctrl_pts,
             )
-    
+
     # -------------------------------------------------------------------------
     # Iterative Optimizers (Global and Local)
     # -------------------------------------------------------------------------
-    
+
     # Convert sections to lists and compute arc-length parameters
     sections = [list(sec) for sec in airfoil.sections]
     t_params = [compute_arc_length_parameters(sec) for sec in sections]
-    
+
     optimize_le = opt_config.optimize_le_position
-    
+
     def objective(x):
         return compute_fitting_error(
             x, config, opt_config,
@@ -264,13 +268,13 @@ def run_optimization(
             fairness_weights,
             optimize_le_position=optimize_le,
         )
-    
+
     # Generate initial guess for local optimizers
     x0 = generate_initial_guess(
         config, sections, t_params, bounds,
         optimize_le_position=optimize_le,
     )
-    
+
     # Run the optimizer
     return optimizer.optimize(
         objective=objective,

@@ -13,30 +13,31 @@ Proper cleanup is registered via atexit to ensure clean shutdown.
 
 from __future__ import annotations
 
-import os
-import math
 import atexit
+import math
 import multiprocessing as mp
+import os
+from collections.abc import Callable
 from multiprocessing.pool import Pool
-from typing import Optional, Tuple, List, Callable, Any
-import numpy as np
-from scipy.optimize import minimize_scalar
-from scipy.interpolate import BSpline as ScipyBSpline
+from typing import Any
 
+import numpy as np
+from scipy.interpolate import BSpline as ScipyBSpline
+from scipy.optimize import minimize_scalar
 
 # =============================================================================
 # Module State
 # =============================================================================
 
-_pool: Optional[Pool] = None
-_pool_size: Optional[int] = None
+_pool: Pool | None = None
+_pool_size: int | None = None
 
 
 # =============================================================================
 # Pool Management
 # =============================================================================
 
-def get_pool(num_processes: Optional[int] = None) -> Pool:
+def get_pool(num_processes: int | None = None) -> Pool:
     """
     Get or create the shared process pool.
     
@@ -52,10 +53,10 @@ def get_pool(num_processes: Optional[int] = None) -> Pool:
         The shared multiprocessing Pool instance
     """
     global _pool, _pool_size
-    
+
     if _pool is not None:
         return _pool
-    
+
     # Determine pool size
     if num_processes is None:
         env_val = os.environ.get("AIRFOIL_MP_PROCS", "").strip()
@@ -64,17 +65,17 @@ def get_pool(num_processes: Optional[int] = None) -> Pool:
                 num_processes = max(1, int(env_val))
             except ValueError:
                 num_processes = None
-    
+
     if num_processes is None:
         try:
             num_processes = max(1, mp.cpu_count() - 2)
             print(f"Using {num_processes} parallel processes.")
         except Exception:
             num_processes = 1
-    
+
     _pool_size = num_processes
     _pool = mp.Pool(processes=num_processes)
-    
+
     return _pool
 
 
@@ -86,7 +87,7 @@ def shutdown_pool() -> None:
     but can also be called manually for explicit cleanup.
     """
     global _pool, _pool_size
-    
+
     if _pool is not None:
         try:
             _pool.close()
@@ -111,8 +112,8 @@ atexit.register(shutdown_pool)
 
 def run_parallel(
     worker_fn: Callable[[Any], Any],
-    task_args: List[Any],
-) -> List[Any]:
+    task_args: list[Any],
+) -> list[Any]:
     """
     Execute a worker function on multiple tasks in parallel.
     
@@ -125,9 +126,9 @@ def run_parallel(
     """
     if not task_args:
         return []
-    
+
     pool = get_pool()
-    
+
     try:
         return pool.map(worker_fn, task_args)
     except Exception:
@@ -140,14 +141,14 @@ def run_parallel(
 # =============================================================================
 
 # Type for orthogonal distance task arguments
-OrthogonalDistanceArgs = Tuple[
+OrthogonalDistanceArgs = tuple[
     np.ndarray,           # knots
     np.ndarray,           # cx (x coefficients)
     np.ndarray,           # cy (y coefficients)
     int,                  # degree
     float,                # px (query point x)
     float,                # py (query point y)
-    Tuple[float, float],  # bounds (t_min, t_max)
+    tuple[float, float],  # bounds (t_min, t_max)
     float,                # tolerance
 ]
 
@@ -175,11 +176,11 @@ def orthogonal_distance_worker(args: OrthogonalDistanceArgs) -> float:
     """
     try:
         knots, cx, cy, degree, px, py, bounds, tolerance = args
-        
+
         # Reconstruct splines in worker process
         spline_x = ScipyBSpline(knots, cx, degree, extrapolate=False)
         spline_y = ScipyBSpline(knots, cy, degree, extrapolate=False)
-        
+
         def squared_distance(t: float) -> float:
             """Squared distance from curve point at t to query point."""
             sx = spline_x(t)
@@ -187,7 +188,7 @@ def orthogonal_distance_worker(args: OrthogonalDistanceArgs) -> float:
             dx = sx - px
             dy = sy - py
             return dx * dx + dy * dy
-        
+
         # Find minimum distance using bounded Brent's method
         result = minimize_scalar(
             squared_distance,
@@ -195,18 +196,18 @@ def orthogonal_distance_worker(args: OrthogonalDistanceArgs) -> float:
             method='bounded',
             options={'xatol': tolerance}
         )
-        
+
         if getattr(result, 'success', False):
             dist_sq = result.fun
         else:
             # Fallback: evaluate at result.x anyway
             t_best = min(max(getattr(result, 'x', 0.5), bounds[0]), bounds[1])
             dist_sq = squared_distance(t_best)
-        
+
         if not math.isfinite(dist_sq):
             return float('inf')
-        
+
         return math.sqrt(max(0.0, dist_sq))
-        
+
     except Exception:
         return float('inf')

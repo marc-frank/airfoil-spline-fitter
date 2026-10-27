@@ -10,16 +10,14 @@ This module provides:
 
 from __future__ import annotations
 
-from typing import List, Optional
-
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt
 
-from .widgets import Colors, MAX_PLOT_POINTS
-from ..spline import BSplineCurve2D, compute_signed_curvature
-from ..optimization.models import SplineConfig, FitResult
 from ..optimization import construct_control_points
+from ..optimization.models import FitResult, SplineConfig
+from ..spline import BSplineCurve2D, compute_signed_curvature
+from .widgets import MAX_PLOT_POINTS, Colors
 
 
 class PlotManager:
@@ -47,9 +45,9 @@ class PlotManager:
         self.show_knots = False
 
         # Loss data
-        self._loss_x_iters: List[float] = []
-        self._loss_x_time: List[float] = []
-        self._loss_y: List[float] = []
+        self._loss_x_iters: list[float] = []
+        self._loss_x_time: list[float] = []
+        self._loss_y: list[float] = []
 
         # Loss curve item
         self._loss_curve = loss_plot.plot(
@@ -79,9 +77,9 @@ class PlotManager:
 
     def update_loss_data(
         self,
-        iters: List[float],
-        times: List[float],
-        errors: List[float],
+        iters: list[float],
+        times: list[float],
+        errors: list[float],
     ) -> None:
         """Replace the loss history data."""
         self._loss_x_iters = list(iters)
@@ -159,7 +157,7 @@ class PlotManager:
             except Exception:
                 pass
 
-    def refresh_knots(self, fit_result: Optional[FitResult]) -> None:
+    def refresh_knots(self, fit_result: FitResult | None) -> None:
         """Mark the curve points at the knots of every section (if enabled)."""
         self.clear_knot_items()
         if fit_result is None or not self.show_knots:
@@ -409,7 +407,7 @@ class PlotManager:
 
     def refresh_curvature_comb(
         self,
-        fit_result: Optional[FitResult],
+        fit_result: FitResult | None,
         scale: float,
         density: int,
         qty: int,
@@ -500,7 +498,7 @@ class PlotManager:
         # Build comb segments
         seg_x = []
         seg_y = []
-        for x0, y0, x1, y1 in zip(x, y, cx, cy):
+        for x0, y0, x1, y1 in zip(x, y, cx, cy, strict=False):
             seg_x.extend([x0, x1, np.nan])
             seg_y.extend([y0, y1, np.nan])
 

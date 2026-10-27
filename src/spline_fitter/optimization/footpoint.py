@@ -39,10 +39,8 @@ This is simpler and often sufficient when starting close to the solution.
 
 from __future__ import annotations
 
-from typing import Tuple, Union
 import numpy as np
 from scipy.interpolate import BSpline as ScipyBSpline
-
 
 # =============================================================================
 # Vectorized Foot-Point Updates
@@ -98,69 +96,69 @@ def vectorized_footpoint_update(
     """
     t_values = np.asarray(t_values, dtype=np.float64)
     data_points = np.asarray(data_points, dtype=np.float64)
-    
+
     n_points = len(t_values)
-    
+
     if n_points == 0:
         return t_values.copy()
-    
+
     # Ensure t is within valid domain (with small epsilon for numerical safety)
     t_clamped = np.clip(t_values, 0.0, 1.0)
-    
+
     # Evaluate curve position: C(t) = (x(t), y(t))
     # Shape: (N,) for each coordinate
     cx = spline_x(t_clamped)
     cy = spline_y(t_clamped)
-    
+
     # Evaluate first derivative: C'(t) = (x'(t), y'(t))
     spline_dx = spline_x.derivative(1)
     spline_dy = spline_y.derivative(1)
     dx = spline_dx(t_clamped)
     dy = spline_dy(t_clamped)
-    
+
     # Error vector: C(t) - P
     # Shape: (N,) for each coordinate
     ex = cx - data_points[:, 0]
     ey = cy - data_points[:, 1]
-    
+
     # f(t) = (C(t) - P) · C'(t) = ex * dx + ey * dy
     # Shape: (N,)
     f = ex * dx + ey * dy
-    
+
     # ||C'(t)||² = dx² + dy²
     # Shape: (N,)
     tangent_norm_sq = dx * dx + dy * dy
-    
+
     if use_second_derivative:
         # Full Newton: f'(t) = ||C'(t)||² + (C(t) - P) · C''(t)
         spline_ddx = spline_x.derivative(2)
         spline_ddy = spline_y.derivative(2)
         ddx = spline_ddx(t_clamped)
         ddy = spline_ddy(t_clamped)
-        
+
         # (C(t) - P) · C''(t)
         error_dot_curvature = ex * ddx + ey * ddy
-        
+
         # f'(t) = ||C'(t)||² + (C(t) - P) · C''(t)
         f_prime = tangent_norm_sq + error_dot_curvature
     else:
         # Gauss-Newton approximation: f'(t) ≈ ||C'(t)||²
         f_prime = tangent_norm_sq
-    
+
     # Safeguard against division by zero or near-zero tangent
     # This can happen at cusps or if spline is degenerate
     MIN_TANGENT_NORM_SQ = 1e-14
-    
+
     # Create mask for valid updates
     valid = np.abs(f_prime) > MIN_TANGENT_NORM_SQ
-    
+
     # Newton update: t_new = t - f(t) / f'(t)
     t_new = t_clamped.copy()
     t_new[valid] = t_clamped[valid] - f[valid] / f_prime[valid]
-    
+
     # Clamp to valid parameter range
     t_new = np.clip(t_new, 0.0, 1.0)
-    
+
     return t_new
 
 
@@ -172,7 +170,7 @@ def iterative_footpoint_projection(
     max_iter: int = 3,
     tol: float = 1e-8,
     use_second_derivative: bool = True,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Iteratively project data points onto the spline curve.
     
@@ -210,12 +208,12 @@ def iterative_footpoint_projection(
     """
     t_init = np.asarray(t_init, dtype=np.float64)
     data_points = np.asarray(data_points, dtype=np.float64)
-    
+
     if len(t_init) == 0:
         return t_init.copy(), np.array([], dtype=np.float64)
-    
+
     t_current = np.clip(t_init, 0.0, 1.0)
-    
+
     for iteration in range(max_iter):
         t_new = vectorized_footpoint_update(
             t_current,
@@ -224,17 +222,17 @@ def iterative_footpoint_projection(
             spline_y,
             use_second_derivative=use_second_derivative,
         )
-        
+
         # Check convergence
         max_change = np.max(np.abs(t_new - t_current))
         t_current = t_new
-        
+
         if max_change < tol:
             break
-    
+
     # Compute final distances
     distances = compute_distances(t_current, data_points, spline_x, spline_y)
-    
+
     return t_current, distances
 
 
@@ -258,18 +256,18 @@ def compute_distances(
     """
     t_values = np.asarray(t_values, dtype=np.float64)
     data_points = np.asarray(data_points, dtype=np.float64)
-    
+
     if len(t_values) == 0:
         return np.array([], dtype=np.float64)
-    
+
     t_clamped = np.clip(t_values, 0.0, 1.0)
-    
+
     cx = spline_x(t_clamped)
     cy = spline_y(t_clamped)
-    
+
     dx = cx - data_points[:, 0]
     dy = cy - data_points[:, 1]
-    
+
     return np.sqrt(dx * dx + dy * dy)
 
 
@@ -286,7 +284,7 @@ def batch_footpoint_projection(
     degree: int,
     max_iter: int = 3,
     tol: float = 1e-8,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Project data points onto a B-spline curve specified by coefficients.
     
@@ -308,7 +306,7 @@ def batch_footpoint_projection(
     """
     spline_x = ScipyBSpline(knots, cx, degree, extrapolate=False)
     spline_y = ScipyBSpline(knots, cy, degree, extrapolate=False)
-    
+
     return iterative_footpoint_projection(
         t_init, data_points, spline_x, spline_y,
         max_iter=max_iter, tol=tol
@@ -340,10 +338,10 @@ def compute_orthogonal_rms_error(
     _, distances = iterative_footpoint_projection(
         t_init, data_points, spline_x, spline_y, max_iter=max_iter
     )
-    
+
     if len(distances) == 0:
         return 0.0
-    
+
     return float(np.sqrt(np.mean(distances ** 2)))
 
 
@@ -370,10 +368,10 @@ def compute_orthogonal_max_error(
     _, distances = iterative_footpoint_projection(
         t_init, data_points, spline_x, spline_y, max_iter=max_iter
     )
-    
+
     if len(distances) == 0:
         return 0.0
-    
+
     return float(np.max(distances))
 
 
@@ -409,46 +407,46 @@ def damped_footpoint_update(
     """
     t_values = np.asarray(t_values, dtype=np.float64)
     data_points = np.asarray(data_points, dtype=np.float64)
-    
+
     if len(t_values) == 0:
         return t_values.copy()
-    
+
     t_clamped = np.clip(t_values, 0.0, 1.0)
-    
+
     # Evaluate curve and derivatives
     cx = spline_x(t_clamped)
     cy = spline_y(t_clamped)
-    
+
     spline_dx = spline_x.derivative(1)
     spline_dy = spline_y.derivative(1)
     dx = spline_dx(t_clamped)
     dy = spline_dy(t_clamped)
-    
+
     spline_ddx = spline_x.derivative(2)
     spline_ddy = spline_y.derivative(2)
     ddx = spline_ddx(t_clamped)
     ddy = spline_ddy(t_clamped)
-    
+
     # Error vector
     ex = cx - data_points[:, 0]
     ey = cy - data_points[:, 1]
-    
+
     # f(t) = (C(t) - P) · C'(t)
     f = ex * dx + ey * dy
-    
+
     # f'(t) = ||C'(t)||² + (C(t) - P) · C''(t)
     tangent_norm_sq = dx * dx + dy * dy
     error_dot_curvature = ex * ddx + ey * ddy
     f_prime = tangent_norm_sq + error_dot_curvature
-    
+
     # Safeguard
     MIN_TANGENT_NORM_SQ = 1e-14
     valid = np.abs(f_prime) > MIN_TANGENT_NORM_SQ
-    
+
     # Damped Newton update
     t_new = t_clamped.copy()
     t_new[valid] = t_clamped[valid] - damping * f[valid] / f_prime[valid]
-    
+
     return np.clip(t_new, 0.0, 1.0)
 
 
@@ -461,7 +459,7 @@ def robust_footpoint_projection(
     tol: float = 1e-8,
     initial_damping: float = 0.5,
     damping_increase: float = 1.5,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Robust foot-point projection with adaptive damping.
     
@@ -485,13 +483,13 @@ def robust_footpoint_projection(
     """
     t_init = np.asarray(t_init, dtype=np.float64)
     data_points = np.asarray(data_points, dtype=np.float64)
-    
+
     if len(t_init) == 0:
         return t_init.copy(), np.array([], dtype=np.float64)
-    
+
     t_current = np.clip(t_init, 0.0, 1.0)
     damping = initial_damping
-    
+
     for iteration in range(max_iter):
         # Use damped update for first iterations, then switch to full Newton
         if damping < 1.0:
@@ -504,13 +502,13 @@ def robust_footpoint_projection(
                 t_current, data_points, spline_x, spline_y,
                 use_second_derivative=True
             )
-        
+
         max_change = np.max(np.abs(t_new - t_current))
         t_current = t_new
-        
+
         if max_change < tol:
             break
-    
+
     distances = compute_distances(t_current, data_points, spline_x, spline_y)
-    
+
     return t_current, distances

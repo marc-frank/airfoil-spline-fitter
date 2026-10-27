@@ -49,74 +49,70 @@ __version__ = "2.0.0"
 __author__ = "Airfoil Library Project"
 
 # Core data models
-from .optimization.models import (
-    ContinuityMode,
-    OptimizerType,
-    ErrorMetric,
-    AirfoilData,
-    SplineConfig,
-    OptimizationConfig,
-    FairnessWeights,
-    FitResult,
-    BoundingBox,
-    IterationRecord,
-    EvaluationRecord,  # Backwards compatibility alias
-    OptimizationRun,
-    ProjectFile,
-    ProjectMetadata,
-)
-
-# Spline mathematics
-from .spline import (
-    BSplineCurve2D,
-    create_open_uniform_knots,
-    compute_signed_curvature,
-    compute_curvature_derivative,
-    compute_arc_length,
-)
+# Fit analysis
+from .analysis import fit_report, scipy_curves
 
 # Geometry utilities
 from .geometry import (
-    find_leading_edge_index,
-    split_at_leading_edge,
-    split_into_sections,
-    create_airfoil_data,
     compute_arc_length_parameters,
-    interpolate_along_polyline,
     compute_bounding_box,
     compute_optimization_bounds,
+    create_airfoil_data,
+    find_leading_edge_index,
+    interpolate_along_polyline,
+    split_at_leading_edge,
+    split_into_sections,
 )
-
-# Optimization engine
-from .optimization import (
-    run_optimization,
-    OptimizerErrorLogger,
-    construct_control_points,
-    generate_initial_guess,
-    compute_fitting_error,
-)
-
-# Fairness metrics
-from .spline import (
-    compute_polygon_metrics,
-    compute_curve_energy,
-    compute_fairness_penalty,
-)
-
-# Fit analysis
-from .analysis import fit_report, scipy_curves
 
 # UI components
 from .gui import SplineFitterWindow
 
+# Optimization engine
+from .optimization import (
+    OptimizerErrorLogger,
+    compute_fitting_error,
+    construct_control_points,
+    generate_initial_guess,
+    run_optimization,
+)
+from .optimization.models import (
+    AirfoilData,
+    BoundingBox,
+    ContinuityMode,
+    ErrorMetric,
+    EvaluationRecord,  # Backwards compatibility alias
+    FairnessWeights,
+    FitResult,
+    IterationRecord,
+    OptimizationConfig,
+    OptimizationRun,
+    OptimizerType,
+    ProjectFile,
+    ProjectMetadata,
+    SplineConfig,
+)
+
 # Project file I/O
 from .project_io import (
-    save_project,
-    load_project,
+    create_optimization_run,
     create_project,
     create_project_metadata,
-    create_optimization_run,
     get_run_summary,
+    load_project,
+    save_project,
+)
+
+# Spline mathematics
+# Fairness metrics
+from .spline import (
+    BSplineCurve2D,
+    compute_arc_length,
+    compute_curvature_derivative,
+    compute_curve_energy,
+    compute_fairness_penalty,
+    compute_polygon_metrics,
+    compute_signed_curvature,
+    create_open_uniform_knots,
 )
 
 __all__ = [
@@ -125,7 +121,7 @@ __all__ = [
     "__author__",
     # Data models
     "ContinuityMode",
-    "OptimizerType", 
+    "OptimizerType",
     "ErrorMetric",
     "AirfoilData",
     "SplineConfig",

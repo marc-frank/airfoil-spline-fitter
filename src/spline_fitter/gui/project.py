@@ -12,23 +12,22 @@ from __future__ import annotations
 
 import os
 from collections import defaultdict
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import Qt, QDir
-from PyQt6.QtWidgets import QApplication, QFileDialog, QTreeWidgetItem
+from PyQt6.QtCore import QDir, Qt
+from PyQt6.QtWidgets import QFileDialog, QTreeWidgetItem
 
 from ..optimization.models import (
-    AirfoilData,
-    SplineConfig,
-    OptimizationConfig,
-    OptimizerType,
     FairnessWeights,
     FitResult,
     IterationRecord,
+    OptimizationConfig,
     OptimizationRun,
+    OptimizerType,
     ProjectFile,
+    SplineConfig,
 )
-from ..project_io import save_project, load_project, create_project, create_optimization_run
+from ..project_io import create_optimization_run, create_project, load_project, save_project
 
 if TYPE_CHECKING:
     from .ui import SplineFitterWindow
@@ -39,21 +38,21 @@ class ProjectManager:
 
     def __init__(self, window: SplineFitterWindow):
         self._window = window
-        self._project: Optional[ProjectFile] = None
-        self._project_path: Optional[str] = None
+        self._project: ProjectFile | None = None
+        self._project_path: str | None = None
         self._project_modified = False
-        self._selected_runs: List[OptimizationRun] = []
+        self._selected_runs: list[OptimizationRun] = []
 
     # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
 
     @property
-    def project(self) -> Optional[ProjectFile]:
+    def project(self) -> ProjectFile | None:
         return self._project
 
     @property
-    def project_path(self) -> Optional[str]:
+    def project_path(self) -> str | None:
         return self._project_path
 
     @property
@@ -240,7 +239,7 @@ class ProjectManager:
         opt_config: OptimizationConfig,
         fairness_weights: FairnessWeights,
         result: FitResult,
-        loss_history: List[IterationRecord],
+        loss_history: list[IterationRecord],
     ):
         """Add a completed optimization run to the current project.
 
@@ -469,7 +468,7 @@ class ProjectManager:
             return
 
         # Collect all selected runs (including from folder selections)
-        runs: List[OptimizationRun] = []
+        runs: list[OptimizationRun] = []
         for item in selected_items:
             data = item.data(0, Qt.ItemDataRole.UserRole)
             if data is None:
@@ -623,7 +622,7 @@ class ProjectManager:
             self._window._plot_manager.set_comparison_data([], [])
             self._window._plot_manager.set_comparison_marker([], [])
 
-    def _update_comparison_plot(self, runs: List[OptimizationRun]):
+    def _update_comparison_plot(self, runs: list[OptimizationRun]):
         """Update comparison plot for multiple selected runs."""
         if not runs:
             self._window._plot_manager.set_comparison_data([], [])
@@ -642,7 +641,7 @@ class ProjectManager:
 
     @staticmethod
     def _detect_sweep_axis(
-        runs: List[OptimizationRun],
+        runs: list[OptimizationRun],
     ) -> tuple:
         """Detect which parameter varies among runs and return (x, y, label).
 

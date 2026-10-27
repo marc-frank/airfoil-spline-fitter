@@ -21,29 +21,29 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from .base import (
-    BaseOptimizer,
     AlgebraicOptimizer,
-    RawOptimResult,
+    BaseOptimizer,
     EarlyStopException,
+    RawOptimResult,
 )
+from .basin_hopping import BasinHoppingOptimizer
+from .constrained_lsq import ConstrainedLSQOptimizer, Parameterization
 from .differential_evolution import DifferentialEvolutionOptimizer
 from .dual_annealing import DualAnnealingOptimizer
-from .basin_hopping import BasinHoppingOptimizer
+from .gn_varpro import GNVarProOptimizer
 from .local import (
-    LocalOptimizer,
     BFGSOptimizer,
-    LBFGSBOptimizer,
     CGOptimizer,
+    COBYLAOptimizer,
+    LBFGSBOptimizer,
+    LocalOptimizer,
+    NelderMeadOptimizer,
+    PowellOptimizer,
     SLSQPOptimizer,
     TNCOptimizer,
-    PowellOptimizer,
-    NelderMeadOptimizer,
-    COBYLAOptimizer,
 )
-from .constrained_lsq import ConstrainedLSQOptimizer, Parameterization
 from .orthogonal_lsq import OrthogonalLSQOptimizer
 from .param_optimizer import ParamOptimizer
-from .gn_varpro import GNVarProOptimizer
 
 if TYPE_CHECKING:
     from ..models import OptimizerType
@@ -80,7 +80,7 @@ def increment_iteration() -> int:
     return _iteration_count
 
 
-def get_optimizer(optimizer_type: "OptimizerType") -> BaseOptimizer:
+def get_optimizer(optimizer_type: OptimizerType) -> BaseOptimizer:
     """
     Get an optimizer instance for the given type.
     
@@ -95,11 +95,11 @@ def get_optimizer(optimizer_type: "OptimizerType") -> BaseOptimizer:
     """
     from ..models import OptimizerType
     from .constrained_lsq import Parameterization
-    
+
     # DIRECT_LSQ is ConstrainedLSQ with centripetal parameterization
     if optimizer_type == OptimizerType.DIRECT_LSQ:
         return ConstrainedLSQOptimizer(parameterization=Parameterization.CENTRIPETAL)
-    
+
     optimizer_map = {
         # Global optimizers
         OptimizerType.DE: DifferentialEvolutionOptimizer,
@@ -121,11 +121,11 @@ def get_optimizer(optimizer_type: "OptimizerType") -> BaseOptimizer:
         # Two-stage parameterization
         OptimizerType.PARAM_OPT: ParamOptimizer,
     }
-    
+
     optimizer_class = optimizer_map.get(optimizer_type)
     if optimizer_class is None:
         raise ValueError(f"Unknown optimizer type: {optimizer_type}")
-    
+
     return optimizer_class()
 
 

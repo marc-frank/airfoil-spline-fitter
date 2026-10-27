@@ -26,24 +26,22 @@ import logging
 import platform
 import uuid
 from datetime import datetime
-from dataclasses import asdict
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .optimization.models import (
     AirfoilData,
-    SplineConfig,
-    OptimizationConfig,
+    ContinuityMode,
+    ErrorMetric,
     FairnessWeights,
     FitResult,
     IterationRecord,
+    OptimizationConfig,
     OptimizationRun,
+    OptimizerType,
+    PointList,
     ProjectFile,
     ProjectMetadata,
-    ContinuityMode,
-    OptimizerType,
-    ErrorMetric,
-    Point2D,
-    PointList,
+    SplineConfig,
 )
 
 # Import version from package
@@ -109,7 +107,7 @@ def _error_metric_from_str(s: str) -> ErrorMetric:
 # Encoding (Python -> JSON)
 # =============================================================================
 
-def _encode_airfoil(airfoil: AirfoilData) -> Dict[str, Any]:
+def _encode_airfoil(airfoil: AirfoilData) -> dict[str, Any]:
     """Encode AirfoilData to JSON-serializable dict."""
     return {
         "coordinates": list(airfoil.coordinates),
@@ -122,7 +120,7 @@ def _encode_airfoil(airfoil: AirfoilData) -> Dict[str, Any]:
     }
 
 
-def _encode_spline_config(config: SplineConfig) -> Dict[str, Any]:
+def _encode_spline_config(config: SplineConfig) -> dict[str, Any]:
     """Encode SplineConfig to JSON-serializable dict."""
     return {
         "degree": config.degree,
@@ -135,7 +133,7 @@ def _encode_spline_config(config: SplineConfig) -> Dict[str, Any]:
     }
 
 
-def _encode_optimization_config(config: OptimizationConfig) -> Dict[str, Any]:
+def _encode_optimization_config(config: OptimizationConfig) -> dict[str, Any]:
     """Encode OptimizationConfig to JSON-serializable dict."""
     return {
         "optimizer": config.optimizer.value,
@@ -152,7 +150,7 @@ def _encode_optimization_config(config: OptimizationConfig) -> Dict[str, Any]:
     }
 
 
-def _encode_fairness_weights(weights: FairnessWeights) -> Dict[str, Any]:
+def _encode_fairness_weights(weights: FairnessWeights) -> dict[str, Any]:
     """Encode FairnessWeights to JSON-serializable dict."""
     return {
         "length_variance": weights.length_variance,
@@ -164,7 +162,7 @@ def _encode_fairness_weights(weights: FairnessWeights) -> Dict[str, Any]:
     }
 
 
-def _encode_fit_result(result: FitResult) -> Dict[str, Any]:
+def _encode_fit_result(result: FitResult) -> dict[str, Any]:
     """Encode FitResult to JSON-serializable dict (without control points)."""
     return {
         "degree": result.degree,
@@ -180,7 +178,7 @@ def _encode_fit_result(result: FitResult) -> Dict[str, Any]:
     }
 
 
-def _encode_iteration_record(record: IterationRecord) -> Dict[str, Any]:
+def _encode_iteration_record(record: IterationRecord) -> dict[str, Any]:
     """Encode IterationRecord to JSON-serializable dict."""
     return {
         "iter": record.iteration_number,
@@ -189,7 +187,7 @@ def _encode_iteration_record(record: IterationRecord) -> Dict[str, Any]:
     }
 
 
-def _encode_optimization_run(run: OptimizationRun) -> Dict[str, Any]:
+def _encode_optimization_run(run: OptimizationRun) -> dict[str, Any]:
     """Encode OptimizationRun to JSON-serializable dict."""
     return {
         "run_id": run.run_id,
@@ -206,7 +204,7 @@ def _encode_optimization_run(run: OptimizationRun) -> Dict[str, Any]:
     }
 
 
-def _encode_metadata(metadata: ProjectMetadata) -> Dict[str, Any]:
+def _encode_metadata(metadata: ProjectMetadata) -> dict[str, Any]:
     """Encode ProjectMetadata to JSON-serializable dict."""
     return {
         "format_version": metadata.format_version,
@@ -217,7 +215,7 @@ def _encode_metadata(metadata: ProjectMetadata) -> Dict[str, Any]:
     }
 
 
-def _encode_project(project: ProjectFile) -> Dict[str, Any]:
+def _encode_project(project: ProjectFile) -> dict[str, Any]:
     """Encode ProjectFile to JSON-serializable dict."""
     return {
         "format_version": project.metadata.format_version,
@@ -231,7 +229,7 @@ def _encode_project(project: ProjectFile) -> Dict[str, Any]:
 # Decoding (JSON -> Python)
 # =============================================================================
 
-def _decode_airfoil(data: Dict[str, Any]) -> AirfoilData:
+def _decode_airfoil(data: dict[str, Any]) -> AirfoilData:
     """Decode AirfoilData from JSON dict."""
     return AirfoilData(
         coordinates=tuple(tuple(p) for p in data["coordinates"]),
@@ -244,7 +242,7 @@ def _decode_airfoil(data: Dict[str, Any]) -> AirfoilData:
     )
 
 
-def _decode_spline_config(data: Dict[str, Any]) -> SplineConfig:
+def _decode_spline_config(data: dict[str, Any]) -> SplineConfig:
     """Decode SplineConfig from JSON dict.
     
     Old projects stored a ``continuity_type`` field ("GEOMETRIC" or
@@ -264,7 +262,7 @@ def _decode_spline_config(data: Dict[str, Any]) -> SplineConfig:
     )
 
 
-def _decode_optimization_config(data: Dict[str, Any]) -> OptimizationConfig:
+def _decode_optimization_config(data: dict[str, Any]) -> OptimizationConfig:
     """Decode OptimizationConfig from JSON dict."""
     return OptimizationConfig(
         optimizer=_optimizer_type_from_str(data["optimizer"]),
@@ -281,7 +279,7 @@ def _decode_optimization_config(data: Dict[str, Any]) -> OptimizationConfig:
     )
 
 
-def _decode_fairness_weights(data: Dict[str, Any]) -> FairnessWeights:
+def _decode_fairness_weights(data: dict[str, Any]) -> FairnessWeights:
     """Decode FairnessWeights from JSON dict."""
     return FairnessWeights(
         length_variance=data.get("length_variance", 0.0),
@@ -293,7 +291,7 @@ def _decode_fairness_weights(data: Dict[str, Any]) -> FairnessWeights:
     )
 
 
-def _decode_fit_result(data: Dict[str, Any], section_control_points: List[PointList]) -> FitResult:
+def _decode_fit_result(data: dict[str, Any], section_control_points: list[PointList]) -> FitResult:
     """Decode FitResult from JSON dict."""
     return FitResult(
         section_control_points=section_control_points,
@@ -310,7 +308,7 @@ def _decode_fit_result(data: Dict[str, Any], section_control_points: List[PointL
     )
 
 
-def _decode_iteration_record(data: Dict[str, Any]) -> IterationRecord:
+def _decode_iteration_record(data: dict[str, Any]) -> IterationRecord:
     """Decode IterationRecord from JSON dict.
     
     Handles both old format (with 'eval' field) and new format (without).
@@ -322,14 +320,14 @@ def _decode_iteration_record(data: Dict[str, Any]) -> IterationRecord:
     )
 
 
-def _decode_optimization_run(data: Dict[str, Any]) -> OptimizationRun:
+def _decode_optimization_run(data: dict[str, Any]) -> OptimizationRun:
     """Decode OptimizationRun from JSON dict."""
     # Decode control points first (needed for FitResult)
     section_control_points = [
         [(float(p[0]), float(p[1])) for p in section]
         for section in data["section_control_points"]
     ]
-    
+
     return OptimizationRun(
         run_id=data["run_id"],
         timestamp=data["timestamp"],
@@ -342,7 +340,7 @@ def _decode_optimization_run(data: Dict[str, Any]) -> OptimizationRun:
     )
 
 
-def _decode_metadata(data: Dict[str, Any]) -> ProjectMetadata:
+def _decode_metadata(data: dict[str, Any]) -> ProjectMetadata:
     """Decode ProjectMetadata from JSON dict."""
     return ProjectMetadata(
         format_version=data.get("format_version", "1.0.0"),
@@ -353,7 +351,7 @@ def _decode_metadata(data: Dict[str, Any]) -> ProjectMetadata:
     )
 
 
-def _decode_project(data: Dict[str, Any]) -> ProjectFile:
+def _decode_project(data: dict[str, Any]) -> ProjectFile:
     """Decode ProjectFile from JSON dict."""
     return ProjectFile(
         metadata=_decode_metadata(data["metadata"]),
@@ -366,7 +364,7 @@ def _decode_project(data: Dict[str, Any]) -> ProjectFile:
 # Public API
 # =============================================================================
 
-def create_project_metadata(created: Optional[str] = None) -> ProjectMetadata:
+def create_project_metadata(created: str | None = None) -> ProjectMetadata:
     """
     Create new project metadata with current timestamp and system info.
     
@@ -391,7 +389,7 @@ def create_optimization_run(
     optimization_config: OptimizationConfig,
     fairness_weights: FairnessWeights,
     result: FitResult,
-    loss_history: List[IterationRecord],
+    loss_history: list[IterationRecord],
 ) -> OptimizationRun:
     """
     Create a new optimization run record.
@@ -460,9 +458,9 @@ def save_project(project: ProjectFile, filepath: str, indent: int = 2) -> None:
         airfoil=project.airfoil,
         optimization_runs=project.optimization_runs,
     )
-    
+
     data = _encode_project(project)
-    
+
     with open(filepath, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=indent, ensure_ascii=False)
 
@@ -481,9 +479,9 @@ def load_project(filepath: str) -> ProjectFile:
         IOError: If the file cannot be read
         ValueError: If the file format is invalid
     """
-    with open(filepath, 'r', encoding='utf-8') as f:
+    with open(filepath, encoding='utf-8') as f:
         data = json.load(f)
-    
+
     # Version check
     version = data.get("format_version", "1.0.0")
     major_version = int(version.split(".")[0])
@@ -492,7 +490,7 @@ def load_project(filepath: str) -> ProjectFile:
             f"Project file version {version} is not supported. "
             f"Please update the application."
         )
-    
+
     return _decode_project(data)
 
 
@@ -509,7 +507,7 @@ def get_run_summary(run: OptimizationRun) -> str:
     cfg = run.spline_config
     opt = run.optimization_config
     res = run.result
-    
+
     lines = [
         f"Run ID: {run.run_id[:8]}...",
         f"Time: {run.timestamp}",

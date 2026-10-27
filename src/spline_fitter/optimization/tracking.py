@@ -8,7 +8,6 @@ function and the optimizer adapters.
 
 from __future__ import annotations
 
-
 # =============================================================================
 # Module State for Evaluation Tracking
 # =============================================================================

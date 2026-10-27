@@ -12,19 +12,16 @@ This module provides:
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
-
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QPushButton,
-    QLabel,
-    QSpinBox,
     QDoubleSpinBox,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
 )
-
 
 # =============================================================================
 # Constants
@@ -134,7 +131,7 @@ class SweepableSpinBox(QWidget):
     SweepableSpinBox in a *group* can be active at a time.
     """
 
-    def __init__(self, spin_box: QSpinBox, group: Optional[list] = None, parent=None):
+    def __init__(self, spin_box: QSpinBox, group: list | None = None, parent=None):
         super().__init__(parent)
         self._sweep_active = False
         self._group = group
@@ -196,7 +193,7 @@ class SweepableSpinBox(QWidget):
         return self._sweep_active
 
     @property
-    def sweep_range(self) -> Tuple[int, int]:
+    def sweep_range(self) -> tuple[int, int]:
         """Return (min_val, max_val) for the sweep."""
         return (self._spin.value(), self._spin_max.value())
 
@@ -221,7 +218,7 @@ class SweepableDoubleSpinBox(QWidget):
     def __init__(
         self,
         spin_box: QDoubleSpinBox,
-        group: Optional[list] = None,
+        group: list | None = None,
         default_steps: int = 10,
         parent=None,
     ):
@@ -305,7 +302,7 @@ class SweepableDoubleSpinBox(QWidget):
         return self._sweep_active
 
     @property
-    def sweep_range(self) -> Tuple[float, float]:
+    def sweep_range(self) -> tuple[float, float]:
         """Return (min_val, max_val) for the sweep."""
         return (self._spin.value(), self._spin_max.value())
 

@@ -1,13 +1,17 @@
 """App integration of the bspline-varpro library."""
+import bspline_varpro
 import numpy as np
 import pytest
-import bspline_varpro
 from scipy.interpolate import BSpline
 
 from spline_fitter.optimization.models import (
-    AirfoilData, SplineConfig, OptimizationConfig, OptimizerType, FairnessWeights,
+    AirfoilData,
+    FairnessWeights,
+    OptimizationConfig,
+    OptimizerType,
+    SplineConfig,
 )
-from spline_fitter.optimization.optimizers.gn_varpro import GNVarProOptimizer, GNVarProConfig
+from spline_fitter.optimization.optimizers.gn_varpro import GNVarProConfig, GNVarProOptimizer
 from spline_fitter.spline.spline import create_open_uniform_knots
 
 
@@ -31,7 +35,7 @@ def test_adapter_returns_app_result_with_data_only_error():
     assert [len(cp) for cp in result.section_control_points] == [6, 6]
     assert result.x.shape == (2 * 6 * 2,)
     error = []
-    for sec, cp, t in zip(airfoil.sections, result.section_control_points, result.parameters):
+    for sec, cp, t in zip(airfoil.sections, result.section_control_points, result.parameters, strict=False):
         curve = BSpline(create_open_uniform_knots(3, 6), cp, 3)
         error.extend(np.sum((curve(t) - sec) ** 2, axis=1))
     assert result.fun == pytest.approx(np.sqrt(np.mean(error)))
@@ -67,7 +71,7 @@ def test_adapter_passes_settings_through_to_library(monkeypatch):
 
 
 def test_callback_gets_flat_control_points_counts_evaluations_and_can_stop():
-    from spline_fitter.optimization.engine import reset_iteration_tracking, get_evaluation_count
+    from spline_fitter.optimization.engine import get_evaluation_count, reset_iteration_tracking
     reset_iteration_tracking()
     seen = []
 
@@ -104,7 +108,9 @@ def test_retired_hierarchical_runs_load_as_varpro():
 
 def test_projects_saved_with_automatic_selection_still_load():
     from spline_fitter.project_io import (
-        _decode_fit_result, _decode_optimization_config, _encode_optimization_config,
+        _decode_fit_result,
+        _decode_optimization_config,
+        _encode_optimization_config,
     )
     options = _decode_optimization_config({
         "optimizer": "gn-varpro", "metric": "avg_point", "smoothing_weight": 3e-5,
@@ -124,8 +130,9 @@ def test_gui_fits_with_varpro(monkeypatch):
     import os
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PyQt6.QtWidgets import QApplication
-    from spline_fitter.gui.ui import SplineFitterWindow
+
     from spline_fitter.gui import fitting
+    from spline_fitter.gui.ui import SplineFitterWindow
     app = QApplication.instance() or QApplication([])
     window = SplineFitterWindow()
     monkeypatch.setattr(fitting.OptimizerErrorLogger, "save", lambda *a, **k: None)

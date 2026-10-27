@@ -8,35 +8,33 @@ plots, and the run controls.
 
 from __future__ import annotations
 
-
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QSplitter,
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QPushButton,
-    QLabel,
-    QSpinBox,
-    QDoubleSpinBox,
-    QComboBox,
     QCheckBox,
-    QScrollArea,
-    QGroupBox,
+    QComboBox,
+    QDoubleSpinBox,
     QFormLayout,
-    QSlider,
-    QTreeWidget,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
     QLineEdit,
+    QPushButton,
+    QScrollArea,
+    QSlider,
+    QSpinBox,
+    QSplitter,
+    QTreeWidget,
+    QVBoxLayout,
+    QWidget,
 )
 
 from ..optimization.models import (
     ContinuityMode,
-    OptimizerType,
     ErrorMetric,
+    OptimizerType,
 )
-
-from .widgets import CollapsibleSection, SweepableSpinBox, SweepableDoubleSpinBox
+from .widgets import CollapsibleSection, SweepableDoubleSpinBox, SweepableSpinBox
 
 
 class WindowLayoutMixin:

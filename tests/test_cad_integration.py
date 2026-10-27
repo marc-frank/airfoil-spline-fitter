@@ -1,17 +1,21 @@
 """Tolerance mode, geometric continuity, knots, report and CAD export in the app."""
+import bspline_varpro
 import numpy as np
 import pytest
-from scipy.interpolate import BSpline
-
-import bspline_varpro
 from bspline_varpro import diagnostics
 from bspline_varpro.airfoil import NACA4
+from scipy.interpolate import BSpline
 
 from spline_fitter.analysis import default_tolerance, fit_report, format_report_html, scipy_curves
 from spline_fitter.geometry import create_airfoil_data
 from spline_fitter.io import export_spline_data, parse_spline_data
 from spline_fitter.optimization.models import (
-    ContinuityMode, FairnessWeights, FitResult, OptimizationConfig, OptimizerType, SplineConfig,
+    ContinuityMode,
+    FairnessWeights,
+    FitResult,
+    OptimizationConfig,
+    OptimizerType,
+    SplineConfig,
 )
 from spline_fitter.optimization.optimizers.gn_varpro import GNVarProOptimizer, accepts_preview
 
@@ -37,7 +41,7 @@ def test_tolerance_mode_returns_knots_within_tolerance(tolerance_fit):
     assert result.success
     assert result.fun <= 1e-5 * (1 + 1e-9)
     curves = [BSpline(np.array(k), np.array(c), 5)
-              for k, c in zip(result.section_knots, result.section_control_points)]
+              for k, c in zip(result.section_knots, result.section_control_points, strict=False)]
     dev = diagnostics.max_deviation([np.array(s) for s in airfoil.sections], curves)
     assert dev <= 1e-5 * (1 + 1e-9)
     interior = [np.unique(np.array(k)[6:-6]) for k in result.section_knots]
@@ -131,7 +135,7 @@ def test_app_fit_result_curves_use_knots(tolerance_fit):
                        section_knots=raw.section_knots)
     assert result.num_control_points == sum(len(c) for c in raw.section_control_points) - 1
     for curve, sc, knots, ctrl in zip(result.curves(), scipy_curves(result), raw.section_knots,
-                                      raw.section_control_points):
+                                      raw.section_control_points, strict=False):
         assert np.array_equal(curve.knot_vector, knots)
         u = np.linspace(0, 1, 17)
         x, y = curve.evaluate_array(u)
@@ -162,7 +166,7 @@ def test_spline_file_round_trip(tmp_path, tolerance_fit):
     data = parse_spline_data(path)
     assert data["name"] == "NACA 2412" and data["degree"] == 5 and data["continuity"] == ["G2"]
     assert [len(c) for c in data["section_control_points"]] == [len(c) for c in raw.section_control_points]
-    for a, b in zip(data["section_control_points"], raw.section_control_points):
+    for a, b in zip(data["section_control_points"], raw.section_control_points, strict=False):
         assert np.allclose(a, b, atol=1e-14)
     assert data["section_knots"] == [list(map(float, k)) for k in raw.section_knots]
     from spline_fitter.io import parse_airfoil_data
@@ -182,7 +186,12 @@ def test_old_spline_files_still_parse(tmp_path):
 
 
 def test_project_round_trip_keeps_knots_and_settings(tmp_path, tolerance_fit):
-    from spline_fitter.project_io import create_optimization_run, create_project, load_project, save_project
+    from spline_fitter.project_io import (
+        create_optimization_run,
+        create_project,
+        load_project,
+        save_project,
+    )
     airfoil, raw = tolerance_fit
     result = FitResult(raw.section_control_points, 5, raw.fun, raw.nit, raw.nit, 1.0,
                        section_knots=raw.section_knots)
@@ -205,8 +214,9 @@ def _window(monkeypatch):
     import os
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PyQt6.QtWidgets import QApplication
-    from spline_fitter.gui.ui import SplineFitterWindow
+
     from spline_fitter.gui import fitting
+    from spline_fitter.gui.ui import SplineFitterWindow
     app = QApplication.instance() or QApplication([])
     window = SplineFitterWindow()
     monkeypatch.setattr(fitting.OptimizerErrorLogger, "save", lambda *a, **k: None)
@@ -245,8 +255,8 @@ def test_gui_tolerance_mode_fit_report_and_cad_export(monkeypatch, tmp_path):
 
 
 def test_gui_dialogs_save_export_and_report(monkeypatch, tmp_path):
-    from PyQt6.QtWidgets import QDialog, QFileDialog, QInputDialog
     from bspline_varpro.airfoil import read_dat
+    from PyQt6.QtWidgets import QDialog, QFileDialog, QInputDialog
     app, window = _window(monkeypatch)
     window._airfoil = naca_airfoil(n=41, decimals=5)
     window._combo_opt.setCurrentIndex(window._combo_opt.findData(OptimizerType.GN_VARPRO))

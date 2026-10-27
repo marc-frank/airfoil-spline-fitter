@@ -12,23 +12,22 @@ import os
 from PyQt6.QtCore import QDir
 from PyQt6.QtWidgets import (
     QApplication,
-    QVBoxLayout,
-    QPushButton,
-    QFileDialog,
-    QDoubleSpinBox,
-    QComboBox,
     QCheckBox,
-    QFormLayout,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
-    QTextBrowser,
+    QDoubleSpinBox,
+    QFileDialog,
+    QFormLayout,
     QInputDialog,
+    QPushButton,
+    QTextBrowser,
+    QVBoxLayout,
 )
 
-from ..geometry import create_airfoil_data
-from ..io import parse_airfoil_data, export_airfoil_data, export_spline_data
 from ..analysis import fit_report, format_report_html, scipy_curves
-
+from ..geometry import create_airfoil_data
+from ..io import export_airfoil_data, export_spline_data, parse_airfoil_data
 
 
 class FileActionsMixin:
@@ -65,7 +64,7 @@ class FileActionsMixin:
             return
 
         try:
-            with open(report_path, "r", encoding="utf-8") as f:
+            with open(report_path, encoding="utf-8") as f:
                 markdown_text = f.read()
 
             # Convert markdown to HTML
@@ -102,7 +101,6 @@ class FileActionsMixin:
         html_lines = []
         in_code_block = False
         in_table = False
-        table_rows = []
 
         for line in lines:
             # Code blocks

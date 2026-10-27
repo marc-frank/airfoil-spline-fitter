@@ -11,7 +11,6 @@ the GUI status bar, log files, and console output.
 from __future__ import annotations
 
 import math
-from typing import Optional
 
 
 def format_error(value: float) -> str:
@@ -40,18 +39,18 @@ def format_error(value: float) -> str:
         val = float(value)
     except (TypeError, ValueError):
         return str(value)
-    
+
     if not math.isfinite(val):
         return str(val)
-    
+
     abs_val = abs(val)
-    
+
     # Use scientific notation for very small or very large values
     if 0 < abs_val < 1e-3 or abs_val >= 1e4:
         exponent = int(math.floor(math.log10(abs_val)))
         mantissa = val / (10 ** exponent)
         return f"{mantissa:.3f}×10^{exponent}"
-    
+
     return f"{val:.6f}"
 
 
@@ -82,23 +81,23 @@ def format_duration(seconds: float) -> str:
     """
     if seconds < 1e-3:
         return f"{seconds * 1e6:.0f} µs"
-    
+
     if seconds < 1.0:
         return f"{seconds * 1e3:.0f} ms"
-    
+
     if seconds < 60.0:
         return f"{seconds:.2f} s"
-    
+
     minutes, secs = divmod(seconds, 60.0)
-    
+
     if minutes < 60:
         return f"{int(minutes)}m {int(secs)}s"
-    
+
     hours, minutes = divmod(int(minutes), 60)
     return f"{int(hours)}h {int(minutes)}m {int(secs)}s"
 
 
-def format_count(value: int, singular: str, plural: Optional[str] = None) -> str:
+def format_count(value: int, singular: str, plural: str | None = None) -> str:
     """
     Format a count with appropriate singular/plural noun.
     
@@ -112,7 +111,7 @@ def format_count(value: int, singular: str, plural: Optional[str] = None) -> str
     """
     if plural is None:
         plural = singular + "s"
-    
+
     noun = singular if value == 1 else plural
     return f"{value:,} {noun}"
 
@@ -147,12 +146,12 @@ def sanitize_filename(name: str) -> str:
     valid_chars = set("abcdefghijklmnopqrstuvwxyz"
                       "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
                       "0123456789-_.")
-    
+
     result = []
     for char in name:
         if char in valid_chars:
             result.append(char)
         else:
             result.append("_")
-    
+
     return "".join(result)

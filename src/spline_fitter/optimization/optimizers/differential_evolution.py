@@ -7,13 +7,13 @@ Global optimizer using differential evolution algorithm.
 
 from __future__ import annotations
 
-from typing import Callable, Optional, Sequence
+from collections.abc import Callable, Sequence
 
 import numpy as np
 from scipy.optimize import differential_evolution
 
-from .base import BaseOptimizer, RawOptimResult
 from ..models import Bounds
+from .base import BaseOptimizer, RawOptimResult
 
 
 class DifferentialEvolutionOptimizer(BaseOptimizer):
@@ -27,23 +27,23 @@ class DifferentialEvolutionOptimizer(BaseOptimizer):
         - Use only if local optimizers fail
         - Very slow compared to gradient-based methods
     """
-    
+
     @property
     def name(self) -> str:
         return "Differential Evolution"
-    
+
     @property
     def is_global(self) -> bool:
         return True
-    
+
     def optimize(
         self,
         objective: Callable[[np.ndarray], float],
         x0: np.ndarray,
         bounds: Sequence[Bounds],
         max_iterations: int,
-        callback: Optional[Callable[[np.ndarray, float], bool]] = None,
-        seed: Optional[int] = None,
+        callback: Callable[[np.ndarray, float], bool] | None = None,
+        seed: int | None = None,
     ) -> RawOptimResult:
         """
         Run differential evolution optimization.
@@ -67,7 +67,7 @@ class DifferentialEvolutionOptimizer(BaseOptimizer):
                 return bool(callback(xk, err))
             except Exception:
                 return False
-        
+
         result = differential_evolution(
             objective,
             bounds=bounds,
@@ -80,7 +80,7 @@ class DifferentialEvolutionOptimizer(BaseOptimizer):
             tol=0,
             disp=False,
         )
-        
+
         return RawOptimResult(
             x=np.asarray(result.x, dtype=np.float64),
             fun=float(result.fun) if np.isfinite(result.fun) else float('inf'),

@@ -8,7 +8,8 @@ Abstract base class and common utilities for all optimizers.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Callable, List, Optional, Sequence, TYPE_CHECKING
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -16,7 +17,6 @@ if TYPE_CHECKING:
     from ..models import (
         AirfoilData,
         Bounds,
-        FairnessWeights,
         OptimizationConfig,
         PointList,
         SplineConfig,
@@ -42,20 +42,20 @@ class RawOptimResult:
         section_control_points: Direct control points (for algebraic methods)
         section_knots: Knot vector per section (None = open uniform)
     """
-    
+
     __slots__ = ("x", "fun", "nit", "section_control_points", "parameters", "success",
                  "message", "section_knots")
-    
+
     def __init__(
         self,
         x: np.ndarray,
         fun: float,
         nit: int,
-        section_control_points: Optional[List["PointList"]] = None,
+        section_control_points: list[PointList] | None = None,
         parameters=None,
         success: bool = True,
         message: str = "",
-        section_knots: Optional[List[List[float]]] = None,
+        section_knots: list[list[float]] | None = None,
     ) -> None:
         self.x = x
         self.fun = fun
@@ -82,37 +82,37 @@ class BaseOptimizer(ABC):
         - is_global: Property indicating if global optimizer
         - is_algebraic: Property indicating if non-iterative method
     """
-    
+
     @property
     @abstractmethod
     def name(self) -> str:
         """Return the optimizer name for display/logging."""
         pass
-    
+
     @property
     def supports_bounds(self) -> bool:
         """Return True if this optimizer supports variable bounds."""
         return True
-    
+
     @property
     def is_global(self) -> bool:
         """Return True if this is a global optimizer."""
         return False
-    
+
     @property
     def is_algebraic(self) -> bool:
         """Return True if this is an algebraic (non-iterative) method."""
         return False
-    
+
     @abstractmethod
     def optimize(
         self,
         objective: Callable[[np.ndarray], float],
         x0: np.ndarray,
-        bounds: Sequence["Bounds"],
+        bounds: Sequence[Bounds],
         max_iterations: int,
-        callback: Optional[Callable[[np.ndarray, float], bool]] = None,
-        seed: Optional[int] = None,
+        callback: Callable[[np.ndarray, float], bool] | None = None,
+        seed: int | None = None,
     ) -> RawOptimResult:
         """
         Run the optimization algorithm.
@@ -137,17 +137,17 @@ class AlgebraicOptimizer(BaseOptimizer):
     
     These methods solve for the solution directly rather than iterating.
     """
-    
+
     @property
     def is_algebraic(self) -> bool:
         return True
-    
+
     @abstractmethod
     def fit(
         self,
-        config: "SplineConfig",
-        opt_config: "OptimizationConfig",
-        airfoil: "AirfoilData",
+        config: SplineConfig,
+        opt_config: OptimizationConfig,
+        airfoil: AirfoilData,
     ) -> RawOptimResult:
         """
         Fit splines using an algebraic method.
@@ -161,15 +161,15 @@ class AlgebraicOptimizer(BaseOptimizer):
             RawOptimResult with computed control points
         """
         pass
-    
+
     def optimize(
         self,
         objective: Callable[[np.ndarray], float],
         x0: np.ndarray,
-        bounds: Sequence["Bounds"],
+        bounds: Sequence[Bounds],
         max_iterations: int,
-        callback: Optional[Callable[[np.ndarray, float], bool]] = None,
-        seed: Optional[int] = None,
+        callback: Callable[[np.ndarray, float], bool] | None = None,
+        seed: int | None = None,
     ) -> RawOptimResult:
         """
         Not used for algebraic methods. Use fit() instead.

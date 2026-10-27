@@ -14,11 +14,12 @@ Two modes:
 from __future__ import annotations
 
 import inspect
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
-import numpy as np
 import bspline_varpro
+import numpy as np
 
 from .base import AlgebraicOptimizer, RawOptimResult
 
@@ -49,13 +50,13 @@ class GNVarProConfig:
     smoothing_weight: float = 1e-3
     use_exact_jacobian: bool = True
     verbose: int = 0
-    max_nfev: Optional[int] = None
+    max_nfev: int | None = None
     tolerance: float = 1e-10
     tolerance_smoothing: float = 1e-5
     max_points_per_section: int = 200
 
 
-def accepts_preview(callback: Optional[Callable]) -> bool:
+def accepts_preview(callback: Callable | None) -> bool:
     """True if ``callback`` takes a ``preview`` keyword with live curves."""
     if callback is None:
         return False
@@ -65,12 +66,12 @@ def accepts_preview(callback: Optional[Callable]) -> bool:
         return False
 
 
-def _continuity(spline_config: "SplineConfig") -> List[str]:
+def _continuity(spline_config: SplineConfig) -> list[str]:
     specs = spline_config.junction_specs()
     return specs if specs else ["G1"]
 
 
-def _flat(control_points: List[np.ndarray]) -> np.ndarray:
+def _flat(control_points: list[np.ndarray]) -> np.ndarray:
     return np.concatenate([np.asarray(c, dtype=np.float64).ravel() for c in control_points])
 
 
@@ -92,10 +93,10 @@ class GNVarProOptimizer(AlgebraicOptimizer):
 
     def fit(
         self,
-        spline_config: "SplineConfig",
-        opt_config: "OptimizationConfig",
-        airfoil: "AirfoilData",
-        callback: Optional[Callable[..., bool]] = None,
+        spline_config: SplineConfig,
+        opt_config: OptimizationConfig,
+        airfoil: AirfoilData,
+        callback: Callable[..., bool] | None = None,
     ) -> RawOptimResult:
         """
         Fit splines using variable projection.
@@ -125,7 +126,7 @@ class GNVarProOptimizer(AlgebraicOptimizer):
 
         with_preview = accepts_preview(callback)
 
-        def on_evaluation(control_points: List[np.ndarray], rms_error: float) -> bool:
+        def on_evaluation(control_points: list[np.ndarray], rms_error: float) -> bool:
             increment_evaluation()
             if callback is None:
                 return False

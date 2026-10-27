@@ -27,24 +27,24 @@ Cons:
 from __future__ import annotations
 
 import math
-import numpy as np
-from typing import List, Tuple, Optional
 
-from ..parallel import (
-    run_parallel,
-    orthogonal_distance_worker,
-    OrthogonalDistanceArgs,
-)
+import numpy as np
+
 from ...spline import BSplineCurve2D
+from ..parallel import (
+    OrthogonalDistanceArgs,
+    orthogonal_distance_worker,
+    run_parallel,
+)
 
 # Type aliases
-PointList = List[Tuple[float, float]]
+PointList = list[tuple[float, float]]
 
 
 def _compute_local_bounds(
     i: int,
     section_points: np.ndarray,
-) -> Tuple[float, float]:
+) -> tuple[float, float]:
     """
     Compute local search bounds for point i.
     
@@ -70,7 +70,7 @@ def _compute_local_bounds(
         return (0.0, 1.0)
 
     cumulative = np.concatenate(([0.0], np.cumsum(seg_lengths)))
-    
+
     if i == 0:
         # First point: search from curve start to next point's param
         t_lo = 0.0
@@ -83,11 +83,11 @@ def _compute_local_bounds(
         # Middle points: search between adjacent params
         t_lo = float(cumulative[i - 1] / total_length)
         t_hi = float(cumulative[i + 1] / total_length)
-    
+
     # Ensure proper ordering
     if t_hi < t_lo:
         t_lo, t_hi = t_hi, t_lo
-    
+
     # Keep bounds strictly between adjacent data points (no fixed padding)
     return (max(0.0, t_lo), min(1.0, t_hi))
 
@@ -95,10 +95,10 @@ def _compute_local_bounds(
 def _prepare_tasks(
     curve: BSplineCurve2D,
     section_points: np.ndarray,
-    t_params: Optional[np.ndarray],
+    t_params: np.ndarray | None,
     local_search: bool,
     tolerance: float = 1e-4,
-) -> List[OrthogonalDistanceArgs]:
+) -> list[OrthogonalDistanceArgs]:
     """
     Prepare worker task arguments for orthogonal distance computation.
     
@@ -116,30 +116,30 @@ def _prepare_tasks(
     cx = np.array([p[0] for p in curve.control_points])
     cy = np.array([p[1] for p in curve.control_points])
     degree = curve.degree
-    
+
     n_points = len(section_points)
     tasks = []
-    
+
     for i in range(n_points):
         px = float(section_points[i, 0])
         py = float(section_points[i, 1])
-        
+
         if local_search and t_params is not None and len(t_params) >= n_points:
             bounds = _compute_local_bounds(i, section_points)
         else:
             bounds = (0.0, 1.0)
-        
+
         tasks.append((knots, cx, cy, degree, px, py, bounds, tolerance))
-    
+
     return tasks
 
 
 def compute_orthogonal_error(
     curve: BSplineCurve2D,
     section_points: np.ndarray,
-    t_params: Optional[np.ndarray] = None,
+    t_params: np.ndarray | None = None,
     local_search: bool = False,
-) -> Tuple[float, int]:
+) -> tuple[float, int]:
     """
     Compute orthogonal (closest-point) distance error.
     
@@ -159,24 +159,24 @@ def compute_orthogonal_error(
         Tuple of (total_error_sum, num_points) for averaging
     """
     n_pts = len(section_points)
-    
+
     # Prepare task arguments
     tasks = _prepare_tasks(curve, section_points, t_params, local_search)
-    
+
     # Execute in parallel
     dists = run_parallel(orthogonal_distance_worker, tasks)
-    
+
     # Validate results
     if not dists or any(not math.isfinite(d) for d in dists):
         return (1e6, n_pts)
-    
+
     return (sum(dists), n_pts)
 
 
 def compute_orthogonal_error_full(
     curve: BSplineCurve2D,
     section_points: np.ndarray,
-) -> Tuple[float, int]:
+) -> tuple[float, int]:
     """
     Compute orthogonal error searching the entire curve.
     
@@ -201,7 +201,7 @@ def compute_orthogonal_error_local(
     curve: BSplineCurve2D,
     section_points: np.ndarray,
     t_params: np.ndarray,
-) -> Tuple[float, int]:
+) -> tuple[float, int]:
     """
     Compute orthogonal error searching local parameter neighborhoods.
     

@@ -11,54 +11,51 @@ This package provides:
     - optimizers: Individual optimizer implementations
 """
 
+from .engine import (
+    OptimizerErrorLogger,
+    compute_fitting_error,
+    construct_control_points,
+    generate_initial_guess,
+    get_evaluation_count,
+    increment_iteration,
+    reset_iteration_tracking,
+    run_optimization,
+)
 from .models import (
-    # Type aliases
-    Point2D,
-    PointList,
+    # Data structures
+    AirfoilData,
+    BoundingBox,
     Bounds,
     # Enumerations
     ContinuityMode,
-    OptimizerType,
     ErrorMetric,
-    # Data structures
-    AirfoilData,
-    SplineConfig,
-    OptimizationConfig,
+    EvaluationRecord,
     FairnessWeights,
     FitResult,
-    BoundingBox,
     IterationRecord,
-    EvaluationRecord,
+    OptimizationConfig,
     OptimizationRun,
+    OptimizerType,
+    # Type aliases
+    Point2D,
+    PointList,
     ProjectFile,
     ProjectMetadata,
+    SplineConfig,
 )
-
-from .parallel import (
-    get_pool,
-    shutdown_pool,
-    run_parallel,
-    orthogonal_distance_worker,
-    OrthogonalDistanceArgs,
-)
-
-from .engine import (
-    run_optimization,
-    OptimizerErrorLogger,
-    construct_control_points,
-    generate_initial_guess,
-    compute_fitting_error,
-    reset_iteration_tracking,
-    get_evaluation_count,
-    increment_iteration,
-)
-
 from .optimizers import (
-    RawOptimResult,
-    EarlyStopException,
-    BaseOptimizer,
     AlgebraicOptimizer,
+    BaseOptimizer,
+    EarlyStopException,
+    RawOptimResult,
     get_optimizer,
+)
+from .parallel import (
+    OrthogonalDistanceArgs,
+    get_pool,
+    orthogonal_distance_worker,
+    run_parallel,
+    shutdown_pool,
 )
 
 __all__ = [
