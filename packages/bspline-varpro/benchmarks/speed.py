@@ -23,20 +23,18 @@ def main(argv=None) -> int:
                         help="Largest size also run without subsampling.")
     args = parser.parse_args(argv)
 
-    print(f"{'points':>7} {'mode':>12} {'fair':>5} {'ctrl':>5} {'max dev':>9} {'sec':>7}")
+    print(f"{'points':>7} {'mode':>12} {'ctrl':>5} {'max dev':>9} {'sec':>7}")
     for n in [int(s) for s in args.sizes.split(",")]:
         pts = NACA4("0012").points(n)
         sections = [pts[:n], pts[n - 1:]]
         modes = [("subsample", 300)] + ([("all points", None)] if n <= args.full_limit else [])
         for label, limit in modes:
-            for fairing in (False, True):
-                start = time.perf_counter()
-                result = bv.fit_to_tolerance(sections, args.tolerance, 5, fairing=fairing,
-                                             max_points_per_section=limit)
-                seconds = time.perf_counter() - start
-                ctrl = sum(result.num_control_points) - 1
-                print(f"{len(pts):7d} {label:>12} {str(fairing):>5} {ctrl:5d} "
-                      f"{result.max_deviation:9.2e} {seconds:7.2f}", flush=True)
+            start = time.perf_counter()
+            result = bv.fit_to_tolerance(sections, args.tolerance, 5, max_points_per_section=limit)
+            seconds = time.perf_counter() - start
+            ctrl = sum(result.num_control_points) - 1
+            print(f"{len(pts):7d} {label:>12} {ctrl:5d} "
+                  f"{result.max_deviation:9.2e} {seconds:7.2f}", flush=True)
     return 0
 
 

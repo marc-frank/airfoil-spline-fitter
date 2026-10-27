@@ -50,7 +50,7 @@ def fit_subsampled(sections, knots, degree, options: ChainOptions, t_sections, t
     the joint solver O(n k^2) in the number of control coordinates k.
     """
     from .diagnostics import project
-    from .fairing import refine
+    from .refinement import refine
 
     indices = [subsample_indices(len(s), max_points) for s in sections]
     subsets = [s[i] for s, i in zip(sections, indices)]
@@ -206,8 +206,6 @@ def fit_to_tolerance(
     max_control_points: Optional[int] = None,
     optimize_knots: bool = True,
     remove_knots: bool = True,
-    fairing: bool = True,
-    fairing_tolerance: Optional[float] = None,
     max_points_per_section: Optional[int] = 200,
     max_nfev: int = 200,
     max_iterations: int = 40,
@@ -228,10 +226,6 @@ def fit_to_tolerance(
         max_control_points: Upper limit per section.
         optimize_knots: Polish interior knot positions once the tolerance is met.
         remove_knots: Try to remove knots once the tolerance is met.
-        fairing: Finish with :func:`~bspline_varpro.fairing.fair`: the smoothest
-            curvature comb (integral of (dkappa/ds)^2 ds) whose deviation stays
-            within ``fairing_tolerance``. Planar chains of degree >= 3 only.
-        fairing_tolerance: Deviation allowed after fairing (default ``tolerance``).
         max_points_per_section: Larger sections are fitted by variable
             projection on an evenly spaced subsample, then refined jointly on
             all points (knot polishing is skipped). None uses all points.
@@ -353,14 +347,5 @@ def fit_to_tolerance(
             result, deviation, improved = polished(result, deviation)
             if improved:
                 record("polish", result, deviation)
-
-    if fairing and sections[0].shape[1] == 2 and degree >= 3:
-        from .fairing import fair
-        result.options = options
-        faired = fair(sections, result, tolerance=fairing_tolerance or tolerance)
-        if faired.success:
-            history.extend(faired.history)
-            result, deviation = faired, faired.max_deviation
-            record("fair", result, deviation)
 
     return finish(result, deviation, True, f"Within tolerance {tolerance:g}.")

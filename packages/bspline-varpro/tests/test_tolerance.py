@@ -88,7 +88,7 @@ def test_no_remaining_knot_can_be_removed():
     pts = np.round(NACA4("2412").points(81), 5)
     sections = [pts[:81], pts[80:]]
     tolerance = 1e-5
-    result = bv.fit_to_tolerance(sections, tolerance, 5, smoothing=1e-5, fairing=False)
+    result = bv.fit_to_tolerance(sections, tolerance, 5, smoothing=1e-5)
     assert result.success
     assert sum(result.num_control_points) <= 21
     for s in range(len(sections)):

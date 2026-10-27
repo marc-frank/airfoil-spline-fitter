@@ -11,8 +11,6 @@ Professional B-spline curve fitting tool for airfoil coordinate data.
   scans).
 - **Continuity per junction**: parametric C0-C3 or geometric G1-G3, one setting
   for all junctions or a list such as `G2, C1, G3` for any number of sections
-- **Curvature fairing**: the smoothest curvature comb that still meets the
-  tolerance
 - **CAD export**: exact STEP AP214, IGES 5.3, and DXF R2000 curves, per section
   or merged into one B-spline, optionally with a closing line at a blunt
   trailing edge
@@ -24,7 +22,7 @@ Professional B-spline curve fitting tool for airfoil coordinate data.
   Basin-hopping, Dual Annealing, and local methods
 - **Batch processing**: convert entire airfoil libraries
 
-VarPro fitting, tolerance search, fairing, and the CAD writers come from the
+VarPro fitting, tolerance search, and the CAD writers come from the
 standalone [`bspline-varpro`](packages/bspline-varpro) library, which can be
 used without the GUI.
 

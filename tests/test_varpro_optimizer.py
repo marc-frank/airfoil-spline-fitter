@@ -106,6 +106,16 @@ def test_retired_hierarchical_runs_load_as_varpro():
     assert options.optimizer == OptimizerType.GN_VARPRO
 
 
+def test_projects_saved_with_fairing_still_load():
+    from spline_fitter.project_io import _decode_optimization_config, _encode_optimization_config
+    for fairing in (True, False):
+        options = _decode_optimization_config({
+            "optimizer": "gn-varpro", "metric": "avg_point", "tolerance": 1e-5, "fairing": fairing,
+        })
+        assert options.optimizer == OptimizerType.GN_VARPRO and options.tolerance == 1e-5
+        assert "fairing" not in _encode_optimization_config(options)
+
+
 def test_projects_saved_with_automatic_selection_still_load():
     from spline_fitter.project_io import (
         _decode_fit_result,

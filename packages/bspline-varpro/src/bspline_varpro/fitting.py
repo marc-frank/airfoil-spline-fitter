@@ -40,10 +40,10 @@ class FitResult:
         theta: Raw constraint parameters (shape and tangent magnitudes), usable
             as ``initial_theta`` to warm start another fit.
         max_deviation: Largest orthogonal distance of a data point to its
-            section's curve, when computed (tolerance fits and fairing).
+            section's curve, when computed (tolerance fits and refinement).
         history: Progress records of multi-stage procedures.
         options: Constraint settings the fit was made with (reused by
-            :func:`~bspline_varpro.fairing.fair` and refinements).
+            :func:`~bspline_varpro.refinement.refine` and knot polishing).
     """
 
     control_points: List[np.ndarray]
@@ -190,7 +190,7 @@ def fit(
         initial_theta: Starting raw constraint parameters (``FitResult.theta``).
         max_points_per_section: For dense data: sections with more points are
             fitted on an evenly spaced subsample, then refined jointly on all
-            points (:func:`~bspline_varpro.fairing.refine`). The callback only
+            points (:func:`~bspline_varpro.refinement.refine`). The callback only
             sees the subsample stage.
         max_nfev: Maximum number of residual evaluations.
         tolerance: ``ftol``, ``xtol`` and ``gtol`` for the solver.

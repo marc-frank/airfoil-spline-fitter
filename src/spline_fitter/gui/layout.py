@@ -474,13 +474,6 @@ class WindowLayoutMixin:
         tol_row.addWidget(self._check_auto_tolerance)
         tol_form.addRow("Tolerance:", tol_row)
 
-        self._check_fairing = QCheckBox("Fair within tolerance")
-        self._check_fairing.setChecked(True)
-        self._check_fairing.setToolTip(
-            "Use the remaining tolerance to smooth the curvature distribution\n"
-            "(minimizes the integral of (d\u03ba/ds)\u00b2)."
-        )
-        tol_form.addRow("", self._check_fairing)
         self._tolerance_container.setVisible(False)
         section.add_widget(self._tolerance_container)
 

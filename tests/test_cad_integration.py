@@ -64,11 +64,11 @@ def test_adapter_passes_per_junction_continuity(monkeypatch):
     config = SplineConfig(degree=4, num_control_points=8, num_sections=3,
                           junction_continuity=("g2", "C1"))
     result = GNVarProOptimizer().fit(
-        config, OptimizationConfig(optimizer=OptimizerType.GN_VARPRO, tolerance=2e-4, fairing=False),
+        config, OptimizationConfig(optimizer=OptimizerType.GN_VARPRO, tolerance=2e-4),
         airfoil)
     assert captured["continuity"] == ["G2", "C1"]
     assert captured["tolerance"] == 2e-4 and captured["degree"] == 4
-    assert captured["fairing"] is False and captured["fix_junctions"] is True
+    assert "fairing" not in captured and captured["fix_junctions"] is True
     assert len(result.section_knots) == 3
 
 
@@ -197,7 +197,7 @@ def test_project_round_trip_keeps_knots_and_settings(tmp_path, tolerance_fit):
                        section_knots=raw.section_knots)
     result.report = fit_report(airfoil.sections, result, precision=6, tolerance=1e-5)
     config = SplineConfig(num_sections=2, geometric_continuity=True, junction_continuity=("G3",))
-    options = OptimizationConfig(optimizer=OptimizerType.GN_VARPRO, tolerance=1e-5, fairing=False)
+    options = OptimizationConfig(optimizer=OptimizerType.GN_VARPRO, tolerance=1e-5)
     project = create_project(airfoil)
     project.optimization_runs.append(create_optimization_run(config, options, FairnessWeights(), result, []))
     save_project(project, str(tmp_path / "p.splineproj"))

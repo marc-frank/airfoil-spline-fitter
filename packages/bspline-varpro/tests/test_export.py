@@ -62,7 +62,7 @@ def test_merged_airfoil_is_c1_at_a_g2_junction(fitted):
 def test_merge_multiplicities_follow_the_junction_continuity():
     pts = NACA4("2412").points(61)
     result = fit_to_tolerance([pts[:30], pts[29:60], pts[59:90], pts[89:]], 1e-4,
-                              continuity=["G1", "C2", "G0"], fairing=False)
+                              continuity=["G1", "C2", "G0"])
     merged = export.merge_curves(result)
     values, counts = np.unique(merged.t, return_counts=True)
     assert np.min(np.diff(values)) > 1e-9

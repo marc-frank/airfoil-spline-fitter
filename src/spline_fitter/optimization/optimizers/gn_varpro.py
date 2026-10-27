@@ -7,7 +7,7 @@ which fits the B-spline sections by Levenberg-Marquardt variable projection.
 
 Two modes:
     - fixed: the configured number of control points per section on uniform knots
-    - tolerance: the fewest control points (non-uniform knots, optional fairing)
+    - tolerance: the fewest control points (non-uniform knots)
       that keep every data point within the tolerance
 """
 
@@ -184,7 +184,6 @@ class GNVarProOptimizer(AlgebraicOptimizer):
             smoothing=self.config.tolerance_smoothing,
             regularization=self.config.regularization,
             initial_parameters=opt_config.custom_parameters,
-            fairing=opt_config.fairing,
             max_points_per_section=self.config.max_points_per_section,
             callback=on_refit,
         )

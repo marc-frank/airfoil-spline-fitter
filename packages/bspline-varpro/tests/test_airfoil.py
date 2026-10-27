@@ -83,7 +83,7 @@ def test_fit_airfoil_meets_the_default_tolerance():
 def test_fit_airfoil_warns_below_rounding():
     pts = np.round(NACA4("0012").points(41), 3)
     with pytest.warns(UserWarning, match="rounding"):
-        airfoil.fit_airfoil(pts, 1e-4, max_iterations=1, fairing=False, optimize_knots=False)
+        airfoil.fit_airfoil(pts, 1e-4, max_iterations=1, optimize_knots=False)
 
 
 def test_leading_edge_radius(naca0012_fit):
@@ -124,7 +124,7 @@ def test_resample_lies_on_the_curve(naca0012_fit):
 def test_resample_with_four_sections():
     pts = NACA4("2412").points(81)
     sections = [pts[:40], pts[39:80], pts[79:120], pts[119:]]
-    result = fit_to_tolerance(sections, 1e-4, fairing=False)
+    result = fit_to_tolerance(sections, 1e-4)
     out = airfoil.resample(result, 41, spacing="arc")
     assert out.shape == (81, 2)
     assert np.max(diagnostics.distance_to_curves(out, result.curves())) < 1e-12

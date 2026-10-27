@@ -21,7 +21,7 @@ def test_subsample_indices_keep_both_ends():
 
 def test_dense_tolerance_fit_checks_every_point():
     sections = dense_sections()
-    result = bv.fit_to_tolerance(sections, 1e-5, 5, fairing=False, max_points_per_section=80)
+    result = bv.fit_to_tolerance(sections, 1e-5, 5, max_points_per_section=80)
     assert result.success
     assert [len(t) for t in result.parameters] == [len(s) for s in sections]
     assert dg.max_deviation(sections, result.curves()) <= 1e-5 * (1 + 1e-9)

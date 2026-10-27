@@ -2,8 +2,8 @@
 
 CAD-grade B-spline curve fitting. Given ordered points, `bspline-varpro` finds
 the curve with the **fewest control points within a maximum deviation**, with
-**geometric G1-G3 continuity** where sections meet, a **fair curvature comb**,
-and writes it exactly to **STEP, IGES, or DXF**. It is built for airfoils but
+**geometric G1-G3 continuity** where sections meet, and writes it exactly to
+**STEP, IGES, or DXF**. It is built for airfoils but
 works on any open planar or 3D curve chain.
 
 The core solver optimizes the curve parameter of every point and the control
@@ -51,11 +51,10 @@ result = bv.fit_to_tolerance(
     tolerance=1e-5,          # maximum orthogonal deviation of any point, in data units
     degree=5,
     continuity="G2",         # or one entry per junction: ["G2", "C1", "G3"]
-    fairing=True,            # smoothest curvature comb that stays within the tolerance
 )
 result.success, result.max_deviation, result.num_control_points
 result.knots                 # non-uniform clamped knot vector per section
-result.history               # every insertion, removal, polish and fairing stage
+result.history               # every insertion, removal, and polish stage
 ```
 
 The procedure:
@@ -67,21 +66,17 @@ The procedure:
 4. Try removing every knot, least useful first, refitting (and re-optimizing
    the knots) after each attempt. Keep removals that stay within the
    tolerance and start over after each one, then optimize the knots again.
-5. Fair: minimize the curvature-slope energy ∫(dκ/ds)² ds plus the squared
-   deviations, with the largest weight that keeps every point within the
-   tolerance.
 
 Dense data (more than `max_points_per_section`, default 200 per section) is
 fitted on an evenly spaced subsample and then refined jointly on all points. A
-6000-point NACA 2412 fits to 1e-5 with fairing in about 15 s
+6000-point NACA 2412 fits to 1e-5 in about 15 s
 (`benchmarks/results/speed_0.7.txt`).
 
 The bending-energy weight `smoothing` defaults to 1e-7. On the benchmark set
 it gave the fewest control points and curvature extrema of 0, 1e-7, 1e-6, and
 1e-5 (`benchmarks/results/smoothing_1.1.txt`).
 
-Useful options: `max_control_points` (per section), `fairing_tolerance`
-(allow a different deviation after fairing), `optimize_knots`, `remove_knots`,
+Useful options: `max_control_points` (per section), `optimize_knots`, `remove_knots`,
 `start_tangent` / `end_tangent`, `fix_junctions=False` (fit the junction
 position instead of interpolating it), and `callback(result, deviation)`, which
 can return True to stop.
@@ -136,16 +131,15 @@ result = bv.fit(points, knots=[my_knots], degree=5)
 
 `control_points`, `knots`, `parameters` (fitted parameter of every point),
 `degree`, `rms_error`, `max_residual`, `max_deviation` (exact orthogonal, for
-tolerance fits and fairing), `continuity` labels, `shape_parameters` per
+tolerance fits and refinement), `continuity` labels, `shape_parameters` per
 junction, `theta` (for warm starts), `history`, `success`, and `message`.
 `curves()` returns one `scipy.interpolate.BSpline` per section and
 `deviations(sections)` the orthogonal distance of every point.
 
-## Fairing and refinement
+## Refinement
 
 ```python
-faired = bv.fair(points, result, tolerance=2e-5)   # or a fixed weight=...
-refined = bv.refine(dense_points, result)          # joint LM on all points, no fairing
+refined = bv.refine(dense_points, result)          # joint LM on all points
 polished = bv.polish_knots(points, result)         # optimize interior knot positions
 ```
 
@@ -216,28 +210,29 @@ spline evaluation accuracy: the file stores full-precision values.
 noisy, and dense data. For each tolerance, every method must find the fewest
 control points that keep all data points within it. The table compares
 `scipy.interpolate.splprep` (FITPACK, degree 5) with `fit_to_tolerance`
-(degree 5, G2 at the leading edge, with fairing). The count is control points
-of the whole curve. The full results, including the deviation from the true
-airfoil, are in `benchmarks/results/benchmark_1.0.txt`.
+(degree 5, G2 at the leading edge). The count is control points of the whole
+curve. The full results, including the deviation from the true airfoil, are in
+`benchmarks/results/benchmark_1.0.txt` (splprep) and
+`benchmarks/results/smoothing_1.1.txt` (tolerance fit, smoothing 1e-7).
 
 | Data | Tolerance | splprep control points | tolerance fit control points | splprep curvature extrema | tolerance fit curvature extrema | splprep LE curvature error | tolerance fit LE curvature error |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| NACA 0012 exact | 1e-4 | 21 | 11 | 5 | 2 | -2.5% | -0.7% |
-| NACA 0012 exact | 1e-5 | 34 | 13 | 8 | 4 | 4.0% | -0.3% |
-| NACA 0012 exact | 1e-6 | 45 | 17 | 8 | 4 | 1.2% | -0.3% |
-| NACA 0012, 5 decimals | 2e-5 | 30 | 12 | 6 | 3 | 3.8% | 0.1% |
-| NACA 2412, 5 decimals | 2e-5 | 29 | 19 | 8 | 6 | 2.4% | -0.6% |
-| NACA 4412 blunt TE, 6 decimals | 1e-5 | 43 | 23 | 10 | 6 | 0.4% | -0.1% |
-| NACA 0012, 2002 points | 1e-5 | 32 | 12 | 7 | 3 | 3.3% | -0.1% |
-| NACA 0012, noise σ = 1e-4 | 3e-4 | 43 | 17 | 23 | 10 | 0.6% | -4.8% |
+| NACA 0012 exact | 1e-4 | 21 | 11 | 5 | 2 | -2.5% | 0.9% |
+| NACA 0012 exact | 1e-5 | 34 | 11 | 8 | 2 | 4.0% | 0.9% |
+| NACA 0012 exact | 1e-6 | 45 | 15 | 8 | 4 | 1.2% | 0.2% |
+| NACA 0012, 5 decimals | 2e-5 | 30 | 11 | 6 | 2 | 3.8% | 1.0% |
+| NACA 2412, 5 decimals | 2e-5 | 29 | 15 | 8 | 6 | 2.4% | -1.3% |
+| NACA 4412 blunt TE, 6 decimals | 1e-5 | 43 | 17 | 10 | 6 | 0.4% | 0.1% |
+| NACA 0012, 2002 points | 1e-5 | 32 | 11 | 7 | 2 | 3.3% | 0.9% |
+| NACA 0012, noise σ = 1e-4 | 3e-4 | 43 | 14 | 23 | 7 | 0.6% | 3.2% |
 
 "Curvature extrema" counts wiggles in the curvature comb. A symmetric section
-has at least 2, and a cambered one more. A tolerance fit takes 0.7-5 s, and
-splprep 0.2-2 s. On noisy data, the tolerance fit uses the whole tolerance
-band, so its curve can sit that far from the true shape. Its deviation from the
-true airfoil is 2.7e-4, against 1.2e-4 for splprep's 43-control-point
-least-squares curve. For scans, a tolerance below the default brings the curve
-closer to the true shape at the cost of more control points.
+has at least 2, and a cambered one more. A tolerance fit takes 0.3-10 s, and
+splprep 0.2-2 s. On noisy data, the tolerance fit can use the whole tolerance
+band, so its curve can sit that far from the true shape. In this case its
+deviation from the true airfoil is 1.2e-4, the same as splprep's
+43-control-point least-squares curve. For scans, a tolerance below the default
+brings the curve closer to the true shape at the cost of more control points.
 
 `benchmarks/speed.py` times dense data. `benchmarks/verify_cad.py` re-imports
 exported files with OpenCASCADE and ezdxf.
@@ -273,10 +268,9 @@ derivatives, and `C P = d` encodes the end, junction, and continuity conditions.
 - **Solver.** Levenberg-Marquardt on the normal equations (Cholesky), with
   Marquardt scaling, Nielsen damping updates, MINPACK stopping tests, and
   restarts when the damping stalls in curved valleys.
-- **Fairing.** A joint Levenberg-Marquardt problem over parameters and control
-  points adds the discretized ∫(dκ/ds)² ds (Gauss-Legendre per knot span) to
-  the squared deviations. The weight is found by bisection in log scale as the
-  largest one whose exact maximum deviation stays within the tolerance.
+- **Dense refinement.** A joint Levenberg-Marquardt problem over parameters
+  and control points, with the per-point parameters eliminated by a Schur
+  complement, so one step costs O(n k²) for n points and k control coordinates.
 
 ## Limitations
 
@@ -285,7 +279,6 @@ derivatives, and `C P = d` encodes the end, junction, and continuity conditions.
   continuation, and knot insertion make this reliable for airfoils and similar
   smooth curves, but self-intersecting or strongly looping data may need
   `initial_parameters`.
-- Fairing is available for planar curves of degree 3 or higher.
 - Curves are open and non-rational. Closed or periodic curves are not
   supported. A blunt trailing edge is closed with a separate line segment.
 - Knot polishing uses finite differences for the knot columns and is skipped
@@ -304,6 +297,18 @@ derivatives, and `C P = d` encodes the end, junction, and continuity conditions.
   IEEE Computer Graphics and Applications 9 (1989).
 - L. Piegl and W. Tiller, *The NURBS Book*, 2nd ed., Springer (1997): knot
   insertion and removal.
+
+## Changes in 2.0
+
+- `fair()` and the `fairing` / `fairing_tolerance` options of
+  `fit_to_tolerance` were removed. On the benchmark set, fairing within the
+  tolerance left 54 curvature extrema in total against 44 without it and took
+  about 40% longer. With a looser fairing tolerance (2-5x), roughness fell by
+  at most 10% while curvature extrema often rose. `bv.fairing` is now
+  `bv.refinement` (with `refine`). The fairness measures in `diagnostics` are
+  unchanged.
+- `fit_to_tolerance` uses `smoothing=1e-7` (was 1e-5) and tries every knot for
+  removal after optimizing the knot positions.
 
 ## License
 

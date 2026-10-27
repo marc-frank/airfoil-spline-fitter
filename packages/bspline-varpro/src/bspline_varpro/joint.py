@@ -1,4 +1,4 @@
-"""Joint optimization of data parameters and control points, with optional fairing.
+"""Joint optimization of data parameters and control points.
 
 Unlike variable projection, the control points are kept as unknowns. The
 constraints ``C P = d`` (with junction shape parameters frozen) are eliminated
@@ -6,14 +6,7 @@ by a null-space parameterization ``P = P0 + Z z``, and the data parameters t
 are free per point. Each data residual depends on one t_i only, so the normal
 equations have a diagonal t-block that is eliminated by a Schur complement:
 one Levenberg-Marquardt step costs O(n * k^2) for n points and k free control
-coordinates. This handles dense data, and it allows residuals that are not
-linear in P, such as the fairness energy
-
-    integral (dkappa/ds)^2 ds  =  integral kappa_u^2 / |C'| du,
-
-sampled by Gauss-Legendre quadrature on every knot span. ``dkappa/ds`` measures
-curvature variation independent of the parameterization, which is what a
-curvature comb shows.
+coordinates, which handles dense data.
 """
 
 from __future__ import annotations
@@ -23,35 +16,7 @@ from typing import Sequence, Tuple
 import numpy as np
 from scipy.linalg import block_diag
 
-from .basis import basis_derivative_matrix, basis_matrix, bending_energy_matrix, gauss_legendre
-
-
-def fairness_terms(d1: np.ndarray, d2: np.ndarray, d3: np.ndarray):
-    """``f = kappa_u / sqrt(|C'|)`` and its partials w.r.t. (x1, y1, x2, y2, x3, y3).
-
-    With a = x1 y2 - y1 x2, b = x1 y3 - y1 x3, c = x1 x2 + y1 y2, V = |C'|^2:
-    kappa_u = (b V - 3 a c) / V^(5/2), so f = (b V - 3 a c) V^(-11/4).
-    """
-    x1, y1, x2, y2, x3, y3 = d1[:, 0], d1[:, 1], d2[:, 0], d2[:, 1], d3[:, 0], d3[:, 1]
-    V = x1 * x1 + y1 * y1
-    a = x1 * y2 - y1 * x2
-    b = x1 * y3 - y1 * x3
-    c = x1 * x2 + y1 * y2
-    g = b * V - 3 * a * c
-    scale = V ** -2.75
-    f = g * scale
-    dg = np.stack([
-        V * y3 + 2 * b * x1 - 3 * (c * y2 + a * x2),
-        -V * x3 + 2 * b * y1 + 3 * c * x2 - 3 * a * y2,
-        3 * c * y1 - 3 * a * x1,
-        -3 * (c * x1 + a * y1),
-        -V * y1,
-        V * x1,
-    ], axis=1)
-    dV = np.zeros_like(dg)
-    dV[:, 0], dV[:, 1] = 2 * x1, 2 * y1
-    df = scale[:, None] * dg - 2.75 * (g * V ** -3.75)[:, None] * dV
-    return f, df
+from .basis import basis_derivative_matrix, basis_matrix, bending_energy_matrix
 
 
 class JointProblem:
@@ -64,8 +29,6 @@ class JointProblem:
         C, d: Linear constraints on the stacked control points.
         smoothing: Weight of the parametric bending-energy penalty.
         regularization: Ridge on the control points.
-        fairness: Weight of the integral of (dkappa/ds)^2 ds (planar curves only).
-        quad_order: Gauss points per knot span for the fairness integral.
     """
 
     def __init__(
@@ -77,8 +40,6 @@ class JointProblem:
         d: np.ndarray,
         smoothing: float = 0.0,
         regularization: float = 1e-12,
-        fairness: float = 0.0,
-        quad_order: int = 6,
     ):
         self.sections = [np.asarray(s, dtype=np.float64) for s in sections]
         self.data = np.vstack(self.sections)
@@ -89,8 +50,6 @@ class JointProblem:
         self.n_ctrl = [len(k) - degree - 1 for k in self.knots]
         self.offsets = np.concatenate([[0], np.cumsum(self.n_ctrl)]).astype(int)
         self.total_ctrl = int(self.offsets[-1])
-        if fairness > 0 and (self.dim != 2 or degree < 3):
-            raise ValueError("Fairing needs planar curves of degree 3 or higher.")
 
         _, s, Vt = np.linalg.svd(C)
         rank = int(np.sum(s > 1e-10 * max(s[0], 1.0))) if len(s) else 0
@@ -103,25 +62,6 @@ class JointProblem:
         eigenvalues, eigenvectors = np.linalg.eigh(penalty)
         self.RZ = (np.sqrt(np.maximum(eigenvalues, 0.0))[:, None] * eigenvectors.T) @ self.Z
         self.RP0 = (np.sqrt(np.maximum(eigenvalues, 0.0))[:, None] * eigenvectors.T) @ self.P0
-
-        self.fairness = fairness
-        self.B = None
-        if fairness > 0:
-            nodes, weights = gauss_legendre(quad_order)
-            blocks = [[], [], []]
-            w_all = []
-            for s, k in enumerate(self.knots):
-                breaks = np.unique(k)
-                u = np.concatenate([0.5 * (a + b) + 0.5 * (b - a) * nodes for a, b in zip(breaks[:-1], breaks[1:])])
-                w = np.concatenate([0.5 * (b - a) * weights for a, b in zip(breaks[:-1], breaks[1:])])
-                w_all.append(w)
-                for order in (1, 2, 3):
-                    M = np.zeros((len(u), self.total_ctrl))
-                    M[:, self.offsets[s]:self.offsets[s + 1]] = basis_derivative_matrix(u, k, degree, order)
-                    blocks[order - 1].append(M)
-            self.B = [np.vstack(b) for b in blocks]
-            self.BZ = [b @ self.Z for b in self.B]
-            self.fair_scale = np.sqrt(fairness * np.concatenate(w_all))
 
         # Interior points of every section carry free parameters; section ends stay at 0 and 1.
         free = []
@@ -158,43 +98,21 @@ class JointProblem:
         """Residual parts and (optionally) Jacobian blocks at (t, z).
 
         Returns ``(r, blocks)`` with r the concatenated residual (data
-        point-major, fairness, penalty) and blocks
-        ``(tangent, N, Jz)`` where ``Jz`` is the dense z-Jacobian of all rows.
+        point-major, then penalty) and blocks
+        ``(tangent, Jz)`` where ``Jz`` is the dense z-Jacobian of all rows.
         """
         P = self.control_points(z)
         N = self._basis(t_full, derivative=False)
         data_r = N @ P - self.data
-        parts = [data_r.ravel()]
-        fair_df = None
-        if self.B is not None:
-            d1, d2, d3 = (b @ P for b in self.B)
-            f, fair_df = fairness_terms(d1, d2, d3)
-            parts.append(self.fair_scale * f)
-        parts.append((self.RP0 + self.RZ @ np.reshape(z, (self.num_z, self.dim))).ravel())
-        r = np.concatenate(parts)
+        penalty_r = self.RP0 + self.RZ @ np.reshape(z, (self.num_z, self.dim))
+        r = np.concatenate([data_r.ravel(), penalty_r.ravel()])
         if not with_jacobian:
             return r, None
 
-        dim, nz = self.dim, self.num_z
         tangent = self._basis(t_full, derivative=True) @ P
-        NZ = N @ self.Z
-        rows = [np.kron(NZ, np.eye(dim))]
-        if fair_df is not None:
-            Jf = np.zeros((len(fair_df), nz * dim))
-            for k in range(dim):
-                Jf[:, k::dim] = (fair_df[:, k:k + 1] * self.BZ[0] + fair_df[:, 2 + k:3 + k] * self.BZ[1]
-                                 + fair_df[:, 4 + k:5 + k] * self.BZ[2])
-            rows.append(self.fair_scale[:, None] * Jf)
-        rows.append(np.kron(self.RZ, np.eye(dim)))
-        return r, (tangent, np.vstack(rows))
-
-    def fairness_energy(self, z: np.ndarray) -> float:
-        """Integral of (dkappa/ds)^2 ds (requires ``fairness > 0``)."""
-        if self.B is None:
-            return float("nan")
-        P = self.control_points(z)
-        f, _ = fairness_terms(*(b @ P for b in self.B))
-        return float(np.sum((self.fair_scale * f) ** 2) / self.fairness)
+        identity = np.eye(self.dim)
+        Jz = np.vstack([np.kron(N @ self.Z, identity), np.kron(self.RZ, identity)])
+        return r, (tangent, Jz)
 
 
 def solve_joint(

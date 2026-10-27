@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "bspline-varpro"
 dynamic = ["version"]
-description = "CAD-grade B-spline curve fitting: tolerance-driven knots, geometric G1-G3 continuity, curvature fairing, STEP/IGES/DXF export"
+description = "CAD-grade B-spline curve fitting: tolerance-driven knots, geometric G1-G3 continuity, STEP/IGES/DXF export"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -27,7 +27,6 @@ keywords = [
     "step",
     "iges",
     "dxf",
-    "fairing",
 ]
 classifiers = [
     "Development Status :: 5 - Production/Stable",

@@ -311,7 +311,7 @@ class ProjectManager:
         ):
             return False
 
-        if eo.tolerance != opt_config.tolerance or eo.fairing != opt_config.fairing:
+        if eo.tolerance != opt_config.tolerance:
             return False
 
         # Compare optimization config

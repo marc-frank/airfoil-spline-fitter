@@ -1,7 +1,7 @@
 """CAD-grade B-spline curve fitting by Levenberg-Marquardt variable projection.
 
 Tolerance-driven non-uniform knots, geometric G1-G3 continuity per junction,
-curvature fairing, diagnostics, airfoil helpers and STEP/IGES/DXF export.
+diagnostics, airfoil helpers and STEP/IGES/DXF export.
 """
 
 from .basis import (
@@ -25,13 +25,13 @@ from .constraints import (
     end_derivative_coefficients,
     parse_junctions,
 )
-from .fairing import fair, refine
+from .refinement import refine
 from .fitting import ChainOptions, FitResult, fit
 from .joint import JointProblem
 from .problem import KKTSolver, VarProProblem
 from .tolerance import fit_to_tolerance, polish_knots
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"
 
 __all__ = [
     "airfoil",
@@ -40,7 +40,6 @@ __all__ = [
     "fit",
     "fit_to_tolerance",
     "polish_knots",
-    "fair",
     "refine",
     "JointProblem",
     "ChainOptions",

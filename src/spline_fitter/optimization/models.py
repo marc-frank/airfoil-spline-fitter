@@ -302,7 +302,7 @@ class OptimizerType(Enum):
             OptimizerType.GN_VARPRO: (
                 "Levenberg-Marquardt Variable Projection (bspline-varpro).\n"
                 "Tolerance mode: fewest control points within a maximum\n"
-                "orthogonal deviation, non-uniform knots, curvature fairing.\n"
+                "orthogonal deviation, non-uniform knots.\n"
                 "Geometric (G) or parametric (C) continuity per junction.\n"
                 "Recommended for CAD-quality results."
             ),
@@ -466,8 +466,6 @@ class OptimizationConfig:
         tolerance: Maximum orthogonal deviation for VarPro LM tolerance mode,
             which picks the number of control points and the knots itself.
             None fits the configured number of control points.
-        fairing: In tolerance mode, spend the remaining tolerance on a
-            smoother curvature distribution.
     """
     optimizer: OptimizerType = OptimizerType.DE
     metric: ErrorMetric = ErrorMetric.PARAMETRIC
@@ -480,7 +478,6 @@ class OptimizationConfig:
     smoothing_weight: float = 1e-3
     custom_parameters: list[np.ndarray] | None = None
     tolerance: float | None = None
-    fairing: bool = True
 
     def __post_init__(self):
         if self.tolerance is not None and not self.tolerance > 0:

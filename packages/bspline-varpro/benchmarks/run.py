@@ -130,8 +130,8 @@ def scipy_splprep(case: Case, tol: float) -> Optional[Attempt]:
 TOLERANCE_SMOOTHING = 1e-7
 
 
-def tolerance_fit(case: Case, tol: float, fairing: bool = False) -> Optional[Attempt]:
-    result = bv.fit_to_tolerance(case.sections, tol, DEGREE, continuity="G2", fairing=fairing,
+def tolerance_fit(case: Case, tol: float) -> Optional[Attempt]:
+    result = bv.fit_to_tolerance(case.sections, tol, DEGREE, continuity="G2",
                                  smoothing=TOLERANCE_SMOOTHING)
     if not result.success:
         return None
@@ -142,12 +142,11 @@ METHODS: Dict[str, Callable[[Case, float], Optional[Attempt]]] = {
     "splprep": scipy_splprep,
     "uniform-varpro": uniform_varpro,
     "tolerance": tolerance_fit,
-    "tolerance+fair": lambda case, tol: tolerance_fit(case, tol, fairing=True),
 }
 
 
 def evaluate(case: Case, curves: List[BSpline], n_ctrl: int, seconds: float) -> dict:
-    fair = dg.fairness(curves)
+    comb = dg.fairness(curves)
     section_index, u, _ = dg.point_on_curves(np.zeros(2), curves)
     le_kappa = abs(float(dg.curvature(curves[section_index], np.array([u]))[0]))
     sections = case.sections if len(curves) > 1 else [case.points]
@@ -155,8 +154,8 @@ def evaluate(case: Case, curves: List[BSpline], n_ctrl: int, seconds: float) -> 
         "control_points": n_ctrl,
         "max_dev_points": dg.max_deviation(sections, curves),
         "max_dev_truth": float(np.max(dg.distance_to_curves(case.truth, curves))),
-        "curvature_extrema": fair["curvature_extrema"],
-        "roughness": fair["roughness"],
+        "curvature_extrema": comb["curvature_extrema"],
+        "roughness": comb["roughness"],
         "le_curvature_error": le_kappa / case.le_curvature - 1.0,
         "junction_curvature_jump": max((j["curvature_jump"] for j in dg.junctions(curves)), default=0.0),
         "seconds": seconds,

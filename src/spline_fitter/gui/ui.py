@@ -101,7 +101,6 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._tolerance_container.setVisible(is_gn_varpro)
         self._spin_tolerance.setEnabled(tolerance_mode and not self._check_auto_tolerance.isChecked())
         self._check_auto_tolerance.setEnabled(tolerance_mode)
-        self._check_fairing.setEnabled(tolerance_mode)
         self._lbl_smoothing_weight.setVisible(is_gn_varpro and not tolerance_mode)
         self._sweep_smoothing_weight.setVisible(is_gn_varpro and not tolerance_mode)
         if tolerance_mode:
@@ -263,7 +262,6 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
             smoothing_factor=smoothing,
             smoothing_weight=self._spin_smoothing_weight.value(),
             tolerance=tolerance,
-            fairing=self._check_fairing.isChecked(),
         )
 
     def _apply_run_config(self, cfg: SplineConfig, opt: OptimizationConfig) -> None:
@@ -277,7 +275,6 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         if opt.tolerance is not None:
             self._check_auto_tolerance.setChecked(False)
             self._spin_tolerance.setValue(opt.tolerance)
-        self._check_fairing.setChecked(opt.fairing)
 
     def _get_param_opt_settings(self) -> OptimizerType | None:
         """Get parameterization optimizer settings from UI state.

@@ -146,7 +146,6 @@ def _encode_optimization_config(config: OptimizationConfig) -> dict[str, Any]:
         "relative_tolerance": config.relative_tolerance,
         "optimize_le_position": config.optimize_le_position,
         "tolerance": config.tolerance,
-        "fairing": config.fairing,
     }
 
 
@@ -275,7 +274,7 @@ def _decode_optimization_config(data: dict[str, Any]) -> OptimizationConfig:
         relative_tolerance=data.get("relative_tolerance", 1e-6),
         optimize_le_position=data.get("optimize_le_position", False),
         tolerance=data.get("tolerance"),
-        fairing=data.get("fairing", True),
+        # Projects written before fairing was removed may still contain "fairing"; it is ignored.
     )
 
 
