@@ -41,6 +41,7 @@ from .theme import Size, glyph_size, icon, label_plot, style_plot
 from .widgets import (
     CollapsibleSection,
     DropDownPanel,
+    ReadoutList,
     ResettableSplitter,
     ScientificSpinBox,
     SegmentedControl,
@@ -583,14 +584,18 @@ class WindowLayoutMixin:
         self._run_table = RunTable()
         layout.addWidget(self._run_table, stretch=1)
 
-        # Run details label
-        self._lbl_run_details = QLabel("Select a run to view details")
-        self._lbl_run_details.setWordWrap(True)
-        self._lbl_run_details.setObjectName("Muted")
-        layout.addWidget(self._lbl_run_details)
+        # Run details: label and value pairs, as many to a line as fit
+        self._run_details = ReadoutList()
+        self._run_details.set_message("Select a run to view details")
+        layout.addWidget(self._run_details)
 
         # Action buttons
         btn_row = QHBoxLayout()
+        self._btn_load_run = QPushButton("Load settings")
+        self._btn_load_run.setEnabled(False)
+        self._btn_load_run.setToolTip(
+            "Set the sidebar to the selected run's settings (or double-click the run)")
+        btn_row.addWidget(self._btn_load_run)
         self._btn_delete_run = QPushButton("Delete")
         self._btn_delete_run.setEnabled(False)
         self._btn_delete_run.setToolTip("Delete the selected runs from the project")

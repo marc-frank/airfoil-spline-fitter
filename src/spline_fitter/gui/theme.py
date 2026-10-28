@@ -741,17 +741,16 @@ b {{ color: {Palette.TEXT}; }}
 """
 
 
-def readout_table(rows: list[tuple[str, str]], title: str = "") -> str:
-    """Label and value rows as rich text for a QLabel. The values are
-    monospaced so they line up; labels keep the label's own color."""
-    cells = "".join(
-        f"<tr><td style='padding: 1px {Size.GROUP}px 1px 0'>{html.escape(label)}</td>"
-        f"<td style='font-family: {Type.MONO}; color: {Palette.TEXT}'>"
-        f"{html.escape(value)}</td></tr>"
-        for label, value in rows
-    )
-    heading = f"<p style='color: {Palette.TEXT}'>{html.escape(title)}</p>" if title else ""
-    return f"{heading}<table cellspacing='0' cellpadding='0'>{cells}</table>"
+def readout_heading(title: str) -> str:
+    """The title of a label and value list as rich text for a QLabel."""
+    return f"<span style='color: {Palette.TEXT}'>{html.escape(title)}</span>"
+
+
+def readout_value(value: str) -> str:
+    """A value of a label and value list as rich text for a QLabel:
+    monospaced so values line up; the labels keep the label's own color."""
+    return (f"<span style='font-family: {Type.MONO}; color: {Palette.TEXT}'>"
+            f"{html.escape(value)}</span>")
 
 
 def text_browser() -> QTextBrowser:

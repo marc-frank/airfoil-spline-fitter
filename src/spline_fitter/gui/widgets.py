@@ -11,6 +11,7 @@ This module provides:
     - SidebarSection / CollapsibleSection: Captioned sidebar sections
     - SegmentedControl: Button row with a combo-box-like API
     - SweepableSpinBox: Spinbox with parameter sweep toggle
+    - ReadoutList: Label and value pairs, as many to a line as fit
     - ThemeDialog: Light / dark mode and the temperature of the greys
 """
 
@@ -27,6 +28,7 @@ from PyQt6.QtWidgets import (
     QDoubleSpinBox,
     QFormLayout,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -40,7 +42,17 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .theme import Scheme, Size, glyph_size, icon, set_theme, text_browser
+from .theme import (
+    Scheme,
+    Size,
+    glyph_size,
+    icon,
+    readout_heading,
+    readout_value,
+    set_theme,
+    text_browser,
+    theme_changed,
+)
 
 # =============================================================================
 # Constants
@@ -93,6 +105,111 @@ class SidebarSection(QWidget):
     def add_layout(self, layout):
         """Add a layout to the content area."""
         self._content_layout.addLayout(layout)
+
+
+class ReadoutList(QWidget):
+    """A title over label and value pairs, laid out in as many columns as
+    the width allows: all pairs in one line when wide, one per line when
+    narrow. Pairs fill the lines left to right, labels and values each line
+    up in their columns, and spare width goes between the pairs. Shows a
+    plain message instead when there are no pairs.
+
+    The rich text carries the theme's colors, so it is rendered again when
+    the theme changes.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(Size.GAP)
+        self._title = QLabel()
+        self._title.setWordWrap(True)
+        self._title.setObjectName("Muted")
+        layout.addWidget(self._title)
+        self._grid = QGridLayout()
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        self._grid.setHorizontalSpacing(0)
+        self._grid.setVerticalSpacing(1)
+        layout.addLayout(self._grid)
+
+        self._title_text = ""
+        self._rows: list[tuple[str, str]] = []
+        self._cells: list[tuple[QLabel, QLabel]] = []
+        self._columns = 0
+        theme_changed.changed.connect(self._render)
+
+    def set_message(self, text: str) -> None:
+        """Show a muted message and no pairs."""
+        self._title_text, self._rows = text, []
+        self._render()
+
+    def set_rows(self, title: str, rows: list[tuple[str, str]]) -> None:
+        """Show a title over (label, value) pairs."""
+        self._title_text, self._rows = title, list(rows)
+        self._render()
+
+    def text(self) -> str:
+        """The title and every pair, one per line (for tests)."""
+        return "\n".join([self._title_text, *(f"{k} {v}" for k, v in self._rows)])
+
+    def columns(self) -> int:
+        """How many pairs share a line."""
+        return self._columns
+
+    def _render(self) -> None:
+        self._title.setText(readout_heading(self._title_text) if self._rows
+                            else self._title_text)
+        for label, value in self._cells:
+            label.deleteLater()
+            value.deleteLater()
+        self._cells = []
+        for key, val in self._rows:
+            label = QLabel(key)
+            label.setObjectName("Muted")
+            value = QLabel(readout_value(val))
+            value.setContentsMargins(Size.GROUP, 0, 0, 0)
+            self._cells.append((label, value))
+        self._columns = 0
+        self._reflow()
+
+    def _widths(self, columns: int) -> int:
+        """The width the pairs take in that many columns, with no spare."""
+        total = 0
+        for c in range(columns):
+            column = self._cells[c::columns]
+            total += max(label.sizeHint().width() for label, _ in column)
+            total += max(value.sizeHint().width() for _, value in column)
+        return total + (columns - 1) * Size.PAD_LARGE
+
+    def _reflow(self) -> None:
+        """Place the pairs in as many columns as fit the width."""
+        if not self._cells:
+            return
+        columns = next((n for n in range(len(self._cells), 1, -1)
+                        if self._widths(n) <= self.width()), 1)
+        if columns == self._columns:
+            return
+        self._columns = columns
+        for label, value in self._cells:
+            self._grid.removeWidget(label)
+            self._grid.removeWidget(value)
+        for c in range(self._grid.columnCount()):
+            self._grid.setColumnStretch(c, 0)
+            self._grid.setColumnMinimumWidth(c, 0)
+        for i, (label, value) in enumerate(self._cells):
+            row, c = divmod(i, columns)
+            self._grid.addWidget(label, row, 3 * c)
+            self._grid.addWidget(value, row, 3 * c + 1)
+        # An empty column after each pair: at least PAD_LARGE between pairs,
+        # and the spare width shared out
+        for c in range(columns):
+            self._grid.setColumnMinimumWidth(3 * c + 2, Size.PAD_LARGE if c < columns - 1 else 0)
+            self._grid.setColumnStretch(3 * c + 2, 1)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reflow()
 
 
 class CollapsibleSection(SidebarSection):

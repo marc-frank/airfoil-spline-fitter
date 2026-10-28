@@ -149,7 +149,7 @@ curve is a deviation worth seeing. Every new plot item takes a `Z` value.
 - **Numbers**: monospace (`Type.MONO`: Cascadia Mono, Consolas, ...).
   Spin boxes and result readouts (`#Readout`, `Type.READOUT_PX`) use it, so
   values line up and digits do not jump while a fit updates; label and value
-  lists use `theme.readout_table()`, reports the `num` class. Every number
+  lists use `widgets.ReadoutList` (`theme.readout_value()`), reports the `num` class. Every number
   shown (fields, readouts, messages, reports, plot ticks) takes the decimal
   point of the system locale and has no group separators: `apply_theme()`
   sets the locale, and text is formatted with `formatting.number()`, never a
