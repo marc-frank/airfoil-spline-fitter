@@ -463,8 +463,10 @@ QTreeView::item:selected {{ background: {P.SELECT}; color: {P.TEXT}; }}
 QTreeView::branch {{ background: transparent; }}
 QTreeView::branch:has-children:closed {{ image: url({_glyph("chevron_right", pad=6)}); }}
 QTreeView::branch:has-children:open {{ image: url({_glyph("chevron_down", pad=6)}); }}
+/* The header's own background shows beside a section narrower than the view */
+QHeaderView {{ background: {P.PANEL}; border: none; border-bottom: 1px solid {P.RULE}; }}
 QHeaderView::section {{ background: {P.PANEL}; color: {P.TEXT_3}; border: none;
-    border-bottom: 1px solid {P.RULE}; padding: 4px 6px; }}
+    padding: 4px 6px; }}
 
 /* Plots */
 PlotWidget, QGraphicsView {{ border: 1px solid {P.RULE}; border-radius: {S.RADIUS}px; }}

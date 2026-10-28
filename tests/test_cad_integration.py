@@ -256,7 +256,7 @@ def test_gui_tolerance_mode_fit_report_and_cad_export(monkeypatch, tmp_path):
     _varpro_tolerance(window)
     assert window._tolerance_mode_selected() and window._check_auto_tolerance.isChecked()
     assert not window._sweep_ctrl.isEnabled()
-    window._seg_live.setCurrentIndex(2)
+    window._combo_live.setCurrentIndex(2)
     window._check_knots.setChecked(True)
     window._fitting_controller.on_fit()
     result = window._fit_result

@@ -249,8 +249,8 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._combo_cont_kind.currentIndexChanged.connect(self._update_continuity_labels)
 
         # Display options
-        self._seg_loss_x.currentIndexChanged.connect(self._update_loss_plot_axis)
-        self._seg_log_scale.currentIndexChanged.connect(self._update_loss_plot_log_scale)
+        self._combo_loss_x.currentIndexChanged.connect(self._update_loss_plot_axis)
+        self._combo_log_scale.currentIndexChanged.connect(self._update_loss_plot_log_scale)
         self._check_comb.toggled.connect(self._update_curvature_comb)
         self._check_knots.toggled.connect(self._update_knots)
         self._combo_comb_qty.currentIndexChanged.connect(self._refresh_curvature_comb)
@@ -454,7 +454,7 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
 
     def _update_loss_plot_axis(self):
         """Update loss plot X-axis based on combo selection."""
-        mode = self._seg_loss_x.currentData()
+        mode = self._combo_loss_x.currentData()
         if mode == "iters":
             self._plot_manager.set_loss_x_label("Iterations")
         else:  # time
@@ -463,7 +463,7 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
 
     def _update_loss_plot_log_scale(self):
         """Update loss plot log scale based on combo selection."""
-        scale = self._seg_log_scale.currentData()
+        scale = self._combo_log_scale.currentData()
         log_x = scale in ("both", "x")
         log_y = scale in ("both", "y")
         self._plot_manager.set_loss_log_scale(log_x, log_y)

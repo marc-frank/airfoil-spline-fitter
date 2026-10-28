@@ -289,9 +289,10 @@ def test_window_wording():
 
 
 def test_short_choices_are_segmented_controls():
-    """Two to four short options are a SegmentedControl, not a combo box."""
+    """In the sidebar, two to four short options are a SegmentedControl, not a
+    combo box (the plot toolbars keep compact combo boxes)."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PyQt6.QtWidgets import QApplication, QComboBox
+    from PyQt6.QtWidgets import QApplication, QComboBox, QWidget
 
     from spline_fitter.gui.ui import SplineFitterWindow
 
@@ -299,7 +300,8 @@ def test_short_choices_are_segmented_controls():
     w = SplineFitterWindow()
     try:
         short = [
-            [c.itemText(i) for i in range(c.count())] for c in w.findChildren(QComboBox)
+            [c.itemText(i) for i in range(c.count())]
+            for c in w.findChild(QWidget, "Sidebar").findChildren(QComboBox)
             if 2 <= c.count() <= 4 and all(len(c.itemText(i)) <= 12 for i in range(c.count()))
         ]
         assert not short, f"use a SegmentedControl for {short}"

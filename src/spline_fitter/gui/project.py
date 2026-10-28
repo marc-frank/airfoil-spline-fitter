@@ -138,7 +138,7 @@ class ProjectManager:
                 # Update plots
                 self._window._plot_manager.plot_fitted_spline(self._window._fit_result)
                 self._window._plot_manager.set_loss_curve_data(
-                    self._window._seg_loss_x.currentData()
+                    self._window._combo_loss_x.currentData()
                 )
                 self._window._set_save_enabled(True)
 
@@ -553,7 +553,7 @@ class ProjectManager:
         # Update plots
         self._window._plot_manager.plot_fitted_spline(self._window._fit_result)
         self._window._plot_manager.set_loss_curve_data(
-            self._window._seg_loss_x.currentData()
+            self._window._combo_loss_x.currentData()
         )
         self._window._refresh_curvature_comb()
 

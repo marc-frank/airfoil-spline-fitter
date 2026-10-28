@@ -222,7 +222,7 @@ never call `setStyleSheet` on it.
 | Icon-only button | object name `IconButton` with a `theme.icon()` glyph |
 | Toggle | checkable `QToolButton`; checked state is `SELECT` |
 | Toggle with settings | `SplitToggle` button + `ArrowButton` opening a `DropDownPanel` |
-| Choice of 2-4 short options | `SegmentedControl` (not a combo box) |
+| Choice of 2-4 short options | `SegmentedControl` (not a combo box) in the sidebar and dialogs; the plot toolbars keep compact combo boxes |
 | Choice of many | `QComboBox` |
 | Numeric range sweep | `SweepableSpinBox` / `SweepableDoubleSpinBox` |
 | Plot | `pg.PlotWidget` + `style_plot(plot)` + `label_plot(plot, side, text)` |

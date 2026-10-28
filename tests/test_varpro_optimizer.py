@@ -197,7 +197,7 @@ def test_gui_fits_with_varpro(monkeypatch):
     window._seg_goal.setCurrentIndex(window._seg_goal.findData(False))
     window._combo_cont.setCurrentIndex(window._combo_cont.findData(ContinuityMode.G2))
     window._spin_maxiter.setValue(300)
-    window._seg_live.setCurrentIndex(2)
+    window._combo_live.setCurrentIndex(2)
     assert window._sweep_ctrl.isEnabled()
     assert window._sweep_smoothing_weight.isVisible() or not window.isVisible()
     window._fitting_controller.on_fit()

@@ -381,21 +381,19 @@ class WindowLayoutMixin:
         live_label = QLabel("Live preview")
         live_label.setObjectName("FormLabel")
         toolbar.addWidget(live_label)
-        self._seg_live = SegmentedControl()
-        for mode in ("Minimal", "Moderate", "Detailed"):
-            self._seg_live.addItem(mode)
-        self._seg_live.setCurrentIndex(1)
+        self._combo_live = QComboBox()
+        self._combo_live.addItems(["Minimal", "Moderate", "Detailed"])
+        self._combo_live.setCurrentIndex(1)
         # Read by the fit's worker thread, so kept as a plain int; it can
         # change while fitting
-        self._live_mode = self._seg_live.currentIndex()
-        self._seg_live.currentIndexChanged.connect(lambda i: setattr(self, "_live_mode", i))
-        for i, tip in enumerate((
-            "Update the plots only when the fit is done.",
-            "Update the plots once a second while fitting.",
-            "Update the plots at every iteration (slower).",
-        )):
-            self._seg_live.setItemToolTip(i, tip)
-        toolbar.addWidget(self._seg_live)
+        self._live_mode = self._combo_live.currentIndex()
+        self._combo_live.currentIndexChanged.connect(lambda i: setattr(self, "_live_mode", i))
+        self._combo_live.setToolTip(
+            "How often the plots update while fitting.\n"
+            "Minimal: only at the end. Moderate: once a second.\n"
+            "Detailed: every iteration (slower)."
+        )
+        toolbar.addWidget(self._combo_live)
 
         return toolbar
 
@@ -415,19 +413,21 @@ class WindowLayoutMixin:
         x_label = QLabel("X axis")
         x_label.setObjectName("FormLabel")
         toolbar.addWidget(x_label)
-        self._seg_loss_x = SegmentedControl()
-        self._seg_loss_x.addItem("Iterations", userData="iters")
-        self._seg_loss_x.addItem("Time", userData="time")
-        toolbar.addWidget(self._seg_loss_x)
+        self._combo_loss_x = QComboBox()
+        self._combo_loss_x.addItem("Iterations", userData="iters")
+        self._combo_loss_x.addItem("Time", userData="time")
+        self._combo_loss_x.setFixedWidth(96)
+        toolbar.addWidget(self._combo_loss_x)
 
         scale_label = QLabel("Log scale")
         scale_label.setObjectName("FormLabel")
         toolbar.addWidget(scale_label)
-        self._seg_log_scale = SegmentedControl()
-        for text, axes in (("None", "none"), ("X", "x"), ("Y", "y"), ("Both", "both")):
-            self._seg_log_scale.addItem(text, userData=axes)
-        self._seg_log_scale.setCurrentIndex(self._seg_log_scale.findData("y"))
-        toolbar.addWidget(self._seg_log_scale)
+        self._combo_log_scale = QComboBox()
+        for text, axes in (("None", "none"), ("X only", "x"), ("Y only", "y"), ("Both", "both")):
+            self._combo_log_scale.addItem(text, userData=axes)
+        self._combo_log_scale.setCurrentIndex(self._combo_log_scale.findData("y"))
+        self._combo_log_scale.setFixedWidth(84)
+        toolbar.addWidget(self._combo_log_scale)
         return toolbar
 
     # -- Project Explorer --------------------------------------------------

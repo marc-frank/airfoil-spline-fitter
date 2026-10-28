@@ -185,4 +185,4 @@ class LiveProgress:
             list(self._logger.errors),
         )
         if w._plot_manager.has_loss_data:
-            w._plot_manager.set_loss_curve_data(w._seg_loss_x.currentData())
+            w._plot_manager.set_loss_curve_data(w._combo_loss_x.currentData())

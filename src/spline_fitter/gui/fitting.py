@@ -210,8 +210,8 @@ class FittingController:
     def _reset_loss_plot(self):
         """Empty the loss plot with the selected axis and scale."""
         w = self._window
-        x_label = "Iterations" if w._seg_loss_x.currentData() == "iters" else "Time (s)"
-        scale = w._seg_log_scale.currentData()
+        x_label = "Iterations" if w._combo_loss_x.currentData() == "iters" else "Time (s)"
+        scale = w._combo_log_scale.currentData()
         w._plot_manager.reset_loss_plot(x_label, scale in ("both", "x"), scale in ("both", "y"))
 
     def _fit_result(self, result, config: SplineConfig, opt_config: OptimizationConfig,
