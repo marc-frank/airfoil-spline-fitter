@@ -13,15 +13,17 @@ This module provides:
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QPoint, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QDoubleSpinBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
     QSizePolicy,
     QSpinBox,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -161,6 +163,54 @@ class CollapsibleSection(SidebarSection):
         """Show a short note at the right of the header (empty hides it)."""
         self._badge.setText(text)
         self._badge.setToolTip(tooltip)
+
+
+# =============================================================================
+# Drop-down Panel
+# =============================================================================
+
+class DropDownPanel(QFrame):
+    """Settings that drop down under a checkable button, toggled by it.
+
+    Unlike a QMenu it does not grab the mouse, so the rest of the window
+    (zooming and panning the plots, other controls) stays usable while it is
+    open. It closes on the button or on Escape.
+    """
+
+    def __init__(self, button: QToolButton, content: QWidget, window: QWidget):
+        super().__init__(window, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
+        self.setFrameShape(QFrame.Shape.StyledPanel)
+        self.setAutoFillBackground(True)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(content)
+        self._button = button
+        button.setCheckable(True)
+        button.toggled.connect(self._set_open)
+        # Follow the button when the window moves or resizes
+        window.installEventFilter(self)
+
+    def _place(self):
+        self.move(self._button.mapToGlobal(QPoint(0, self._button.height())))
+
+    def _set_open(self, open_: bool):
+        if open_:
+            self.adjustSize()
+            self._place()
+            self.show()
+        else:
+            self.hide()
+
+    def eventFilter(self, obj, event):
+        if self.isVisible() and event.type() in (QEvent.Type.Move, QEvent.Type.Resize):
+            self._place()
+        return False
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            self._button.setChecked(False)
+        else:
+            super().keyPressEvent(event)
 
 
 # =============================================================================

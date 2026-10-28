@@ -20,7 +20,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMenu,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -30,7 +29,6 @@ from PyQt6.QtWidgets import (
     QTreeWidget,
     QVBoxLayout,
     QWidget,
-    QWidgetAction,
 )
 
 from ..optimization.models import (
@@ -41,6 +39,7 @@ from ..optimization.models import (
 from .widgets import (
     SIDEBAR_STYLE,
     CollapsibleSection,
+    DropDownPanel,
     SegmentedControl,
     SidebarSection,
     SweepableDoubleSpinBox,
@@ -303,7 +302,6 @@ class WindowLayoutMixin:
             "Display curvature as perpendicular lines from the curve.\n"
             "Use the arrow for quantity, height and density."
         )
-        self._check_comb.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
 
         comb_settings = QWidget()
         comb_form = _form()
@@ -330,12 +328,17 @@ class WindowLayoutMixin:
         self._spin_comb_density.setValue(100)
         comb_form.addRow("Density:", self._spin_comb_density)
 
-        comb_menu = QMenu(self._check_comb)
-        comb_action = QWidgetAction(comb_menu)
-        comb_action.setDefaultWidget(comb_settings)
-        comb_menu.addAction(comb_action)
-        self._check_comb.setMenu(comb_menu)
-        toolbar.addWidget(self._check_comb)
+        # A drop-down panel rather than a menu, so the plots stay usable
+        # while the settings are open
+        self._btn_comb_settings = QToolButton()
+        self._btn_comb_settings.setArrowType(Qt.ArrowType.DownArrow)
+        self._btn_comb_settings.setToolTip("Curvature comb settings")
+        self._comb_panel = DropDownPanel(self._btn_comb_settings, comb_settings, self)
+        comb_row = QHBoxLayout()
+        comb_row.setSpacing(0)
+        comb_row.addWidget(self._check_comb)
+        comb_row.addWidget(self._btn_comb_settings)
+        toolbar.addLayout(comb_row)
 
         toolbar.addStretch()
 
