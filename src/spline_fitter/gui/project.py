@@ -31,7 +31,6 @@ from ..optimization.models import (
 )
 from ..project_io import create_optimization_run, create_project, load_project, save_project
 from .explorer import column, is_number
-from .theme import readout_table
 
 if TYPE_CHECKING:
     from .ui import SplineFitterWindow
@@ -341,15 +340,21 @@ class ProjectManager:
         runs = self._window._run_table.selected_runs()
         self._selected_runs = runs
         self._window._btn_delete_run.setEnabled(bool(runs))
+        self._window._btn_load_run.setEnabled(len(runs) == 1)
 
         if not runs:
-            self._window._lbl_run_details.setText("Select a run to view details")
+            self._window._run_details.set_message("Select a run to view details")
         elif len(runs) == 1:
             self._show_run_details(runs[0])
             self._load_run_to_plots(runs[0])
         else:
-            self._window._lbl_run_details.setText(f"{len(runs)} runs selected")
+            self._window._run_details.set_message(f"{len(runs)} runs selected")
         self.refresh_comparison_plot()
+
+    def on_load_selected_run(self):
+        """Load settings: as a double-click on the one selected run."""
+        if len(self._selected_runs) == 1:
+            self.on_run_activated(self._selected_runs[0])
 
     def on_run_activated(self, run: OptimizationRun):
         """Double-click: apply the run's settings to the sidebar and show it."""
@@ -432,22 +437,22 @@ class ProjectManager:
 
         continuity = ", ".join(cfg.junction_specs()) or cfg.continuity.name
         ctrl = res.num_control_points if opt.tolerance else cfg.num_control_points
-        rows = [("Degree", str(cfg.degree)), ("Control points", str(ctrl)),
-                ("Continuity", continuity)]
+        settings = [("Degree", str(cfg.degree)), ("Control points", str(ctrl)),
+                    ("Continuity", continuity)]
         if opt.tolerance:
-            rows.append(("Tolerance", f"{number(opt.tolerance, '.3e')}"))
+            settings.append(("Tolerance", f"{number(opt.tolerance, '.3e')}"))
         if opt.optimizer.uses_error_metric:
-            rows.append(("Error metric", opt.metric.display_name))
-        rows.append(("Error", f"{number(res.final_error, '.3e')}"))
+            settings.append(("Error metric", opt.metric.display_name))
+        fit = [("Error", f"{number(res.final_error, '.3e')}")]
         if res.report:
-            rows += [("Max deviation", f"{number(res.report['max_deviation'], '.3e')}"),
-                     ("RMS deviation", f"{number(res.report['rms_deviation'], '.3e')}")]
-        rows += [("Iterations", str(res.num_iterations)),
-                 ("Evaluations", str(res.num_evaluations)),
-                 ("Time", format_duration(res.elapsed_seconds)),
-                 ("Converged", "yes" if res.converged else "no")]
-        details = readout_table(rows, title=opt.optimizer.display_name)
-        self._window._lbl_run_details.setText(details)
+            fit += [("Max deviation", f"{number(res.report['max_deviation'], '.3e')}"),
+                    ("RMS deviation", f"{number(res.report['rms_deviation'], '.3e')}")]
+        effort = [("Iterations", str(res.num_iterations)),
+                  ("Evaluations", str(res.num_evaluations)),
+                  ("Time", format_duration(res.elapsed_seconds)),
+                  ("Converged", "yes" if res.converged else "no")]
+        self._window._run_details.set_rows(opt.optimizer.display_name,
+                                           settings + fit + effort)
 
     def _load_run_to_plots(self, run: OptimizationRun):
         """Load a run's data into the main plots."""

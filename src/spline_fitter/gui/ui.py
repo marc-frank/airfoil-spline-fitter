@@ -308,6 +308,7 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         table.plot_column_requested.connect(self._project_manager.on_plot_column_requested)
         for combo in (self._combo_runs_x, self._combo_runs_y):
             combo.currentIndexChanged.connect(self._project_manager.refresh_comparison_plot)
+        self._btn_load_run.clicked.connect(self._project_manager.on_load_selected_run)
         self._btn_delete_run.clicked.connect(self._project_manager.on_delete_selected_runs)
 
         # Initialize optimizer-dependent UI state

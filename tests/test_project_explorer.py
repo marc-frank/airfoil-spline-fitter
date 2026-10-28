@@ -160,6 +160,32 @@ def test_double_click_applies_the_run_settings(window):
         assert window._fit_result is run.result
 
 
+def test_load_settings_button_and_details_spread_with_the_width(window):
+    _add(window, 11, 1e-4, optimizer=OptimizerType.DE, seed=7, max_iterations=500)
+    _add(window, 13, 1e-5)
+    table, details = window._run_table, window._run_details
+    assert not window._btn_load_run.isEnabled()
+
+    table.view.selectAll()
+    assert not window._btn_load_run.isEnabled()
+    assert "2 runs selected" in details.text()
+
+    table.view.selectRow(0)
+    run = table.selected_runs()[0]
+    assert window._btn_load_run.isEnabled()
+    assert "Control points" in details.text() and "Converged" in details.text()
+    window._btn_load_run.click()
+    assert window._get_optimization_config() == run.optimization_config
+
+    # All pairs in one line when wide, one per line when narrow
+    details.resize(10_000, details.height())
+    assert details.columns() == len(details._rows)
+    details.resize(10, details.height())
+    assert details.columns() == 1
+    details.resize(details._widths(2), details.height())
+    assert details.columns() == 2
+
+
 def test_header_drop_down_filters_by_values_and_condition(window):
     for ctrl, error in ((10, 3e-4), (14, 1e-5), (12, 5e-5)):
         _add(window, ctrl, error)
