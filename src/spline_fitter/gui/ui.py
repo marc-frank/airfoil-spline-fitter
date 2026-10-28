@@ -130,7 +130,7 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
             editable and tolerance_mode and not self._check_auto_tolerance.isChecked())
         self._check_auto_tolerance.setEnabled(editable and tolerance_mode)
         uses_count = not tolerance_mode or start_count
-        self._lbl_ctrl.setText("Start count" if tolerance_mode else "Control pts")
+        self._lbl_ctrl.setText("Start count" if tolerance_mode else "Control points")
         enable(uses_count, self._lbl_ctrl)
         if tolerance_mode:
             for sweep_box in (self._sweep_ctrl, self._sweep_smoothing_weight):
@@ -155,10 +155,10 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         # Tolerance mode uses its own fixed smoothing weight
         enable(not tolerance_mode, self._lbl_smoothing_weight, self._sweep_smoothing_weight)
 
-        has_iterations = not opt_type.is_algebraic
-        show(has_iterations, self._lbl_maxiter, self._spin_maxiter)
-        # VarPro's tolerance search refits until the tolerance is met
-        enable(not tolerance_mode, self._lbl_maxiter, self._spin_maxiter)
+        # VarPro runs until it converges (Cancel stops it); the algebraic
+        # methods do not iterate
+        show(not opt_type.is_algebraic and not is_gn_varpro,
+             self._lbl_maxiter, self._spin_maxiter)
 
         # Seed: the stochastic global optimizers, directly or as the outer
         # optimizer of the parameter optimisation
@@ -294,6 +294,8 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._action_toggle_explorer.toggled.connect(self._project_manager.on_toggle_explorer)
         self._btn_toggle_explorer.clicked.connect(
             lambda: self._action_toggle_explorer.setChecked(False))
+        self._btn_show_explorer.clicked.connect(
+            lambda: self._action_toggle_explorer.setChecked(True))
         self._project_tree.itemSelectionChanged.connect(self._project_manager.on_tree_selection_changed)
         self._project_tree.itemDoubleClicked.connect(self._project_manager.on_tree_item_double_clicked)
         self._btn_delete_run.clicked.connect(self._project_manager.on_delete_selected_runs)
@@ -361,7 +363,8 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         return OptimizationConfig(
             optimizer=opt_type,
             metric=self._combo_err.currentData(),
-            max_iterations=self._spin_maxiter.value(),
+            # 0: VarPro's own limit, a safety stop it does not reach in practice
+            max_iterations=0 if opt_type == OptimizerType.GN_VARPRO else self._spin_maxiter.value(),
             seed=self._spin_seed.value(),
             optimize_le_position=(self._check_optimize_le.isChecked()
                                   and self._spin_sections.value() > 1),
@@ -439,7 +442,7 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
             section_sizes = [len(sec) for sec in self._airfoil.sections]
             self.statusBar().showMessage(
                 f"Re-split: {self._airfoil.name or self._airfoil.filename} "
-                f"({self._airfoil.num_points} pts, {num_sections} sections: {section_sizes})"
+                f"({self._airfoil.num_points} points, {num_sections} sections: {section_sizes})"
             )
 
             # Refresh the plot to show the new split (clear fitted curves)

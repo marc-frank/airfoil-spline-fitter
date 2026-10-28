@@ -218,7 +218,15 @@ class WindowLayoutMixin:
         self._main_splitter.setStretchFactor(2, 0)
         self._main_splitter.setSizes([330, 730, 280])
 
-        self.setCentralWidget(self._main_splitter)
+        # The splitter, and at the right edge the rail a hidden explorer
+        # folds into: a chevron pointing back out shows it again
+        central = QWidget()
+        central_layout = QHBoxLayout(central)
+        central_layout.setContentsMargins(0, 0, 0, 0)
+        central_layout.setSpacing(0)
+        central_layout.addWidget(self._main_splitter, stretch=1)
+        central_layout.addWidget(self._build_explorer_rail())
+        self.setCentralWidget(central)
         self.statusBar().showMessage("Ready")
 
     # -- Menu Bar ----------------------------------------------------------
@@ -381,12 +389,6 @@ class WindowLayoutMixin:
         )
         toolbar.addWidget(self._combo_live)
 
-        # Always visible, so a hidden explorer can be shown again
-        btn_explorer = QToolButton()
-        self._action_toggle_explorer.setIconText("Explorer")
-        self._action_toggle_explorer.setToolTip("Show or hide the project explorer (Ctrl+Shift+E)")
-        btn_explorer.setDefaultAction(self._action_toggle_explorer)
-        toolbar.addWidget(btn_explorer)
         return toolbar
 
     # -- Loss Toolbar ------------------------------------------------------
@@ -427,6 +429,26 @@ class WindowLayoutMixin:
 
     # -- Project Explorer --------------------------------------------------
 
+    def _build_explorer_rail(self) -> QWidget:
+        """The strip a hidden explorer folds into, with a chevron to show it again."""
+        rail = QWidget()
+        rail.setObjectName("ExplorerRail")
+        rail.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        layout = QVBoxLayout(rail)
+        layout.setContentsMargins(Size.TIGHT, Size.PAD - 2, Size.TIGHT, Size.PAD)
+        self._btn_show_explorer = QPushButton()
+        self._btn_show_explorer.setObjectName("IconButton")
+        self._btn_show_explorer.setIcon(icon("chevron_left"))
+        self._btn_show_explorer.setIconSize(glyph_size())
+        self._btn_show_explorer.setFixedWidth(Size.CONTROL_HEIGHT)
+        self._btn_show_explorer.setToolTip("Show the project explorer (Ctrl+Shift+E)")
+        layout.addWidget(self._btn_show_explorer)
+        layout.addStretch()
+        rail.setVisible(False)
+        self._explorer_rail = rail
+        return rail
+
+
     def _build_project_explorer(self) -> QWidget:
         """Build the project explorer panel with tree view."""
         panel = QWidget()
@@ -447,8 +469,7 @@ class WindowLayoutMixin:
         self._btn_toggle_explorer.setObjectName("IconButton")
         self._btn_toggle_explorer.setIcon(icon("chevron_right"))
         self._btn_toggle_explorer.setIconSize(glyph_size())
-        self._btn_toggle_explorer.setToolTip(
-            "Hide the explorer (show it again with Explorer above the plot)")
+        self._btn_toggle_explorer.setToolTip("Hide the project explorer (Ctrl+Shift+E)")
         header.addWidget(self._btn_toggle_explorer)
         layout.addLayout(header)
 
@@ -543,22 +564,10 @@ class WindowLayoutMixin:
         self._check_grow.setToolTip(
             "On: start from the fewest control points and add them where the\n"
             "fit is worst, refitting after each step.\n"
-            "Off: start from the Control pts setting. In tolerance mode the\n"
-            "count can still grow or shrink from there to meet the tolerance."
+            "Off: start from the Control points setting (Curve). With a tolerance\n"
+            "goal the count can still grow or shrink from there to meet it."
         )
         self._lbl_grow = _add_row(form, "Grow points", self._check_grow)
-
-        # Control points (sweepable); in tolerance mode only shown as the
-        # starting count when not growing from the fewest
-        self._spin_ctrl = QSpinBox()
-        self._spin_ctrl.setRange(2, 200)
-        self._spin_ctrl.setValue(25)
-        self._spin_ctrl.setToolTip(
-            "Control points per section.\n"
-            "More = more flexibility but more variables."
-        )
-        self._sweep_ctrl = SweepableSpinBox(self._spin_ctrl, group=self._sweep_group)
-        self._lbl_ctrl = _add_row(form, "Control pts", self._sweep_ctrl)
 
         # Error metric
         self._combo_err = QComboBox()
@@ -573,7 +582,7 @@ class WindowLayoutMixin:
     # -- Curve Section -----------------------------------------------------
 
     def _build_curve_section(self) -> SidebarSection:
-        """Build the Curve section: degree, sections, and continuity."""
+        """Build the Curve section: degree, control points, sections, continuity."""
         section = SidebarSection("Curve")
         form = _form()
 
@@ -587,6 +596,18 @@ class WindowLayoutMixin:
         )
         self._sweep_degree = SweepableSpinBox(self._spin_degree, group=self._sweep_group)
         _add_row(form, "Degree", self._sweep_degree)
+
+        # Control points (sweepable); with a tolerance goal only the starting
+        # count, and only when not growing from the fewest
+        self._spin_ctrl = QSpinBox()
+        self._spin_ctrl.setRange(2, 200)
+        self._spin_ctrl.setValue(25)
+        self._spin_ctrl.setToolTip(
+            "Control points per section.\n"
+            "More = more flexibility but more variables."
+        )
+        self._sweep_ctrl = SweepableSpinBox(self._spin_ctrl, group=self._sweep_group)
+        self._lbl_ctrl = _add_row(form, "Control points", self._sweep_ctrl)
 
         # Sections
         self._spin_sections = QSpinBox()
@@ -653,7 +674,7 @@ class WindowLayoutMixin:
         self._spin_subsample = QSpinBox()
         self._spin_subsample.setRange(20, 100000)
         self._spin_subsample.setValue(200)
-        self._spin_subsample.setSuffix(" pts/section")
+        self._spin_subsample.setSuffix(" points/section")
         self._spin_subsample.setEnabled(False)
         self._spin_subsample.setToolTip("Sections with more points than this are subsampled.")
         self._subsample_row = _hbox(self._check_subsample, self._spin_subsample, stretch_first=False)
@@ -724,12 +745,13 @@ class WindowLayoutMixin:
         self._spin_bbox.setToolTip("Multiplier for optimization search bounds.")
         self._lbl_bbox = _add_row(form, "Search scale", self._spin_bbox)
 
-        self._check_optimize_le = QCheckBox("Let it move")
+        self._check_optimize_le = QCheckBox("Optimize positions")
         self._check_optimize_le.setChecked(False)
         self._check_optimize_le.setToolTip(
-            "Allow the leading edge junction to move during optimization."
+            "Optimize the position of every junction along the data,\n"
+            "instead of keeping the section split points fixed."
         )
-        self._lbl_optimize_le = _add_row(form, "Junction", self._check_optimize_le)
+        self._lbl_optimize_le = _add_row(form, "Junctions", self._check_optimize_le)
 
         section.add_layout(form)
         section.add_widget(self._build_regularization_box())
@@ -746,7 +768,7 @@ class WindowLayoutMixin:
             ("Outer optimizer", self._combo_param_opt_outer),
             ("Foot points", self._check_orth_lsq_local_bounds),
             ("Search scale", self._spin_bbox),
-            ("Junction", self._check_optimize_le),
+            ("Junctions", self._check_optimize_le),
             ("Fairness penalties", self._check_fairness),
         )
         self._set_advanced_baseline()
@@ -895,7 +917,7 @@ class WindowLayoutMixin:
             readout.setObjectName("Readout")
         for col, (caption, value) in enumerate((
             (self._lbl_result_caption_dev, self._lbl_result_dev),
-            (QLabel("Ctrl pts"), self._lbl_result_ctrl),
+            (QLabel("Control points"), self._lbl_result_ctrl),
             (QLabel("Time"), self._lbl_result_time),
         )):
             caption.setObjectName("Muted")

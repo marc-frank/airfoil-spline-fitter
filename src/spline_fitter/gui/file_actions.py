@@ -243,7 +243,7 @@ class FileActionsMixin:
             n_points = len(coords)
             section_sizes = [len(sec) for sec in self._airfoil.sections]
             self.statusBar().showMessage(
-                f"Loaded: {display_name} ({n_points} pts, {len(section_sizes)} sections: {section_sizes})"
+                f"Loaded: {display_name} ({n_points} points, {len(section_sizes)} sections: {section_sizes})"
             )
 
         except Exception as e:

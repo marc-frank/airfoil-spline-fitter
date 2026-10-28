@@ -33,7 +33,8 @@ class GNVarProConfig:
     Configuration for the variable projection optimizer.
 
     Attributes:
-        max_iterations: Residual evaluation limit when the optimization config sets none
+        max_iterations: Residual evaluation limit when the optimization config sets
+            none: a safety stop; the solver ends on convergence long before
         regularization: Tikhonov regularization for numerical stability
         smoothing_weight: Weight for bending energy regularization
         use_exact_jacobian: If True, compute exact Jacobian; else use finite diff
@@ -44,7 +45,7 @@ class GNVarProConfig:
             the fewest control points and curvature extrema in the
             bspline-varpro benchmark)
     """
-    max_iterations: int = 50
+    max_iterations: int = 10000
     regularization: float = 1e-12
     smoothing_weight: float = 1e-3
     use_exact_jacobian: bool = True

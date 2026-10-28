@@ -459,6 +459,7 @@ PlotWidget, QGraphicsView {{ border: 1px solid {P.RULE}; border-radius: {S.RADIU
 
 /* Panels: sidebar, explorer, drop-downs */
 #Sidebar, #Explorer {{ background: {P.PANEL}; }}
+#ExplorerRail {{ background: {P.PANEL}; border-left: 1px solid {P.RULE}; }}
 #SidebarSection {{ border-bottom: 1px solid {P.RULE}; }}
 #SectionCaption, #SectionHeader {{ color: {P.TEXT_3}; font-size: {Type.CAPTION_PX}px;
     font-weight: 600; letter-spacing: 1px; }}

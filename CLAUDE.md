@@ -17,7 +17,8 @@ anything in `src/spline_fitter/gui/`.
 - The user chooses light/dark/system and a cool-to-warm temperature (View > Theme...),
   applied live. Greys are lightness values in `GREY_LIGHTNESS`, never hex; read tokens at
   draw time, and restyle on `theme_changed` whatever the stylesheet does not cover.
-- Labels: sentence case, no trailing colons; captions uppercase; no emoji.
+- Labels: sentence case, spelled out (no "pts"), no trailing colons; captions uppercase;
+  no emoji.
 - `tests/test_design_language.py` enforces this; run it after GUI changes.
 
 ## Running

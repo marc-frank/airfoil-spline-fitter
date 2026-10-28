@@ -153,7 +153,8 @@ curve is a deviation worth seeing. Every new plot item takes a `Z` value.
   `TEXT_3` (`#SectionCaption`). One caption names each region: DATA,
   METHOD, CURVE, ADVANCED, PROJECT, CONVERGENCE, ...
 - **Wording**: sentence case everywhere ("Fit spline", "Optimization
-  runs"); labels have **no trailing colons**; menu items that open a dialog
+  runs"); words are spelled out ("Control points", not "Ctrl pts");
+  labels have **no trailing colons**; menu items that open a dialog
   end with an ellipsis ("Export CAD...").
 - **Glyphs**: no emoji. Icons are the stroked glyphs from `theme.icon()`
   (`chevron_down`, `chevron_up`, `chevron_right`, `chevron_left`,
@@ -162,7 +163,8 @@ curve is a deviation worth seeing. Every new plot item takes a `Z` value.
 - **Chevrons mean disclosure**: pointing right = closed, down = open
   (collapsible sections, tree branches, the comb settings drop-down).
   Sideways chevrons fold a side panel away: the explorer's hide button
-  points right, toward the edge it folds into.
+  points right, toward the edge it folds into, and the rail it leaves
+  there (`ExplorerRail`) has a chevron pointing left to bring it back.
 
 ---
 

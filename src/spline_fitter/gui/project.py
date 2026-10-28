@@ -341,8 +341,10 @@ class ProjectManager:
     # ------------------------------------------------------------------
 
     def on_toggle_explorer(self, visible: bool):
-        """Show or hide the project explorer; the plots take its width."""
+        """Show or hide the project explorer; the plots take its width, and
+        the rail at the window edge offers it back."""
         self._window._explorer_panel.setVisible(visible)
+        self._window._explorer_rail.setVisible(not visible)
 
     # ------------------------------------------------------------------
     # Project tree
@@ -417,7 +419,7 @@ class ProjectManager:
                                 sw_suffix = f", sw={sw:.5g}"
                                 sw_tip = f", Smoothing: {sw:.5g}"
                             run_item = QTreeWidgetItem(
-                                [f"{n_ctrl} pts ({error:.2e}{sw_suffix})"]
+                                [f"{n_ctrl} control points ({error:.2e}{sw_suffix})"]
                             )
                             run_item.setData(
                                 0, Qt.ItemDataRole.UserRole, ("run", run)
@@ -514,7 +516,7 @@ class ProjectManager:
         self._window._apply_run_config(cfg, opt)
 
         self._window.statusBar().showMessage(
-            f"Loaded settings from run: {cfg.num_control_points} ctrl pts, "
+            f"Loaded settings from run: {cfg.num_control_points} control points, "
             f"{opt.optimizer.display_name}"
         )
 
@@ -537,7 +539,7 @@ class ProjectManager:
                          f"RMS deviation: {res.report['rms_deviation']:.3e}<br>")
         details = (
             f"<b>{opt.optimizer.display_name}</b><br>"
-            f"Degree: {cfg.degree}, Ctrl pts: {ctrl}<br>"
+            f"Degree: {cfg.degree}, Control points: {ctrl}<br>"
             f"Continuity: {continuity}<br>"
             f"{tolerance}"
             f"Metric: {opt.metric.display_name}<br>"

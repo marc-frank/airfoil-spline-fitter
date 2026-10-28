@@ -93,7 +93,7 @@ def default_tolerance(coordinates: Sequence[Sequence[float]], precision: int | N
 def summary_line(report: dict) -> str:
     """One-line summary for the status bar."""
     text = (f"max dev {report['max_deviation']:.2e}, rms {report['rms_deviation']:.2e}, "
-            f"{report['control_points']} ctrl pts")
+            f"{report['control_points']} control points")
     if report.get("tolerance"):
         text += f" (tol {report['tolerance']:.2e})"
     return text
