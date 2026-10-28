@@ -112,12 +112,13 @@ def format_report_html(report: dict, title: str = "Fit report") -> str:
     ]
     if report.get("tolerance"):
         met = report["max_deviation"] <= report["tolerance"] * (1 + 1e-9)
-        rows.append(row("Tolerance", f"{report['tolerance']:.3e} ({'met' if met else '<b>not met</b>'})"))
+        verdict = "<span class='ok'>met</span>" if met else "<b class='warn'>not met</b>"
+        rows.append(row("Tolerance", f"{report['tolerance']:.3e} ({verdict})"))
     floor = report.get("precision_floor")
     if floor:
         note = f"{floor:.2e}"
         if report.get("tolerance") and report["tolerance"] < floor:
-            note += " <b>(tolerance is below the data rounding)</b>"
+            note += " <b class='warn'>(tolerance is below the data rounding)</b>"
         rows.append(row("Rounding error of the data", note))
     rows += [
         row("Degree", str(report["degree"])),

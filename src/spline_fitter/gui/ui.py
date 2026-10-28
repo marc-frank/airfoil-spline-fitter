@@ -35,6 +35,7 @@ from .fitting import FittingController
 from .layout import WindowLayoutMixin
 from .plotting import PlotManager
 from .project import ProjectManager
+from .theme import apply_theme
 from .widgets import SweepableSpinBox
 
 # =============================================================================
@@ -54,6 +55,8 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
     """
 
     def __init__(self):
+        # The Loft theme (theme.py) styles every widget and plot built below
+        apply_theme()
         super().__init__()
         self.setWindowTitle("Airfoil Spline Fitter")
 

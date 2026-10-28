@@ -4,8 +4,10 @@ Reusable UI Widgets
 
 Custom PyQt6 widgets used by the spline fitter GUI.
 
+Widgets carry object names that theme.py styles; they set no colors or
+stylesheets of their own.
+
 This module provides:
-    - Colors: Application color constants
     - SidebarSection / CollapsibleSection: Captioned sidebar sections
     - SegmentedControl: Button row with a combo-box-like API
     - SweepableSpinBox: Spinbox with parameter sweep toggle
@@ -28,6 +30,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from .theme import Size
+
 # =============================================================================
 # Constants
 # =============================================================================
@@ -37,50 +41,8 @@ MAX_PLOT_POINTS = 100_000
 
 
 # =============================================================================
-# UI Color Scheme
-# =============================================================================
-
-class Colors:
-    """Application color constants."""
-
-    # Data points
-    AIRFOIL_POINTS = (255, 165, 0)  # Orange
-
-    # Curves
-    SPLINE_CURVE = (255, 165, 0)  # Orange
-    CONTROL_POLYGON = (160, 160, 160)  # Gray
-    KNOTS = (0, 200, 120)  # Green
-
-    # Curvature comb
-    COMB_UPPER = (200, 0, 200)  # Purple
-    COMB_LOWER = (0, 120, 255)  # Blue
-    COMB_TIPS_UPPER = (130, 0, 130)  # Dark purple
-    COMB_TIPS_LOWER = (0, 70, 180)  # Dark blue
-
-    # Loss plot
-    LOSS_POINTS = (100, 200, 255)  # Light blue
-
-
-# =============================================================================
 # Sidebar Sections
 # =============================================================================
-
-SIDEBAR_STYLE = """
-#Sidebar { background: palette(base); }
-#SidebarSection { border-bottom: 1px solid palette(midlight); }
-#SectionCaption { color: palette(placeholder-text); font-size: 11px; letter-spacing: 1px; }
-#SectionHeader { text-align: left; border: none; padding: 0; color: palette(placeholder-text);
-                 font-size: 11px; letter-spacing: 1px; background: transparent; }
-#SectionHeader:hover { color: palette(text); }
-#SectionBadge { color: palette(highlight); font-size: 11px; }
-#FileName { font-weight: bold; }
-#Muted { color: palette(placeholder-text); font-size: 11px; }
-#RunBar { background: palette(window); border-top: 1px solid palette(mid); }
-#PrimaryButton { background: palette(highlight); color: palette(highlighted-text);
-                 border: none; border-radius: 4px; padding: 7px; font-weight: bold; }
-#PrimaryButton:disabled { background: palette(mid); }
-"""
-
 
 class SidebarSection(QWidget):
     """A sidebar section: a small caption above its content, divider below."""
@@ -91,14 +53,14 @@ class SidebarSection(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(12, 10, 12, 10)
-        main_layout.setSpacing(6)
+        main_layout.setContentsMargins(Size.PAD, Size.PAD - 2, Size.PAD, Size.PAD)
+        main_layout.setSpacing(Size.GROUP)
         main_layout.addWidget(self._build_header(title))
 
         self._content = QWidget()
         self._content_layout = QVBoxLayout(self._content)
         self._content_layout.setContentsMargins(0, 0, 0, 0)
-        self._content_layout.setSpacing(6)
+        self._content_layout.setSpacing(Size.GAP)
         main_layout.addWidget(self._content)
 
     def _build_header(self, title: str) -> QWidget:
@@ -179,8 +141,8 @@ class DropDownPanel(QFrame):
 
     def __init__(self, button: QToolButton, content: QWidget, window: QWidget):
         super().__init__(window, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
-        self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setAutoFillBackground(True)
+        self.setObjectName("DropDownPanel")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(content)
@@ -227,35 +189,36 @@ class SegmentedControl(QWidget):
 
     currentIndexChanged = pyqtSignal(int)
 
-    _STYLE = (
-        "QPushButton { border: 1px solid palette(mid); border-radius: 0; margin-left: -1px;"
-        " padding: 4px 6px; background: palette(base); }"
-        "QPushButton:checked { background: palette(highlight); color: palette(highlighted-text);"
-        " border-color: palette(highlight); }"
-        "QPushButton:disabled { color: palette(placeholder-text); }"
-    )
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self._layout = QHBoxLayout(self)
-        self._layout.setContentsMargins(1, 0, 0, 0)
+        self._layout.setContentsMargins(0, 0, 0, 0)
         self._layout.setSpacing(0)
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
         self._group.idClicked.connect(self.setCurrentIndex)
         self._data: list = []
         self._current = -1
-        self.setStyleSheet(self._STYLE)
 
     def addItem(self, text: str, userData=None):
         btn = QPushButton(text)
+        btn.setObjectName("Segment")
         btn.setCheckable(True)
         btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._group.addButton(btn, len(self._data))
         self._layout.addWidget(btn)
         self._data.append(userData)
+        self._mark_ends()
         if self._current < 0:
             self.setCurrentIndex(0)
+
+    def _mark_ends(self):
+        """Round the outer corners of the first and last segments."""
+        buttons = self._group.buttons()
+        for i, b in enumerate(buttons):
+            b.setProperty("position", "first" if i == 0 else "last" if i == len(buttons) - 1 else "")
+            b.style().unpolish(b)
+            b.style().polish(b)
 
     def count(self) -> int:
         return len(self._data)
@@ -311,19 +274,16 @@ class SweepableSpinBox(QWidget):
 
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(4)
+        lay.setSpacing(Size.TIGHT)
 
         self._spin = spin_box
         lay.addWidget(self._spin, stretch=1)
 
         self._btn_sweep = QPushButton("\u2194")
-        self._btn_sweep.setFixedSize(28, 28)
+        self._btn_sweep.setObjectName("SweepToggle")
+        self._btn_sweep.setFixedSize(26, 24)
         self._btn_sweep.setToolTip("Toggle parameter sweep range")
         self._btn_sweep.setCheckable(True)
-        self._btn_sweep.setStyleSheet(
-            "QPushButton { font-size: 14px; border: 1px solid palette(mid); border-radius: 3px; }"
-            "QPushButton:checked { background: palette(highlight); color: palette(highlighted-text); }"
-        )
         self._btn_sweep.clicked.connect(self._on_toggle_sweep)
         lay.addWidget(self._btn_sweep)
 
@@ -407,19 +367,16 @@ class SweepableDoubleSpinBox(QWidget):
 
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(4)
+        lay.setSpacing(Size.TIGHT)
 
         self._spin = spin_box
         lay.addWidget(self._spin, stretch=1)
 
         self._btn_sweep = QPushButton("\u2194")
-        self._btn_sweep.setFixedSize(28, 28)
+        self._btn_sweep.setObjectName("SweepToggle")
+        self._btn_sweep.setFixedSize(26, 24)
         self._btn_sweep.setToolTip("Toggle parameter sweep range")
         self._btn_sweep.setCheckable(True)
-        self._btn_sweep.setStyleSheet(
-            "QPushButton { font-size: 14px; border: 1px solid palette(mid); border-radius: 3px; }"
-            "QPushButton:checked { background: palette(highlight); color: palette(highlighted-text); }"
-        )
         self._btn_sweep.clicked.connect(self._on_toggle_sweep)
         lay.addWidget(self._btn_sweep)
 

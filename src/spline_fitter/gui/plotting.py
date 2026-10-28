@@ -12,12 +12,12 @@ from __future__ import annotations
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import Qt
 
 from ..optimization import construct_control_points
 from ..optimization.models import FitResult, SplineConfig
 from ..spline import BSplineCurve2D, compute_signed_curvature
-from .widgets import MAX_PLOT_POINTS, Colors
+from .theme import Ink, Palette, Size, Z, brush, pen
+from .widgets import MAX_PLOT_POINTS
 
 # Curvature comb: dense grid for tooth placement and higher derivatives, and the
 # share of teeth placed by turning angle (the rest by arc length).
@@ -123,21 +123,25 @@ class PlotManager:
         self._loss_y: list[float] = []
 
         # Loss curve item
-        self._loss_curve = loss_plot.plot(
-            [], [], pen=None, symbol='o', symbolSize=3,
-            symbolBrush=Colors.LOSS_POINTS, symbolPen=None,
-        )
+        self._loss_curve = self._new_loss_curve()
 
-        # Comparison plot items
+        # Comparison plot items: the trace of all runs, the current one in ink
         self._comparison_curve = comparison_plot.plot(
-            [], [], pen=pg.mkPen(color=(100, 200, 255), width=2),
-            symbol='o', symbolSize=8,
-            symbolBrush=(100, 200, 255), symbolPen=None,
+            [], [], pen=pen(Ink.TRACE, 1.5),
+            symbol='o', symbolSize=Size.TRACE_POINT + 2,
+            symbolBrush=brush(Ink.TRACE), symbolPen=None,
         )
         self._comparison_marker = comparison_plot.plot(
-            [], [], pen=None, symbol='o', symbolSize=14,
-            symbolBrush=(255, 165, 0),
-            symbolPen=pg.mkPen(color=(255, 255, 255), width=2),
+            [], [], pen=None, symbol='o', symbolSize=Size.MARKER_SIZE,
+            symbolBrush=brush(Ink.MARKER),
+            symbolPen=pen(Palette.CANVAS, 2),
+        )
+
+    def _new_loss_curve(self):
+        """The convergence trace: one dot per step."""
+        return self._loss_plot.plot(
+            [], [], pen=None, symbol='o', symbolSize=Size.TRACE_POINT,
+            symbolBrush=brush(Ink.TRACE), symbolPen=None,
         )
 
     # -----------------------------------------------------------------
@@ -246,8 +250,9 @@ class PlotManager:
                 kx, ky = curve.evaluate_array(knots)
                 xs.extend(kx.tolist())
                 ys.extend(ky.tolist())
-            self._put(self._knot_items, 'knots', xs, ys, pen=None, symbol='d', symbolSize=8,
-                      symbolBrush=Colors.KNOTS, symbolPen=None)
+            self._put(self._knot_items, 'knots', xs, ys, pen=None, symbol='d',
+                      symbolSize=Size.KNOT_SIZE, symbolBrush=brush(Ink.KNOTS),
+                      symbolPen=pen(Palette.CANVAS), z=Z.KNOTS)
         except Exception:
             pass
 
@@ -271,14 +276,15 @@ class PlotManager:
         self._plot.clear()
         x = [p[0] for p in coords]
         y = [p[1] for p in coords]
-        self._plot.plot(
+        data = self._plot.plot(
             x, y,
             pen=None,
             symbol='o',
-            symbolSize=5,
-            symbolBrush=Colors.AIRFOIL_POINTS,
+            symbolSize=Size.DATA_SIZE,
+            symbolBrush=brush(Ink.DATA, 220),
             symbolPen=None,
         )
+        data.setZValue(Z.DATA)
         self._plot.autoRange()
 
     def reset_loss_plot(self, x_label: str, log_x: bool, log_y: bool) -> None:
@@ -289,14 +295,7 @@ class PlotManager:
         self._loss_plot.clear()
         self._loss_plot.getPlotItem().setLogMode(x=log_x, y=log_y)
         self._loss_plot.setLabel("bottom", x_label)
-        self._loss_curve = self._loss_plot.plot(
-            [], [],
-            pen=None,
-            symbol='o',
-            symbolSize=3,
-            symbolBrush=Colors.LOSS_POINTS,
-            symbolPen=None,
-        )
+        self._loss_curve = self._new_loss_curve()
 
     def set_loss_curve_data(self, mode: str) -> None:
         """Update loss curve with data based on X-axis mode.
@@ -399,34 +398,14 @@ class PlotManager:
                 # Spline curve (items are reused: every step of a fit may be drawn)
                 ux, uy = curve.sample(1000)
 
-                key = f'live_curve_{section_idx}'
-                if key in self._curve_items:
-                    self._curve_items[key].setData(ux, uy)
-                else:
-                    pen = pg.mkPen(color=Colors.SPLINE_CURVE, width=2)
-                    self._curve_items[key] = self._plot.plot(ux, uy, pen=pen)
+                self._put(self._curve_items, f'live_curve_{section_idx}', ux, uy,
+                          **self._curve_style())
 
                 # Control polygon
                 cx = [p[0] for p in ctrl_pts]
                 cy = [p[1] for p in ctrl_pts]
-
-                key = f'live_ctrl_{section_idx}'
-                if key in self._curve_items:
-                    self._curve_items[key].setData(cx, cy)
-                else:
-                    ctrl_pen = pg.mkPen(
-                        color=Colors.CONTROL_POLYGON,
-                        width=1,
-                        style=Qt.PenStyle.DashLine,
-                    )
-                    self._curve_items[key] = self._plot.plot(
-                        cx, cy,
-                        pen=ctrl_pen,
-                        symbol='o',
-                        symbolSize=5,
-                        symbolBrush=Colors.CONTROL_POLYGON,
-                        symbolPen=None,
-                    )
+                self._put(self._curve_items, f'live_ctrl_{section_idx}', cx, cy,
+                          **self._polygon_style())
 
             # Comb and knot markers of the curve in progress, if enabled
             # (their items are updated in place)
@@ -456,26 +435,14 @@ class PlotManager:
                 # Spline curve
                 sx, sy = curve.sample(1000)
 
-                pen = pg.mkPen(color=Colors.SPLINE_CURVE, width=2)
-                self._curve_items[f'final_curve_{section_idx}'] = self._plot.plot(sx, sy, pen=pen)
+                self._put(self._curve_items, f'final_curve_{section_idx}', sx, sy,
+                          **self._curve_style())
 
                 # Control polygon
                 cx = [p[0] for p in ctrl_pts]
                 cy = [p[1] for p in ctrl_pts]
-
-                ctrl_pen = pg.mkPen(
-                    color=Colors.CONTROL_POLYGON,
-                    width=1,
-                    style=Qt.PenStyle.DashLine,
-                )
-                self._curve_items[f'final_ctrl_{section_idx}'] = self._plot.plot(
-                    cx, cy,
-                    pen=ctrl_pen,
-                    symbol='o',
-                    symbolSize=5,
-                    symbolBrush=Colors.CONTROL_POLYGON,
-                    symbolPen=None,
-                )
+                self._put(self._curve_items, f'final_ctrl_{section_idx}', cx, cy,
+                          **self._polygon_style())
 
         except Exception:
             pass
@@ -550,27 +517,36 @@ class PlotManager:
             seg_x.extend([x0, x1, np.nan])
             seg_y.extend([y0, y1, np.nan])
 
-        # Colors based on which key (handles 'upper_0', 'lower_1', etc.)
-        if which.startswith('upper'):
-            comb_color = Colors.COMB_UPPER
-            tips_color = Colors.COMB_TIPS_UPPER
-        else:
-            comb_color = Colors.COMB_LOWER
-            tips_color = Colors.COMB_TIPS_LOWER
+        # Suction side cool, pressure side warm (handles 'upper_0', 'lower_1', etc.)
+        color = Ink.COMB_UPPER if which.startswith('upper') else Ink.COMB_LOWER
 
-        # Draw comb lines
+        # Faint teeth; the envelope through their tips is what is read
         self._put(self._comb_items, f'comb_{which}', seg_x, seg_y,
-                  pen=pg.mkPen(color=comb_color, width=1))
-
-        # Draw tips
+                  pen=pen(color, alpha=Ink.COMB_TEETH_ALPHA), z=Z.COMB)
         self._put(self._comb_items, f'tips_{which}', cx, cy,
-                  pen=pg.mkPen(color=tips_color, width=1, style=Qt.PenStyle.DashLine))
+                  pen=pen(color, 1.5), z=Z.COMB)
 
-    def _put(self, items: dict, key: str, x, y, **style) -> None:
+    @staticmethod
+    def _curve_style() -> dict:
+        """The fitted curve: a solid line in ink."""
+        return dict(pen=pen(Ink.CURVE, Size.CURVE_WIDTH), z=Z.CURVE)
+
+    @staticmethod
+    def _polygon_style() -> dict:
+        """The control polygon: dashed construction line, hollow square vertices."""
+        return dict(
+            pen=pen(Ink.CONSTRUCTION, dashed=True, alpha=170),
+            symbol='s', symbolSize=Size.CONTROL_SIZE,
+            symbolBrush=brush(Palette.CANVAS), symbolPen=pen(Ink.CONSTRUCTION),
+            z=Z.CONSTRUCTION,
+        )
+
+    def _put(self, items: dict, key: str, x, y, z: float = 0, **style) -> None:
         """Plot ``x, y`` as ``items[key]``, reusing the item if it exists:
         adding and removing items is what makes redrawing every fit step slow."""
         item = items.get(key)
         if item is None:
-            items[key] = self._plot.plot(x, y, **style)
+            items[key] = item = self._plot.plot(x, y, **style)
+            item.setZValue(z)
         else:
             item.setData(x, y)

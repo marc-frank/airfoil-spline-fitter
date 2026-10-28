@@ -373,23 +373,23 @@ class ProjectManager:
 
         # Build tree items
         for opt_name, degrees in sorted(tree_data.items()):
-            opt_item = QTreeWidgetItem([f"\U0001f527 {opt_name}"])
+            opt_item = QTreeWidgetItem([opt_name])
             opt_item.setData(0, Qt.ItemDataRole.UserRole, ("optimizer", opt_name))
 
             for degree_key, sections in sorted(degrees.items()):
-                degree_item = QTreeWidgetItem([f"\U0001f4d0 {degree_key}"])
+                degree_item = QTreeWidgetItem([degree_key])
                 degree_item.setData(
                     0, Qt.ItemDataRole.UserRole, ("degree", degree_key)
                 )
 
                 for sections_key, continuities in sorted(sections.items()):
-                    sections_item = QTreeWidgetItem([f"\U0001f4ca {sections_key}"])
+                    sections_item = QTreeWidgetItem([sections_key])
                     sections_item.setData(
                         0, Qt.ItemDataRole.UserRole, ("sections", sections_key)
                     )
 
                     for cont_key, runs in sorted(continuities.items()):
-                        cont_item = QTreeWidgetItem([f"\U0001f517 {cont_key}"])
+                        cont_item = QTreeWidgetItem([cont_key])
                         cont_item.setData(
                             0,
                             Qt.ItemDataRole.UserRole,
@@ -417,7 +417,7 @@ class ProjectManager:
                                 sw_suffix = f", sw={sw:.5g}"
                                 sw_tip = f", Smoothing: {sw:.5g}"
                             run_item = QTreeWidgetItem(
-                                [f"\U0001f4c4 {n_ctrl} pts ({error:.2e}{sw_suffix})"]
+                                [f"{n_ctrl} pts ({error:.2e}{sw_suffix})"]
                             )
                             run_item.setData(
                                 0, Qt.ItemDataRole.UserRole, ("run", run)

@@ -36,8 +36,8 @@ from ..optimization.models import (
     ErrorMetric,
     OptimizerType,
 )
+from .theme import Size, label_plot, style_plot
 from .widgets import (
-    SIDEBAR_STYLE,
     CollapsibleSection,
     DropDownPanel,
     SegmentedControl,
@@ -48,15 +48,15 @@ from .widgets import (
 
 # Width of the label column in every sidebar form, so fields line up
 # across sections.
-LABEL_WIDTH = 92
+LABEL_WIDTH = Size.LABEL_WIDTH
 
 
 def _form() -> QFormLayout:
     """A sidebar form layout."""
     form = QFormLayout()
     form.setContentsMargins(0, 0, 0, 0)
-    form.setHorizontalSpacing(8)
-    form.setVerticalSpacing(6)
+    form.setHorizontalSpacing(Size.GROUP)
+    form.setVerticalSpacing(Size.GAP)
     form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
     form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
     return form
@@ -65,6 +65,7 @@ def _form() -> QFormLayout:
 def _add_row(form: QFormLayout, text: str, field) -> QLabel:
     """Add a row with a fixed-width label and return the label."""
     label = QLabel(text)
+    label.setObjectName("FormLabel")
     label.setFixedWidth(LABEL_WIDTH)
     form.addRow(label, field)
     return label
@@ -75,7 +76,7 @@ def _hbox(*widgets, stretch_first: bool = True) -> QWidget:
     row = QWidget()
     lay = QHBoxLayout(row)
     lay.setContentsMargins(0, 0, 0, 0)
-    lay.setSpacing(6)
+    lay.setSpacing(Size.GAP)
     for i, w in enumerate(widgets):
         lay.addWidget(w, stretch=1 if (i == 0 and stretch_first) else 0)
     return row
@@ -105,7 +106,6 @@ class WindowLayoutMixin:
         # order (data -> method -> curve -> advanced -> fit and results)
         sidebar = QWidget(self)
         sidebar.setObjectName("Sidebar")
-        sidebar.setStyleSheet(SIDEBAR_STYLE)
         sidebar_layout = QVBoxLayout(sidebar)
         sidebar_layout.setContentsMargins(0, 0, 0, 0)
         sidebar_layout.setSpacing(0)
@@ -145,44 +145,56 @@ class WindowLayoutMixin:
         # Center panel: Plots
         center_panel = QWidget(self)
         center_layout = QVBoxLayout(center_panel)
+        center_layout.setContentsMargins(Size.GROUP, Size.GROUP, Size.GROUP, Size.GROUP)
+        center_layout.setSpacing(Size.GAP)
 
         # Main plot (airfoil visualization) with its display toolbar
         center_layout.addLayout(self._build_plot_toolbar())
         self._plot = pg.PlotWidget(parent=center_panel)
-        self._plot.showGrid(x=True, y=True, alpha=0.25)
+        style_plot(self._plot)
         self._plot.getPlotItem().setAspectLocked(True, ratio=1)
-        self._plot.setLabel("bottom", "x")
-        self._plot.setLabel("left", "y")
+        label_plot(self._plot, "bottom", "x")
+        label_plot(self._plot, "left", "y")
         center_layout.addWidget(self._plot, stretch=3)
 
         # Bottom row: Loss plot (with inline toolbar) and Comparison plot
         bottom_plots = QWidget()
         bottom_plots_layout = QHBoxLayout(bottom_plots)
         bottom_plots_layout.setContentsMargins(0, 0, 0, 0)
-        bottom_plots_layout.setSpacing(4)
+        bottom_plots_layout.setSpacing(Size.GROUP)
 
         # Loss plot with inline axis controls
         loss_container = QWidget()
         loss_layout = QVBoxLayout(loss_container)
         loss_layout.setContentsMargins(0, 0, 0, 0)
-        loss_layout.setSpacing(2)
+        loss_layout.setSpacing(Size.GAP)
         loss_layout.addLayout(self._build_loss_toolbar())
 
         self._loss_plot = pg.PlotWidget(parent=loss_container)
-        self._loss_plot.showGrid(x=True, y=True, alpha=0.25)
-        self._loss_plot.setLabel("bottom", "Evaluations")
-        self._loss_plot.setLabel("left", "Error")
+        style_plot(self._loss_plot)
+        label_plot(self._loss_plot, "bottom", "Evaluations")
+        label_plot(self._loss_plot, "left", "Error")
         self._loss_plot.getPlotItem().setLogMode(x=True, y=True)
         loss_layout.addWidget(self._loss_plot)
         bottom_plots_layout.addWidget(loss_container, stretch=1)
 
-        # Comparison plot (error vs control points)
-        self._comparison_plot = pg.PlotWidget(parent=bottom_plots)
-        self._comparison_plot.showGrid(x=True, y=True, alpha=0.25)
-        self._comparison_plot.setLabel("bottom", "Control Points")
-        self._comparison_plot.setLabel("left", "Error")
+        # Comparison plot (error vs control points), captioned so its top
+        # lines up with the loss plot under its toolbar
+        comparison_container = QWidget()
+        comparison_layout = QVBoxLayout(comparison_container)
+        comparison_layout.setContentsMargins(0, 0, 0, 0)
+        comparison_layout.setSpacing(Size.GAP)
+        comparison_caption = QLabel("ERROR BY CONTROL POINTS")
+        comparison_caption.setObjectName("SectionCaption")
+        comparison_caption.setFixedHeight(self._combo_loss_x.sizeHint().height())
+        comparison_layout.addWidget(comparison_caption)
+        self._comparison_plot = pg.PlotWidget(parent=comparison_container)
+        style_plot(self._comparison_plot)
+        label_plot(self._comparison_plot, "bottom", "Control points")
+        label_plot(self._comparison_plot, "left", "Error")
         self._comparison_plot.getPlotItem().setLogMode(x=False, y=True)
-        bottom_plots_layout.addWidget(self._comparison_plot, stretch=1)
+        comparison_layout.addWidget(self._comparison_plot)
+        bottom_plots_layout.addWidget(comparison_container, stretch=1)
 
         center_layout.addWidget(bottom_plots, stretch=2)
 
@@ -270,7 +282,7 @@ class WindowLayoutMixin:
         """Build the loaded-file summary at the top of the sidebar."""
         card = SidebarSection("Data")
         row = QHBoxLayout()
-        row.setSpacing(8)
+        row.setSpacing(Size.GROUP)
 
         text = QVBoxLayout()
         text.setSpacing(0)
@@ -294,7 +306,7 @@ class WindowLayoutMixin:
     def _build_plot_toolbar(self) -> QHBoxLayout:
         """Build the display toolbar above the main plot."""
         toolbar = QHBoxLayout()
-        toolbar.setSpacing(6)
+        toolbar.setSpacing(Size.GAP)
         toolbar.setContentsMargins(0, 0, 0, 0)
 
         self._check_knots = QToolButton()
@@ -306,6 +318,7 @@ class WindowLayoutMixin:
         # Curvature comb: toggle, with its settings in the drop-down
         self._check_comb = QToolButton()
         self._check_comb.setText("Curvature comb")
+        self._check_comb.setObjectName("SplitToggle")
         self._check_comb.setCheckable(True)
         self._check_comb.setToolTip(
             "Display curvature as perpendicular lines from the curve.\n"
@@ -315,7 +328,7 @@ class WindowLayoutMixin:
         comb_settings = QWidget()
         comb_form = _form()
         comb_settings.setLayout(comb_form)
-        comb_form.setContentsMargins(10, 8, 10, 8)
+        comb_form.setContentsMargins(Size.PAD, Size.PAD, Size.PAD, Size.PAD)
 
         self._combo_comb_qty = QComboBox()
         self._combo_comb_qty.addItem("Curvature (\u03BA)", userData=0)
@@ -323,23 +336,24 @@ class WindowLayoutMixin:
         self._combo_comb_qty.addItem("Acceleration (d\u00B2\u03BA/ds\u00B2)", userData=2)
         self._combo_comb_qty.addItem("Jerk (d\u00B3\u03BA/ds\u00B3)", userData=3)
         self._combo_comb_qty.setCurrentIndex(0)
-        comb_form.addRow("Quantity:", self._combo_comb_qty)
+        _add_row(comb_form, "Quantity", self._combo_comb_qty)
 
         self._spin_comb_scale = QDoubleSpinBox()
         self._spin_comb_scale.setRange(0.0, 1000.0)
         self._spin_comb_scale.setDecimals(4)
         self._spin_comb_scale.setSingleStep(0.01)
         self._spin_comb_scale.setValue(0.05)
-        comb_form.addRow("Height:", self._spin_comb_scale)
+        _add_row(comb_form, "Height", self._spin_comb_scale)
 
         self._spin_comb_density = QSpinBox()
         self._spin_comb_density.setRange(5, 2000)
         self._spin_comb_density.setValue(100)
-        comb_form.addRow("Density:", self._spin_comb_density)
+        _add_row(comb_form, "Density", self._spin_comb_density)
 
         # A drop-down panel rather than a menu, so the plots stay usable
         # while the settings are open
         self._btn_comb_settings = QToolButton()
+        self._btn_comb_settings.setObjectName("ArrowButton")
         self._btn_comb_settings.setArrowType(Qt.ArrowType.DownArrow)
         self._btn_comb_settings.setToolTip("Curvature comb settings")
         self._comb_panel = DropDownPanel(self._btn_comb_settings, comb_settings, self)
@@ -351,7 +365,9 @@ class WindowLayoutMixin:
 
         toolbar.addStretch()
 
-        toolbar.addWidget(QLabel("Live preview:"))
+        live_label = QLabel("Live preview")
+        live_label.setObjectName("FormLabel")
+        toolbar.addWidget(live_label)
         self._combo_live = QComboBox()
         self._combo_live.addItems(["Minimal", "Moderate", "Detailed"])
         self._combo_live.setCurrentIndex(1)
@@ -375,28 +391,35 @@ class WindowLayoutMixin:
     def _build_loss_toolbar(self) -> QHBoxLayout:
         """Build the inline toolbar above the loss/convergence plot."""
         toolbar = QHBoxLayout()
-        toolbar.setSpacing(4)
+        toolbar.setSpacing(Size.GAP)
         toolbar.setContentsMargins(0, 0, 0, 0)
 
-        toolbar.addWidget(QLabel("X:"))
+        caption = QLabel("CONVERGENCE")
+        caption.setObjectName("SectionCaption")
+        toolbar.addWidget(caption)
+        toolbar.addStretch()
+
+        x_label = QLabel("X axis")
+        x_label.setObjectName("FormLabel")
+        toolbar.addWidget(x_label)
         self._combo_loss_x = QComboBox()
         self._combo_loss_x.addItem("Iterations", userData="iters")
         self._combo_loss_x.addItem("Time (s)", userData="time")
         self._combo_loss_x.setCurrentIndex(0)
-        self._combo_loss_x.setFixedWidth(90)
+        self._combo_loss_x.setFixedWidth(96)
         toolbar.addWidget(self._combo_loss_x)
 
-        toolbar.addWidget(QLabel("Scale:"))
+        scale_label = QLabel("Log scale")
+        scale_label.setObjectName("FormLabel")
+        toolbar.addWidget(scale_label)
         self._combo_log_scale = QComboBox()
         self._combo_log_scale.addItem("Y only", userData="y")
         self._combo_log_scale.addItem("Both", userData="both")
         self._combo_log_scale.addItem("None", userData="none")
         self._combo_log_scale.addItem("X only", userData="x")
         self._combo_log_scale.setCurrentIndex(0)
-        self._combo_log_scale.setFixedWidth(70)
+        self._combo_log_scale.setFixedWidth(84)
         toolbar.addWidget(self._combo_log_scale)
-
-        toolbar.addStretch()
         return toolbar
 
     # -- Project Explorer --------------------------------------------------
@@ -404,16 +427,20 @@ class WindowLayoutMixin:
     def _build_project_explorer(self) -> QWidget:
         """Build the project explorer panel with tree view."""
         panel = QWidget()
+        panel.setObjectName("Explorer")
+        panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(8)
+        layout.setContentsMargins(Size.PAD, Size.PAD - 2, Size.PAD, Size.PAD)
+        layout.setSpacing(Size.GROUP)
 
         # Header with toggle button
         header = QHBoxLayout()
-        header.addWidget(QLabel("<b>Project Explorer</b>"))
+        caption = QLabel("PROJECT")
+        caption.setObjectName("SectionCaption")
+        header.addWidget(caption)
         header.addStretch()
         self._btn_toggle_explorer = QPushButton("\u2715")
-        self._btn_toggle_explorer.setFixedWidth(24)
+        self._btn_toggle_explorer.setObjectName("IconButton")
         self._btn_toggle_explorer.setToolTip(
             "Hide the explorer (show it again with Explorer above the plot)")
         header.addWidget(self._btn_toggle_explorer)
@@ -422,12 +449,12 @@ class WindowLayoutMixin:
         # Project info label (was in file tab, now lives here)
         self._lbl_project = QLabel("No project")
         self._lbl_project.setWordWrap(True)
-        self._lbl_project.setStyleSheet("color: gray; font-size: 10px; padding: 2px 4px;")
+        self._lbl_project.setObjectName("Muted")
         layout.addWidget(self._lbl_project)
 
         # Tree view for runs
         self._project_tree = QTreeWidget()
-        self._project_tree.setHeaderLabels(["Optimization Runs"])
+        self._project_tree.setHeaderLabels(["Optimization runs"])
         self._project_tree.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
         self._project_tree.setRootIsDecorated(True)
         self._project_tree.setAnimated(True)
@@ -436,7 +463,7 @@ class WindowLayoutMixin:
         # Run details label
         self._lbl_run_details = QLabel("Select a run to view details")
         self._lbl_run_details.setWordWrap(True)
-        self._lbl_run_details.setStyleSheet("color: gray; font-size: 10px; padding: 4px;")
+        self._lbl_run_details.setObjectName("Muted")
         layout.addWidget(self._lbl_run_details)
 
         # Action buttons
@@ -742,8 +769,8 @@ class WindowLayoutMixin:
         """Build the fairness penalties (objective-based optimizers only)."""
         self._regularization_box = QWidget()
         layout = QVBoxLayout(self._regularization_box)
-        layout.setContentsMargins(0, 6, 0, 0)
-        layout.setSpacing(6)
+        layout.setContentsMargins(0, Size.GAP, 0, 0)
+        layout.setSpacing(Size.GAP)
 
         caption = QLabel("REGULARIZATION")
         caption.setObjectName("SectionCaption")
@@ -833,8 +860,8 @@ class WindowLayoutMixin:
         bar.setObjectName("RunBar")
         bar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         layout = QVBoxLayout(bar)
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(8)
+        layout.setContentsMargins(Size.PAD, Size.PAD, Size.PAD, Size.PAD)
+        layout.setSpacing(Size.PAD)
 
         self._btn_fit = QPushButton("Fit spline")
         self._btn_fit.setObjectName("PrimaryButton")
@@ -849,15 +876,17 @@ class WindowLayoutMixin:
         self._result_box = QWidget()
         result_layout = QVBoxLayout(self._result_box)
         result_layout.setContentsMargins(0, 0, 0, 0)
-        result_layout.setSpacing(8)
+        result_layout.setSpacing(Size.PAD)
 
         stats = QGridLayout()
-        stats.setHorizontalSpacing(8)
+        stats.setHorizontalSpacing(Size.GROUP)
         stats.setVerticalSpacing(0)
         self._lbl_result_caption_dev = QLabel("Max dev")
         self._lbl_result_dev = QLabel()
         self._lbl_result_ctrl = QLabel()
         self._lbl_result_time = QLabel()
+        for readout in (self._lbl_result_dev, self._lbl_result_ctrl, self._lbl_result_time):
+            readout.setObjectName("Readout")
         for col, (caption, value) in enumerate((
             (self._lbl_result_caption_dev, self._lbl_result_dev),
             (QLabel("Ctrl pts"), self._lbl_result_ctrl),
@@ -869,7 +898,7 @@ class WindowLayoutMixin:
         result_layout.addLayout(stats)
 
         save_row = QHBoxLayout()
-        save_row.setSpacing(6)
+        save_row.setSpacing(Size.GAP)
         self._btn_save_dat = QPushButton("Save .dat")
         self._btn_save_dat.setEnabled(False)
         self._btn_save_dat.setToolTip("Save fitted airfoil coordinates (.dat)")

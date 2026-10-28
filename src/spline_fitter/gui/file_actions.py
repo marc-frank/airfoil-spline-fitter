@@ -22,7 +22,6 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QInputDialog,
     QPushButton,
-    QTextBrowser,
     QVBoxLayout,
 )
 
@@ -30,6 +29,7 @@ from ..analysis import fit_report, format_report_html, scipy_curves
 from ..geometry import create_airfoil_data
 from ..io import export_airfoil_data, export_spline_data, parse_airfoil_data
 from .background import run_in_background
+from .theme import text_browser
 
 
 class FileActionsMixin:
@@ -79,7 +79,7 @@ class FileActionsMixin:
 
             layout = QVBoxLayout(dialog)
 
-            browser = QTextBrowser()
+            browser = text_browser()
             browser.setOpenExternalLinks(True)
             browser.setHtml(html)
             layout.addWidget(browser)
@@ -111,7 +111,7 @@ class FileActionsMixin:
                     html_lines.append("</pre>")
                     in_code_block = False
                 else:
-                    html_lines.append('<pre style="background-color: #f4f4f4; padding: 10px; border-radius: 4px; overflow-x: auto;">')
+                    html_lines.append("<pre>")
                     in_code_block = True
                 continue
 
@@ -129,17 +129,17 @@ class FileActionsMixin:
                     continue
 
                 if not in_table:
-                    html_lines.append('<table style="border-collapse: collapse; width: 100%; margin: 10px 0;">')
+                    html_lines.append('<table width="100%" cellspacing="0">')
                     in_table = True
                     # First row is header
                     html_lines.append("<tr>")
                     for cell in cells:
-                        html_lines.append(f'<th style="border: 1px solid #ddd; padding: 8px; background-color: #f0f0f0;">{self._inline_markdown(cell)}</th>')
+                        html_lines.append(f"<th>{self._inline_markdown(cell)}</th>")
                     html_lines.append("</tr>")
                 else:
                     html_lines.append("<tr>")
                     for cell in cells:
-                        html_lines.append(f'<td style="border: 1px solid #ddd; padding: 8px;">{self._inline_markdown(cell)}</td>')
+                        html_lines.append(f"<td>{self._inline_markdown(cell)}</td>")
                     html_lines.append("</tr>")
                 continue
             elif in_table:
@@ -157,7 +157,7 @@ class FileActionsMixin:
 
             # Horizontal rules
             if line.strip() in ("---", "***", "___"):
-                html_lines.append('<hr style="border: none; border-top: 1px solid #ccc; margin: 15px 0;">')
+                html_lines.append("<hr>")
                 continue
 
             # Lists
@@ -182,23 +182,14 @@ class FileActionsMixin:
             html_lines.append("</table>")
 
         body = "\n".join(html_lines)
-        return f'''
-        <html>
-        <head>
-            <style>
-                body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; line-height: 1.5; }}
-                pre {{ font-family: "Consolas", "Monaco", monospace; font-size: 13px; }}
-            </style>
-        </head>
-        <body>{body}</body>
-        </html>
-        '''
+        # Styled by the theme's text browser (theme.HTML_CSS)
+        return f"<html><body>{body}</body></html>"
 
     def _inline_markdown(self, text: str) -> str:
         """Convert inline markdown (bold, italic, code, links) to HTML."""
         import re
         # Code (must come first to avoid conflicts)
-        text = re.sub(r"`([^`]+)`", r'<code style="background-color: #f4f4f4; padding: 2px 5px; border-radius: 3px; font-family: monospace;">\1</code>', text)
+        text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
         # Bold
         text = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", text)
         # Italic
@@ -370,18 +361,18 @@ class FileActionsMixin:
         combo_format.addItem("IGES 5.3 (*.igs)", userData=".igs")
         combo_format.addItem("DXF R2000 (*.dxf)", userData=".dxf")
         combo_format.setCurrentIndex(self._settings.value("cad_format", 0, type=int))
-        form.addRow("Format:", combo_format)
+        form.addRow("Format", combo_format)
         combo_units = QComboBox()
         for units in ("mm", "m", "inch"):
             combo_units.addItem(units, userData=units)
         combo_units.setCurrentIndex(max(0, combo_units.findData(self._settings.value("cad_units", "mm"))))
-        form.addRow("Units:", combo_units)
+        form.addRow("Units", combo_units)
         spin_scale = QDoubleSpinBox()
         spin_scale.setRange(1e-6, 1e9)
         spin_scale.setDecimals(6)
         spin_scale.setValue(self._settings.value("cad_scale", 1.0, type=float))
         spin_scale.setToolTip("Coordinates are multiplied by this factor (e.g. the chord length).")
-        form.addRow("Scale (chord):", spin_scale)
+        form.addRow("Scale (chord)", spin_scale)
         check_merge = QCheckBox("Merge sections into one curve")
         check_merge.setChecked(self._settings.value("cad_merge", False, type=bool))
         check_merge.setToolTip(
@@ -458,7 +449,7 @@ class FileActionsMixin:
             dialog.setWindowTitle("Fit Report")
             dialog.resize(560, 520)
             layout = QVBoxLayout(dialog)
-            browser = QTextBrowser()
+            browser = text_browser()
             title = self._airfoil.name or self._airfoil.filename or "Fit report"
             browser.setHtml(format_report_html(report, title))
             layout.addWidget(browser)

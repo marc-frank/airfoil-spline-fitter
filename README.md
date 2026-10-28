@@ -155,10 +155,15 @@ The package is organized into focused modules:
 | `analysis.py` | Fit report: deviation, curvature, junctions, leading-edge radius |
 | `fairness.py` | Smoothness metrics and regularization |
 | `parallel.py` | Multiprocessing for orthogonal distance computation |
-| `gui/` | PyQt6 graphical user interface (`ui.py` window, `layout.py` widgets, `file_actions.py` file menu and export) |
+| `gui/` | PyQt6 graphical user interface (`ui.py` window, `layout.py` widgets, `file_actions.py` file menu and export, `theme.py` colors and styles) |
 | `io.py` | Airfoil and spline file parsing and export |
 | `project_io.py` | Project files (`.splineproj`) |
 | `formatting.py` | Display formatting utilities |
+
+The GUI's look follows the **Loft** design language, described in
+[docs/design-language.md](docs/design-language.md) and implemented in
+`gui/theme.py`. New GUI code takes its colors, fonts and spacing from there;
+`tests/test_design_language.py` checks it.
 
 ## License
 

@@ -57,6 +57,14 @@ def main(bbox_scale: float | None = None) -> int:
 
     from .gui.ui import SplineFitterWindow
 
+    # On Windows the taskbar shows Python's icon unless the app has its own ID
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("AirfoilSplineFitter")
+        except Exception:
+            pass
+
     # Create application
     app = QApplication(sys.argv)
 
