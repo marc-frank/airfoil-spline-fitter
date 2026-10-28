@@ -11,12 +11,17 @@ open project, one row per run:
   iterations, evaluations, time, convergence) and its date. A setting
   the run's optimizer does not read stays blank, as the sidebar hides it.
 - **Filter.** A global filter field searches all columns, and every column
-  has its own filter field under its header; any number of them filter at
-  the same time, and a run must match them all. Every word must match:
-  plain text matches a part of the cell, a number with a comparison
-  (``>1e-5``, ``<=12``, ``=5``, ``!=3``) compares the value. *Invert*
-  shows the rows the filters do not match instead.
-- **Sorting.** Clicking a header sorts by that column, numbers by value.
+  has its own filter, as in a spreadsheet: the drop-down at the right of
+  its header holds a checklist of the column's values, and a condition that
+  checks or unchecks them (one after another, to narrow or widen the
+  selection; see ``ColumnFilterPopup``). Any number of columns filter at the
+  same time, and a run must pass them all; a filtered column shows a
+  funnel. In a condition or the global filter every word must match: plain
+  text matches a part of the cell, a number with a comparison (``>1e-5``,
+  ``<=12``, ``=5``, ``!=3``) compares the value. *Invert* shows the rows
+  the filters do not match instead.
+- **Sorting.** Clicking a header (or its drop-down) sorts by that column,
+  numbers by value.
 - **Plot.** The error plot at the lower right shows only the rows that pass
   the filter: any column can become its x axis, and any fit metric its y
   axis (in the plot's toolbar, or from a column header's context menu).
@@ -35,13 +40,29 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from PyQt6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt, pyqtSignal
+from PyQt6.QtCore import (
+    QAbstractTableModel,
+    QModelIndex,
+    QPoint,
+    QRect,
+    QSortFilterProxyModel,
+    Qt,
+    pyqtSignal,
+)
+from PyQt6.QtGui import QAction, QBrush
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
+    QCheckBox,
+    QFrame,
     QHBoxLayout,
     QHeaderView,
+    QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMenu,
+    QPushButton,
     QTableView,
     QToolButton,
     QVBoxLayout,
@@ -50,7 +71,7 @@ from PyQt6.QtWidgets import (
 
 from ..formatting import decimal_point, format_duration, number
 from ..optimization.models import OptimizationRun, OptimizerType
-from .theme import Size, mono_font
+from .theme import Palette, Size, brush, icon, mono_font
 
 # =============================================================================
 # Columns
@@ -323,37 +344,37 @@ class RunFilterModel(QSortFilterProxyModel):
     """Filters the run table, optionally inverted, and sorts by the raw values.
 
     A run passes when it matches the global filter (each word in some
-    column) and every column filter (each word in that column); Invert
-    shows the runs that do not.
+    column) and its value in every column is checked in that column's
+    filter; Invert shows the runs that do not.
     """
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._terms: list = []
-        self._column_terms: dict[int, list] = {}
+        self._excluded: dict[int, frozenset[str]] = {}
         self._inverted = False
 
-    def set_filter(self, text: str, column_texts: dict[int, str], inverted: bool) -> None:
+    def set_filter(self, text: str, excluded: dict[int, frozenset[str]], inverted: bool) -> None:
         self._terms = parse_filter(text)
-        self._column_terms = {c: terms for c, t in column_texts.items()
-                              if (terms := parse_filter(t))}
+        self._excluded = {c: texts for c, texts in excluded.items() if texts}
         self._inverted = inverted
         self.invalidateFilter()
 
-    def filterAcceptsRow(self, source_row: int, source_parent) -> bool:
-        if not self._terms and not self._column_terms:  # No filter: every run
-            return True
+    def matches(self, source_row: int, skip: int | None = None) -> bool:
+        """Whether a run matches the filters (all but column ``skip``'s),
+        regardless of Invert."""
         model = self.sourceModel()
+        values = [model.value(source_row, c) for c in range(len(COLUMNS))]
+        cells = [(v, c.text(v)) for v, c in zip(values, COLUMNS, strict=True)]
+        if not all(any(term_matches(t, v, s) for v, s in cells) for t in self._terms):
+            return False
+        return all(cells[c][1] not in texts
+                   for c, texts in self._excluded.items() if c != skip)
 
-        def cell(c: int):
-            value = model.value(source_row, c)
-            return value, COLUMNS[c].text(value)
-
-        cells = [cell(c) for c in range(len(COLUMNS))]
-        matches = (all(any(term_matches(t, v, s) for v, s in cells) for t in self._terms)
-                   and all(term_matches(t, *cells[c])
-                           for c, terms in self._column_terms.items() for t in terms))
-        return matches != self._inverted
+    def filterAcceptsRow(self, source_row: int, source_parent) -> bool:
+        if not self._terms and not self._excluded:  # No filter: every run
+            return True
+        return self.matches(source_row) != self._inverted
 
     def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
         a = left.data(Qt.ItemDataRole.UserRole)
@@ -377,61 +398,253 @@ _FILTER_TIP = (
     ">1e-5, <=12, =5 or !=3. =free matches the whole cell."
 )
 
+# How the value list names an empty cell: a setting the run's optimizer does not read
+_BLANK = "Not used"
+
 
 class FilterHeader(QHeaderView):
-    """A column header with a filter field under every section.
+    """A column header with a drop-down glyph at the right of every section,
+    as in a spreadsheet. Clicking the glyph emits ``filter_requested`` with
+    the column instead of sorting; a filtered column shows a funnel. The
+    sorted column has an arrow left of it (in place of the style's sort
+    indicator, which would cover the glyph)."""
 
-    The fields follow their sections as they are resized, moved, hidden
-    or scrolled; ``edited`` is emitted when one of them changes.
-    """
-
-    edited = pyqtSignal()
+    filter_requested = pyqtSignal(int)
 
     def __init__(self, parent=None):
         super().__init__(Qt.Orientation.Horizontal, parent)
-        self.editors: list[QLineEdit] = []
-        self.sectionResized.connect(self._place_editors)
-        self.sectionMoved.connect(self._place_editors)
+        self.setObjectName("FilterHeader")
+        self.filtered: set[int] = set()
 
-    def set_columns(self, names: list[str]) -> None:
-        for name in names:
-            edit = QLineEdit(self)
-            edit.setClearButtonEnabled(True)
-            edit.setToolTip(f"Filter the {name} column. {_FILTER_TIP}")
-            edit.textChanged.connect(lambda *_: self.edited.emit())
-            self.editors.append(edit)
-        self.updateGeometries()
+    def _glyph_rect(self, section: QRect) -> QRect:
+        side = Size.GLYPH
+        return QRect(section.right() - side - Size.GAP, section.center().y() - side // 2 + 1,
+                     side, side)
 
-    def _filter_height(self) -> int:
-        return Size.CONTROL_HEIGHT + Size.TIGHT if self.editors else 0
+    def paintSection(self, painter, rect: QRect, logical: int) -> None:
+        painter.save()
+        super().paintSection(painter, rect, logical)
+        painter.restore()
+        glyph = self._glyph_rect(rect)
+        name, role = ("filter", "TEXT") if logical in self.filtered else ("chevron_down", "TEXT_3")
+        icon(name, role).paint(painter, glyph)
+        if logical == self.sortIndicatorSection():
+            arrow = ("sort_up" if self.sortIndicatorOrder() == Qt.SortOrder.AscendingOrder
+                     else "sort_down")
+            icon(arrow).paint(painter, glyph.translated(-Size.GLYPH - Size.TIGHT, 0))
 
-    def sizeHint(self):
-        size = super().sizeHint()
-        size.setHeight(size.height() + self._filter_height())
-        return size
+    def mousePressEvent(self, event) -> None:
+        pos = event.position().toPoint()
+        logical = self.logicalIndexAt(pos)
+        if logical >= 0 and event.button() == Qt.MouseButton.LeftButton:
+            section = QRect(self.sectionViewportPosition(logical), 0,
+                            self.sectionSize(logical), self.height())
+            # The whole height beside the glyph, clear of the resize grip
+            target = self._glyph_rect(section)
+            target.setTop(0)
+            target.setBottom(self.height())
+            if target.adjusted(-Size.TIGHT, 0, Size.TIGHT // 2, 0).contains(pos):
+                self.filter_requested.emit(logical)
+                return
+        super().mousePressEvent(event)
 
-    def updateGeometries(self):
-        # The section labels above, the filter fields in the margin below
-        self.setViewportMargins(0, 0, 0, self._filter_height())
-        super().updateGeometries()
-        self._place_editors()
 
-    def _place_editors(self, *_):
-        top = self.viewport().geometry().bottom() + 1 + Size.TIGHT // 2
-        for logical, edit in enumerate(self.editors):
-            if self.isSectionHidden(logical):
-                edit.hide()
-                continue
-            edit.setGeometry(self.sectionViewportPosition(logical), top,
-                             self.sectionSize(logical) - 1, Size.CONTROL_HEIGHT)
-            edit.show()
+class ColumnFilterPopup(QFrame):
+    """The drop-down of a column header: sort the table by the column, or
+    filter it by checking its values (those of the runs the other filters
+    let through; all checked: no filter).
+
+    The condition is a quick way to set the checkboxes. While it is typed,
+    the values it rules out show unchecked and greyed (and the table follows).
+    Enter (Keep matching) keeps that: the values it ruled out stay unchecked
+    and the field empties, so the next condition narrows further. Shift+Enter
+    (Add matching) checks the values it matches instead, leaving the others
+    as they were. The field's clear button, a click on a value or Select all,
+    and closing the drop-down keep it as well; emptying the field by hand
+    drops it. Every value can be checked by hand at any time. Changes apply
+    at once; a click outside or Escape closes the drop-down.
+    """
+
+    def __init__(self, table: RunTable, col: int):
+        super().__init__(table, Qt.WindowType.Popup)
+        self.setObjectName("DropDownPanel")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        self._table, self._col = table, col
+        # The unchecked values, without the condition being typed
+        self._excluded = set(table.column_filters.get(col, ()))
+        self._terms: list = []
+        self._last_text = ""
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(Size.PAD, Size.PAD, Size.PAD, Size.PAD)
+        layout.setSpacing(Size.GAP)
+        caption = QLabel(COLUMNS[col].name.upper())
+        caption.setObjectName("SectionCaption")
+        layout.addWidget(caption)
+
+        sort_row = QHBoxLayout()
+        sort_row.setSpacing(Size.GAP)
+        for text, order in (("Sort ascending", Qt.SortOrder.AscendingOrder),
+                            ("Sort descending", Qt.SortOrder.DescendingOrder)):
+            button = QPushButton(text)
+            button.clicked.connect(lambda _, o=order: self._sort(o))
+            sort_row.addWidget(button)
+        layout.addLayout(sort_row)
+
+        self.condition = QLineEdit()
+        self.condition.setPlaceholderText("Condition")
+        self.condition.setClearButtonEnabled(True)
+        self.condition.setToolTip(
+            "Unchecks the values it does not match. Enter keeps the result,\n"
+            "Shift+Enter checks the values it matches instead.\n" + _FILTER_TIP)
+        layout.addWidget(self.condition)
+        condition_row = QHBoxLayout()
+        condition_row.setSpacing(Size.GAP)
+        self.keep_button = QPushButton("Keep matching")
+        self.keep_button.setToolTip("Uncheck the values the condition does not match (Enter)")
+        self.add_button = QPushButton("Add matching")
+        self.add_button.setToolTip("Check the values the condition matches (Shift+Enter)")
+        condition_row.addWidget(self.keep_button)
+        condition_row.addWidget(self.add_button)
+        layout.addLayout(condition_row)
+
+        self.select_all = QCheckBox("Select all")
+        layout.addWidget(self.select_all)
+        self.values = QListWidget()
+        self._cells: list[tuple[str, object]] = table.column_values(col)
+        for text, _ in self._cells:
+            item = QListWidgetItem(text or _BLANK)
+            item.setData(Qt.ItemDataRole.UserRole, text)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            self.values.addItem(item)
+        self._show_values()
+        rows = min(max(self.values.count(), 1), 10)
+        self.values.setFixedHeight(rows * (self.values.sizeHintForRow(0) + 1) + 4)
+        layout.addWidget(self.values)
+
+        clear = QPushButton("Clear filter")
+        clear.clicked.connect(self._clear)
+        layout.addWidget(clear)
+
+        self.condition.textChanged.connect(self._on_condition_changed)
+        self.condition.returnPressed.connect(
+            lambda: self.keep(add=bool(QApplication.keyboardModifiers()
+                                       & Qt.KeyboardModifier.ShiftModifier)))
+        # The clear button keeps what the condition shows, then empties the field
+        clear_action = self.condition.findChild(QAction, "_q_qlineeditclearaction")
+        if clear_action is not None:
+            clear_action.triggered.connect(lambda: self.keep(text=self._last_text))
+        self.keep_button.clicked.connect(lambda: self.keep())
+        self.add_button.clicked.connect(lambda: self.keep(add=True))
+        self.values.itemChanged.connect(self._on_value_changed)
+        self.select_all.clicked.connect(self._on_select_all)
+        self.setFixedWidth(max(260, self.sizeHint().width()))
+
+    def _items(self) -> list[QListWidgetItem]:
+        return [self.values.item(i) for i in range(self.values.count())]
+
+    def _ruled_out(self, terms: list) -> set[str]:
+        """The values a condition does not match."""
+        return {text for text, value in self._cells
+                if not all(term_matches(t, value, text) for t in terms)}
+
+    def _shown_excluded(self) -> set[str]:
+        """The unchecked values, with what the typed condition rules out."""
+        return self._excluded | self._ruled_out(self._terms)
+
+    def _show_values(self) -> None:
+        """Check the values that are not unchecked; grey what the typed
+        condition rules out."""
+        excluded, ruled_out = self._shown_excluded(), self._ruled_out(self._terms)
+        self.values.blockSignals(True)
+        for item in self._items():
+            text = item.data(Qt.ItemDataRole.UserRole)
+            item.setCheckState(Qt.CheckState.Unchecked if text in excluded
+                               else Qt.CheckState.Checked)
+            item.setForeground(brush(Palette.TEXT_3) if text in ruled_out else QBrush())
+        self.values.blockSignals(False)
+        checked = [i.checkState() == Qt.CheckState.Checked for i in self._items()]
+        self.select_all.setCheckState(
+            Qt.CheckState.Checked if checked and all(checked)
+            else Qt.CheckState.PartiallyChecked if any(checked)
+            else Qt.CheckState.Unchecked)
+        for button in (self.keep_button, self.add_button):
+            button.setEnabled(bool(self._terms))
+
+    def _on_condition_changed(self, text: str) -> None:
+        self._terms = parse_filter(text)
+        if text:
+            self._last_text = text
+        self._show_values()
+        self._apply()
+
+    def keep(self, add: bool = False, text: str | None = None) -> None:
+        """Make what a condition (default: the typed one) shows the checked
+        values, and empty the field. ``add`` checks the values it matches
+        instead, leaving the others as they were."""
+        terms = parse_filter(self.condition.text() if text is None else text)
+        if terms:
+            ruled_out = self._ruled_out(terms)
+            if add:
+                self._excluded -= {t for t, _ in self._cells} - ruled_out
+            else:
+                self._excluded |= ruled_out
+        self._terms, self._last_text = [], ""
+        self.condition.blockSignals(True)
+        self.condition.clear()
+        self.condition.blockSignals(False)
+        self._show_values()
+        self._apply()
+
+    def _on_select_all(self) -> None:
+        # Checks every value, or unchecks them all when all are checked
+        self.keep()
+        texts = {t for t, _ in self._cells}
+        self._excluded = set() if self._excluded & texts else texts
+        self._show_values()
+        self._apply()
+
+    def _on_value_changed(self, item: QListWidgetItem) -> None:
+        checked = item.checkState() == Qt.CheckState.Checked
+        self.keep()
+        text = item.data(Qt.ItemDataRole.UserRole)
+        if checked:
+            self._excluded.discard(text)
+        else:
+            self._excluded.add(text)
+        self._show_values()
+        self._apply()
+
+    def _apply(self) -> None:
+        self._table.set_column_filter(COLUMNS[self._col].name, excluded=self._shown_excluded())
+
+    def _sort(self, order) -> None:
+        self._table.view.sortByColumn(self._col, order)
+        self.close()
+
+    def _clear(self) -> None:
+        self._terms, self._excluded = [], set()
+        self._table.set_column_filter(COLUMNS[self._col].name)
+        self.close()
+
+    def closeEvent(self, event) -> None:
+        self.keep()
+        super().closeEvent(event)
+
+    def keyPressEvent(self, event) -> None:
+        if (event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                and not self.condition.hasFocus()):
+            self.close()
+        else:
+            super().keyPressEvent(event)
 
 
 class RunTable(QWidget):
-    """The global filter above the sortable run table, whose header has a
-    filter field per column.
+    """The global filter above the sortable run table, whose header opens
+    a filter for each column.
 
-    Signals: ``filter_changed`` when other runs pass the filter,
+    Signals: ``filter_changed`` when other runs pass the filters,
     ``selection_changed`` when the selected runs change, ``run_activated``
     with the run of a double-clicked row, and ``plot_column_requested``
     with a column name from the header's context menu (as x axis, or as
@@ -448,14 +661,16 @@ class RunTable(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(Size.GAP)
+        # The unchecked values of each filtered column, by column index
+        self.column_filters: dict[int, frozenset[str]] = {}
 
         # Global filter: words found in any column; Invert applies to all filters
         self.filter_edit = QLineEdit()
         self.filter_edit.setPlaceholderText("Filter all columns")
         self.filter_edit.setClearButtonEnabled(True)
         self.filter_edit.setToolTip(
-            "Show the runs that match in any column, and in every column filter "
-            "under the headers.\n" + _FILTER_TIP)
+            "Show the runs that match in any column, and pass the filter of every\n"
+            "column (the drop-down at the right of a column header).\n" + _FILTER_TIP)
         self.invert_button = QToolButton()
         self.invert_button.setText("Invert")
         self.invert_button.setCheckable(True)
@@ -474,9 +689,9 @@ class RunTable(QWidget):
         self.header = FilterHeader(self.view)
         self.view.setHorizontalHeader(self.header)
         self.view.setModel(self.proxy)
-        self.header.set_columns(COLUMN_NAMES)
         self.view.setSortingEnabled(True)
         self.view.sortByColumn(0, Qt.SortOrder.AscendingOrder)
+        self.header.setSortIndicatorShown(False)  # FilterHeader draws its own
         self.view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -488,16 +703,13 @@ class RunTable(QWidget):
         self.header.setSectionsMovable(True)
         self.header.setSectionsClickable(True)
         self.header.setHighlightSections(False)
-        # Wide enough for a comparison in the column's filter field
-        self.header.setMinimumSectionSize(64)
         self.header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.header.customContextMenuRequested.connect(self._header_menu)
-        self.view.horizontalScrollBar().valueChanged.connect(self.header._place_editors)
+        self.header.filter_requested.connect(self.open_filter)
         layout.addWidget(self.view, stretch=1)
 
         self.filter_edit.textChanged.connect(self._apply_filter)
-        self.header.edited.connect(self._apply_filter)
         self.invert_button.toggled.connect(self._apply_filter)
         self.view.selectionModel().selectionChanged.connect(
             lambda *_: self.selection_changed.emit())
@@ -548,23 +760,77 @@ class RunTable(QWidget):
 
     # -- Filter ---------------------------------------------------------------
 
-    def column_filter(self, name: str) -> QLineEdit:
-        """The filter field of a column."""
-        return self.header.editors[COLUMN_NAMES.index(name)]
+    def column_values(self, col: int) -> list[tuple[str, object]]:
+        """The distinct cells (text and value) of a column among the runs
+        the other filters let through (and the ones unchecked now), in sort
+        order."""
+        excluded = self.column_filters.get(col, frozenset())
+        cells = {}
+        for row in range(self.model.rowCount()):
+            value = self.model.value(row, col)
+            text = COLUMNS[col].text(value)
+            if text in excluded or self.proxy.matches(row, skip=col):
+                cells.setdefault(text, value)
+
+        def key(text):
+            value = cells[text]
+            return (value is None, not is_number(value),
+                    value if is_number(value) else text.casefold())
+        return [(text, cells[text]) for text in sorted(cells, key=key)]
+
+    def set_column_filter(self, name: str, condition: str = "", excluded=()) -> None:
+        """Filter a column: uncheck the given cell texts, and those of its
+        values a condition does not match (as Keep matching does); nothing
+        clears its filter."""
+        col = COLUMN_NAMES.index(name)
+        excluded = set(excluded)
+        if terms := parse_filter(condition):
+            for row in range(self.model.rowCount()):
+                value = self.model.value(row, col)
+                text = COLUMNS[col].text(value)
+                if not all(term_matches(t, value, text) for t in terms):
+                    excluded.add(text)
+        if excluded:
+            self.column_filters[col] = frozenset(excluded)
+        else:
+            self.column_filters.pop(col, None)
+        self._apply_filter()
 
     def clear_filters(self) -> None:
         """Empty the global filter and every column filter."""
-        for edit in (self.filter_edit, *self.header.editors):
-            edit.blockSignals(True)
-            edit.clear()
-            edit.blockSignals(False)
+        self.column_filters.clear()
+        self.filter_edit.blockSignals(True)
+        self.filter_edit.clear()
+        self.filter_edit.blockSignals(False)
         self._apply_filter()
 
+    def open_filter(self, col: int) -> ColumnFilterPopup:
+        """Drop the filter of a column down under its header section."""
+        popup = ColumnFilterPopup(self, col)
+        popup.move(self.drop_position(col, popup.width()))
+        popup.show()
+        popup.condition.setFocus()
+        return popup
+
+    def drop_position(self, col: int, width: int) -> QPoint:
+        """Where a drop-down of that width opens under a header section: at
+        its left edge, or at its right edge (as far as it shows) where it
+        would pass the right edge of the window (the last columns), and
+        always on the screen."""
+        left = self.header.sectionViewportPosition(col)
+        pos = self.header.mapToGlobal(QPoint(left, self.header.height()))
+        if pos.x() + width > self.window().frameGeometry().right() + 1:
+            right = min(left + self.header.sectionSize(col), self.header.width())
+            pos.setX(self.header.mapToGlobal(QPoint(right, 0)).x() - width)
+        screen = (self.screen() or QApplication.primaryScreen()).availableGeometry()
+        pos.setX(max(screen.left(), min(pos.x(), screen.right() + 1 - width)))
+        return pos
+
     def _apply_filter(self, *_):
-        self.proxy.set_filter(
-            self.filter_edit.text(),
-            {c: edit.text() for c, edit in enumerate(self.header.editors)},
-            self.invert_button.isChecked())
+        self.header.filtered = set(self.column_filters)
+        self.header.viewport().update()
+        self.proxy.set_filter(self.filter_edit.text(), self.column_filters,
+                              self.invert_button.isChecked())
         self.filter_changed.emit()
 
     def _header_menu(self, pos) -> None:
@@ -580,6 +846,6 @@ class RunTable(QWidget):
             menu.addAction("Plot as y axis",
                            lambda: self.plot_column_requested.emit("y", c.name))
         menu.addSeparator()
-        menu.addAction("Filter this column", self.header.editors[section].setFocus)
+        menu.addAction("Filter this column...", lambda: self.open_filter(section))
         menu.addAction("Clear all filters", self.clear_filters)
         menu.exec(self.header.mapToGlobal(pos))

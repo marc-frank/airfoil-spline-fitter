@@ -168,7 +168,7 @@ curve is a deviation worth seeing. Every new plot item takes a `Z` value.
   name, "Airfoil Spline Fitter", keeps its capitals.
 - **Glyphs**: no emoji. Icons are the stroked glyphs from `theme.icon()`
   (`chevron_down`, `chevron_up`, `chevron_right`, `chevron_left`,
-  `check`, `range`), drawn in `TEXT_2` at `Size.GLYPH`. Text symbols are limited to
+  `check`, `dash` (partly checked), `range`, `sort_up`, `sort_down`, `filter`), drawn in `TEXT_2` at `Size.GLYPH`. Text symbols are limited to
   → (from one value to the next), plus Greek letters for math (κ, dκ/ds).
 - **The sweep toggle is a dimension line** (`range`, at `Size.GLYPH_LARGE`):
   |←→|, as a drawing marks a span. Glyphs on checkable buttons turn `TEXT` when checked
@@ -233,6 +233,7 @@ never call `setStyleSheet` on it.
 | Slider | `QSlider`; the temperature slider is `TemperatureSlider` (cool-to-warm groove) |
 | Theme setting | `ThemeDialog` (`widgets.py`), from View > Theme... |
 | Table of records | `QTableView` without grid lines, rows selected whole; numbers monospaced and right-aligned, blanks for what does not apply (the explorer's `RunTable`, `explorer.py`) |
+| Column filter | As in a spreadsheet: a `chevron_down` in `TEXT_3` at the right of each header section opens a `#DropDownPanel` (sort, checklist of values, and a condition that previews which values it unchecks, greying them in `TEXT_3`, until Enter keeps it); a filtered column shows the `filter` funnel in `TEXT`; the sorted column has `sort_up`/`sort_down` in `TEXT_2` left of it (`FilterHeader`, `ColumnFilterPopup`) |
 
 **Layout of the main window**: sidebar (workflow order: data, method,
 curve, advanced, then the fixed run bar with the primary action and the

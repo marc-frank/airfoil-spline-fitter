@@ -257,6 +257,13 @@ _GLYPHS = {
     "chevron_right": "M4.5 2.5 L8 6 L4.5 9.5",
     "chevron_left": "M7.5 2.5 L4 6 L7.5 9.5",
     "check": "M2.5 6.2 L5 8.6 L9.5 3.6",
+    # Some checked, some not (a partly checked box)
+    "dash": "M3 6 L9 6",
+    # The order a table is sorted in, by the header of its column
+    "sort_up": "M6 10 L6 2 M3 5 L6 2 L9 5",
+    "sort_down": "M6 2 L6 10 M3 7 L6 10 L9 7",
+    # A funnel: the column of a table that is filtered
+    "filter": "M1.5 2.5 L10.5 2.5 L7 6.5 L7 10 L5 9 L5 6.5 L1.5 2.5",
     # A dimension line, as on a drawing: a range from one value to another
     "range": "M1 3 L1 9 M11 3 L11 9 M3 6 L9 6 M4.6 4.4 L3 6 L4.6 7.6 M7.4 4.4 L9 6 L7.4 7.6",
 }
@@ -336,7 +343,7 @@ class _GlyphEngine(QIconEngine):
 
 
 def icon(name: str, role: str = "TEXT_2", checked_role: str | None = None) -> QIcon:
-    """A glyph as an icon (chevron_down/up/right/left, check or range) in the
+    """A glyph as an icon (chevron_down/up/right/left, check, dash, range, sort_up/down or filter) in the
     color of the Palette token named ``role`` (``checked_role`` on a checked
     button); it follows theme changes."""
     return QIcon(_GlyphEngine(name, role, checked_role))
@@ -403,6 +410,9 @@ QPushButton:default {{ border-color: {P.SELECT_LINE}; }}
 QToolButton#ArrowButton {{ padding: 0 5px; border-top-left-radius: 0; border-bottom-left-radius: 0;
     margin-left: -1px; }}
 QToolButton#SplitToggle {{ border-top-right-radius: 0; border-bottom-right-radius: 0; }}
+/* A field's clear button is part of the field: its own size, centered in it */
+QLineEdit QToolButton {{ background: transparent; border: none; padding: 0;
+    min-height: 0; max-height: 16777215px; }}
 
 /* The primary action: ink, once per view */
 QPushButton#PrimaryButton {{ background: {P.INK}; color: {P.ON_INK}; border-color: {P.INK};
@@ -442,7 +452,17 @@ QCheckBox::indicator {{ width: 14px; height: 14px; border: 1px solid {P.RULE_STR
 QCheckBox::indicator:hover {{ border-color: {P.SELECT_LINE}; }}
 QCheckBox::indicator:checked {{ background: {P.SELECT}; border-color: {P.SELECT_LINE};
     image: url({_glyph("check", P.TEXT)}); }}
+QCheckBox::indicator:indeterminate {{ background: {P.SELECT}; border-color: {P.SELECT_LINE};
+    image: url({_glyph("dash", P.TEXT)}); }}
 QCheckBox::indicator:disabled {{ background: {P.PANEL}; border-color: {P.RULE}; }}
+QListView::indicator {{ width: 14px; height: 14px; border: 1px solid {P.RULE_STRONG};
+    border-radius: 2px; background: {P.FIELD}; }}
+QListView::indicator:checked {{ background: {P.SELECT}; border-color: {P.SELECT_LINE};
+    image: url({_glyph("check", P.TEXT)}); }}
+QListView::indicator:disabled {{ background: {P.PANEL}; border-color: {P.RULE}; }}
+QListView::item {{ padding: 2px 0; }}
+QListView::item:disabled {{ color: {P.TEXT_3}; }}
+QListView::item:hover {{ background: {P.FIELD_HOVER}; }}
 
 /* Sliders: a hairline groove and a round handle */
 QSlider {{ {fixed} }}
@@ -468,6 +488,8 @@ QTreeView::branch:has-children:open {{ image: url({_glyph("chevron_down", pad=6)
 QHeaderView {{ background: {P.PANEL}; border: none; border-bottom: 1px solid {P.RULE}; }}
 QHeaderView::section {{ background: {P.PANEL}; color: {P.TEXT_3}; border: none;
     padding: 4px 6px; }}
+/* Room on the right for the drop-down glyph of a filterable column */
+QHeaderView#FilterHeader::section {{ padding: 4px {2 * S.GLYPH + S.TIGHT + 2 * S.GAP}px 4px 6px; }}
 
 /* Plots */
 PlotWidget, QGraphicsView {{ border: 1px solid {P.RULE}; border-radius: {S.RADIUS}px; }}

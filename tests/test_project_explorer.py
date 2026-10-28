@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 from bspline_varpro.airfoil import NACA4
 from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QApplication
 
 from spline_fitter.geometry import create_airfoil_data
 from spline_fitter.optimization.models import (
@@ -82,18 +83,20 @@ def test_filter_invert_and_sort(window):
     assert _column(window, "Control points") == ["8"]
     table.invert_button.setChecked(False)
 
-    # A column's own filter; every word must match
+    # A column's own condition; every word must match
     table.filter_edit.clear()
-    table.column_filter("Control points").setText("> 9 <13")
+    table.set_column_filter("Control points", "> 9 <13")
     assert _column(window, "Control points") == ["10", "12"]
 
     # Several column filters and the global filter at once
-    table.column_filter("Control points").setText(">9")
-    table.column_filter("Error").setText("<1e-4")
+    table.set_column_filter("Control points", ">9")
+    table.set_column_filter("Error", "<1e-4")
     assert _column(window, "Control points") == ["14", "12"]
     table.filter_edit.setText("varpro")
-    table.column_filter("Optimizer").setText("lm")
+    table.set_column_filter("Optimizer", excluded={"Differential evolution"})
     assert _column(window, "Control points") == ["14", "12"]
+    assert table.header.filtered == {_index("Control points"), _index("Error"),
+                                     _index("Optimizer")}
     table.invert_button.setChecked(True)
     assert _column(window, "Control points") == ["10", "8"]
     table.invert_button.setChecked(False)
@@ -155,3 +158,126 @@ def test_double_click_applies_the_run_settings(window):
         assert (spline.num_control_points, spline.continuity) == (
             run.spline_config.num_control_points, run.spline_config.continuity)
         assert window._fit_result is run.result
+
+
+def test_header_drop_down_filters_by_values_and_condition(window):
+    for ctrl, error in ((10, 3e-4), (14, 1e-5), (12, 5e-5)):
+        _add(window, ctrl, error)
+    _add(window, 8, 2e-3, optimizer=OptimizerType.DE)
+    table = window._run_table
+    popup = table.open_filter(_index("Control points"))
+    labels = [popup.values.item(i).text() for i in range(popup.values.count())]
+    assert labels == ["8", "10", "12", "14"]  # by value, not by text
+
+    # Unchecking values filters them out; Select all brings them back
+    popup.values.item(0).setCheckState(Qt.CheckState.Unchecked)
+    popup.values.item(1).setCheckState(Qt.CheckState.Unchecked)
+    assert _column(window, "Control points") == ["14", "12"]
+    assert popup.select_all.checkState() == Qt.CheckState.PartiallyChecked
+    popup.select_all.click()
+    assert _column(window, "Control points") == ["10", "14", "12", "8"]
+    def checked():
+        return [popup.values.item(i).text() for i in range(popup.values.count())
+                if popup.values.item(i).checkState() == Qt.CheckState.Checked]
+
+    # A typed condition previews: what it rules out shows unchecked
+    popup.condition.setText("<12")
+    assert checked() == ["8", "10"]
+    assert _column(window, "Control points") == ["10", "8"]
+    # Emptying the field by hand drops it
+    popup.condition.clear()
+    assert checked() == ["8", "10", "12", "14"]
+    # The field's clear button keeps it, as does Enter
+    from PyQt6.QtGui import QAction
+    from PyQt6.QtTest import QTest
+    popup.condition.setText(">9")
+    popup.condition.findChild(QAction, "_q_qlineeditclearaction").trigger()
+    assert popup.condition.text() == "" and checked() == ["10", "12", "14"]
+    popup.condition.setText("<13")
+    QTest.keyClick(popup.condition, Qt.Key.Key_Return)
+    assert popup.condition.text() == "" and checked() == ["10", "12"]
+    assert popup.isVisible()
+    popup.select_all.click()
+    assert checked() == ["8", "10", "12", "14"]
+
+    # Enter keeps it, and the next condition narrows from there
+    popup.condition.setText("<12")
+    popup.keep()
+    assert popup.condition.text() == "" and checked() == ["8", "10"]
+    popup.condition.setText(">9")
+    assert checked() == ["10"]
+    popup.keep()
+    assert checked() == ["10"]
+    # A value outside the condition can be checked by hand
+    popup.values.item(3).setCheckState(Qt.CheckState.Checked)
+    assert checked() == ["10", "14"]
+    assert _column(window, "Control points") == ["10", "14"]
+    # Add matching checks what a condition matches, leaving the rest
+    popup.condition.setText("=8")
+    popup.keep(add=True)
+    assert checked() == ["8", "10", "14"]
+    # Clicking a value while a condition is typed keeps the condition first
+    popup.condition.setText(">9")
+    popup.values.item(2).setCheckState(Qt.CheckState.Checked)
+    assert popup.condition.text() == "" and checked() == ["10", "12", "14"]
+    # So does closing; the filter stays when the drop-down opens again
+    popup.condition.setText("<13")
+    popup.close()
+    popup = table.open_filter(_index("Control points"))
+    assert checked() == ["10", "12"]
+    popup.close()
+    table.set_column_filter("Control points")
+    table.set_column_filter("Control points", "<12")
+
+    # The values offered are those the other filters let through
+    popup = table.open_filter(_index("Optimizer"))
+    assert [popup.values.item(i).text() for i in range(popup.values.count())] == [
+        "Differential evolution", "VarPro LM"]
+    popup.values.item(1).setCheckState(Qt.CheckState.Unchecked)
+    popup.close()
+    assert _column(window, "Control points") == ["8"]
+
+    # The header's glyph opens the drop-down instead of sorting
+    header = table.header
+    col = _index("Degree")
+    x = header.sectionViewportPosition(col) + header.sectionSize(col) - 10
+    opened = []
+    header.filter_requested.connect(opened.append)
+    from PyQt6.QtCore import QPoint
+    from PyQt6.QtTest import QTest
+    QTest.mouseClick(header.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(x, 8))
+    assert opened == [col]
+
+
+def test_drop_down_of_the_last_column_stays_in_the_window(window, monkeypatch):
+    from PyQt6.QtCore import QPoint, QRect
+    _add(window, 10, 1e-4)
+    table, header = window._run_table, window._run_table.header
+
+    class Screen:  # Room for the whole window
+        def availableGeometry(self):
+            return QRect(0, 0, 5000, 3000)
+    monkeypatch.setattr(table, "screen", lambda: Screen())
+    window.resize(2000, 900)
+    window._main_splitter.setSizes([330, 770, 900])
+    QApplication.processEvents()
+
+    def edges(col):
+        """A section's left and right edges on the screen, as far as it shows."""
+        x = header.sectionViewportPosition(col)
+        right = min(x + header.sectionSize(col), header.width())
+        return header.mapToGlobal(QPoint(x, 0)).x(), header.mapToGlobal(QPoint(right, 0)).x()
+
+    # The last column's opens from its right edge, inside the window
+    last = _index("Date")
+    table.view.scrollTo(table.proxy.index(0, last))
+    pos = table.drop_position(last, 300)
+    assert pos.x() + 300 == edges(last)[1] <= window.frameGeometry().right() + 1
+    # The first column's from its left edge
+    table.view.horizontalScrollBar().setValue(0)
+    assert table.drop_position(0, 300).x() == edges(0)[0]
+
+    # And neither leaves the screen
+    monkeypatch.setattr(table, "screen", lambda: type(
+        "Small", (), {"availableGeometry": lambda self: QRect(0, 0, 400, 300)})())
+    assert table.drop_position(0, 300).x() + 300 <= 400

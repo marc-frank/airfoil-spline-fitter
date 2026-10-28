@@ -53,7 +53,7 @@ from .widgets import (
 # Advanced with the smoothing sweep open) and the project explorer, whose
 # table scrolls sideways through its columns
 SIDEBAR_WIDTH = 330
-EXPLORER_WIDTH = 380
+EXPLORER_WIDTH = 570
 
 # Most sections the curve can be split into; each needs enough points
 # for its own spline, which airfoil files of 50 or more points give.
@@ -237,7 +237,7 @@ class WindowLayoutMixin:
         # Widened to fit its rows once shown (size_sidebar), when the styled
         # fields have their real sizes
         self._sidebar_width = SIDEBAR_WIDTH
-        self._main_splitter.setSizes([SIDEBAR_WIDTH, 630, EXPLORER_WIDTH])
+        self._main_splitter.setSizes([SIDEBAR_WIDTH, 440, EXPLORER_WIDTH])
 
         # The splitter, and at the right edge the rail a hidden explorer
         # folds into: a chevron pointing back out shows it again
@@ -516,6 +516,14 @@ class WindowLayoutMixin:
         self._combo_runs_y.setCurrentText("Error")
         self._combo_runs_y.setToolTip("The fit metric plotted for each run")
         toolbar.addWidget(self._combo_runs_y, stretch=1)
+
+        # Compact, as the plot is narrow; their lists open as wide as the
+        # longest column name
+        for combo in (self._combo_runs_x, self._combo_runs_y):
+            combo.setSizeAdjustPolicy(
+                QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+            combo.setMinimumContentsLength(4)
+            combo.view().setMinimumWidth(combo.view().sizeHintForColumn(0) + 2 * Size.PAD)
         return toolbar
 
     # -- Project Explorer --------------------------------------------------
