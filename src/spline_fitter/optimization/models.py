@@ -174,24 +174,19 @@ class OptimizerType(Enum):
     def display_name(self) -> str:
         """Return a human-readable name for the optimizer."""
         names = {
-            # Tier 1: Recommended
-            OptimizerType.BFGS: "BFGS (recommended)",
-            OptimizerType.SLSQP: "SLSQP (most accurate)",
-            # Tier 2: Acceptable
-            OptimizerType.L_BFGS_B: "L-BFGS-B (fastest)",
+            OptimizerType.GN_VARPRO: "VarPro LM",
+            OptimizerType.DIRECT_LSQ: "Direct LSQ",
+            OptimizerType.BFGS: "BFGS",
+            OptimizerType.SLSQP: "SLSQP",
+            OptimizerType.L_BFGS_B: "L-BFGS-B",
             OptimizerType.CG: "CG",
-            # Tier 3: Not recommended
             OptimizerType.TNC: "TNC",
             OptimizerType.POWELL: "Powell",
             OptimizerType.NELDER_MEAD: "Nelder-Mead",
             OptimizerType.COBYLA: "COBYLA",
-            # Global
-            OptimizerType.DE: "Differential Evolution (global)",
-            OptimizerType.DA: "Dual Annealing (global)",
-            OptimizerType.BH: "Basin-hopping (global)",
-            # New high-performance optimizers
-            OptimizerType.DIRECT_LSQ: "Direct LSQ (fastest, single-step)",
-            OptimizerType.GN_VARPRO: "VarPro LM (CAD: tolerance, G1-G3)",
+            OptimizerType.DE: "Differential evolution",
+            OptimizerType.DA: "Dual annealing",
+            OptimizerType.BH: "Basin-hopping",
         }
         return names.get(self, self.value)
 

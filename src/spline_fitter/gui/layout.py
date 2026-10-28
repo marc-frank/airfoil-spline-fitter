@@ -511,13 +511,27 @@ class WindowLayoutMixin:
         section = SidebarSection("Method")
         form = _form()
 
-        # Algorithm (decides which other controls apply, so it comes first);
-        # the default, VarPro LM, heads the list
+        # Algorithm (decides which other controls apply, so it comes first).
+        # The LSQ-based methods head the list, the default VarPro LM first;
+        # the general-purpose optimizers follow under LOCAL and GLOBAL captions
         self._combo_opt = QComboBox()
-        opt_types = sorted(OptimizerType, key=lambda t: t != OptimizerType.GN_VARPRO)
-        for idx, opt_type in enumerate(opt_types):
-            self._combo_opt.addItem(opt_type.display_name, userData=opt_type)
-            self._combo_opt.setItemData(idx, opt_type.tooltip, Qt.ItemDataRole.ToolTipRole)
+        lsq = [OptimizerType.GN_VARPRO, OptimizerType.DIRECT_LSQ]
+        rest = [t for t in OptimizerType if t not in lsq]
+        groups = (
+            (None, lsq),
+            ("LOCAL", [t for t in rest if not t.is_global]),
+            ("GLOBAL", [t for t in rest if t.is_global]),
+        )
+        for caption, opt_types in groups:
+            if caption is not None:
+                self._combo_opt.insertSeparator(self._combo_opt.count())
+                self._combo_opt.addItem(caption)
+                # A caption, not a choice: unselectable and skipped by the keys
+                self._combo_opt.model().item(self._combo_opt.count() - 1).setEnabled(False)
+            for opt_type in opt_types:
+                self._combo_opt.addItem(opt_type.display_name, userData=opt_type)
+                self._combo_opt.setItemData(
+                    self._combo_opt.count() - 1, opt_type.tooltip, Qt.ItemDataRole.ToolTipRole)
         self._combo_opt.setCurrentIndex(0)
         self._combo_opt.currentIndexChanged.connect(self._on_optimizer_changed)
         _add_row(form, "Optimizer", self._combo_opt)
