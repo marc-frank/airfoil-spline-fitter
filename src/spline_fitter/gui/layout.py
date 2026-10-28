@@ -25,7 +25,6 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSpinBox,
-    QSplitter,
     QToolButton,
     QTreeWidget,
     QVBoxLayout,
@@ -41,12 +40,16 @@ from .theme import Size, glyph_size, icon, label_plot, style_plot
 from .widgets import (
     CollapsibleSection,
     DropDownPanel,
+    ResettableSplitter,
     ScientificSpinBox,
     SegmentedControl,
     SidebarSection,
     SweepableDoubleSpinBox,
     SweepableSpinBox,
 )
+
+# Default width of the project explorer
+EXPLORER_WIDTH = 280
 
 # Most sections the curve can be split into; each needs enough points
 # for its own spline, which airfoil files of 50 or more points give.
@@ -106,7 +109,9 @@ class WindowLayoutMixin:
         self._build_menu_bar()
 
         # Main horizontal splitter: [Sidebar] | [Plots] | [Explorer]
-        self._main_splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self._main_splitter = ResettableSplitter(Qt.Orientation.Horizontal, self)
+        # Double-clicking a handle puts the panel beside it back to its default width
+        self._main_splitter.handleDoubleClicked.connect(self._reset_panel_width)
 
         # Sidebar: scrolling sections above a fixed run bar, in workflow
         # order (data -> method -> curve -> advanced -> fit and results)
@@ -225,7 +230,8 @@ class WindowLayoutMixin:
         self._main_splitter.setStretchFactor(2, 0)
         # The sidebar's width is set once shown (size_sidebar), when the
         # styled fields have their real sizes
-        self._main_splitter.setSizes([330, 730, 280])
+        self._sidebar_default_width = 330
+        self._main_splitter.setSizes([self._sidebar_default_width, 730, EXPLORER_WIDTH])
 
         # The splitter, and at the right edge the rail a hidden explorer
         # folds into: a chevron pointing back out shows it again
@@ -253,11 +259,18 @@ class WindowLayoutMixin:
                 box.stop_sweep()
         advanced.set_expanded(was_expanded)
         width = widest + self._sidebar_scroll.verticalScrollBar().sizeHint().width()
+        self._sidebar_default_width = max(self._sidebar_default_width, width)
+        self._reset_panel_width(1)
+
+    def _reset_panel_width(self, handle: int) -> None:
+        """Give the panel beside a splitter handle its default width (1: the
+        sidebar, 2: the explorer), taking or giving the difference to the plots."""
         sizes = self._main_splitter.sizes()
-        if width > sizes[0]:
-            sizes[1] -= width - sizes[0]
-            sizes[0] = width
-            self._main_splitter.setSizes(sizes)
+        panel, default = ((0, self._sidebar_default_width) if handle == 1
+                          else (2, EXPLORER_WIDTH))
+        sizes[1] -= default - sizes[panel]
+        sizes[panel] = default
+        self._main_splitter.setSizes(sizes)
 
     # -- Menu Bar ----------------------------------------------------------
 

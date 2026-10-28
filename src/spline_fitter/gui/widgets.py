@@ -33,6 +33,8 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QSlider,
     QSpinBox,
+    QSplitter,
+    QSplitterHandle,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -515,6 +517,27 @@ class SweepableDoubleSpinBox(QWidget):
     @property
     def spinbox(self) -> QDoubleSpinBox:
         return self._spin
+
+
+# =============================================================================
+# Splitter
+# =============================================================================
+
+class _ResettableHandle(QSplitterHandle):
+    def mouseDoubleClickEvent(self, event):
+        splitter = self.splitter()
+        splitter.handleDoubleClicked.emit(splitter.indexOf(self))
+
+
+class ResettableSplitter(QSplitter):
+    """A splitter whose handles report a double-click (with the handle's
+    index, 1 for the one after the first widget), so the panels beside it
+    can go back to their default sizes."""
+
+    handleDoubleClicked = pyqtSignal(int)
+
+    def createHandle(self) -> QSplitterHandle:
+        return _ResettableHandle(self.orientation(), self)
 
 
 # =============================================================================

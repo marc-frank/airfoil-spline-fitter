@@ -195,3 +195,25 @@ def test_smoothing_sweep_steps_by_step_size(window):
     assert sweep.sweep_values() == [0.002, 0.006, 0.01]
     sweep._spin_step.setValue(0.003)
     assert sweep.sweep_values() == [0.002, 0.005, 0.008]
+
+
+def test_double_clicking_a_splitter_handle_restores_the_default_width(window):
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtTest import QTest
+
+    from spline_fitter.gui.layout import EXPLORER_WIDTH
+
+    splitter = window._main_splitter
+    window.resize(2200, 950)
+    QTest.qWait(50)
+    sizes = splitter.sizes()
+    sizes[0] += 120
+    sizes[2] += 90
+    sizes[1] -= 210
+    splitter.setSizes(sizes)
+    for index in (1, 2):
+        handle = splitter.handle(index)
+        QTest.mouseDClick(handle, Qt.MouseButton.LeftButton, pos=handle.rect().center())
+    width = splitter.sizes()
+    assert width[0] == window._sidebar_default_width and width[2] == EXPLORER_WIDTH
+    assert sum(width) == sum(sizes)
