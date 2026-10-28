@@ -324,7 +324,7 @@ class WindowLayoutMixin:
 
         self._spin_comb_density = QSpinBox()
         self._spin_comb_density.setRange(5, 2000)
-        self._spin_comb_density.setValue(120)
+        self._spin_comb_density.setValue(100)
         comb_form.addRow("Density:", self._spin_comb_density)
 
         comb_menu = QMenu(self._check_comb)

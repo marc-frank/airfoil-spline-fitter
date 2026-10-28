@@ -549,17 +549,19 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
     def _update_curvature_comb(self):
         """Show or hide curvature comb based on checkbox."""
         if not self._check_comb.isChecked():
+            self._plot_manager.comb_settings = None
             self._plot_manager.clear_comb_items()
         else:
             self._refresh_curvature_comb()
 
     def _refresh_curvature_comb(self):
-        """Refresh the curvature comb visualization."""
+        """Refresh the curvature comb visualization (also used by the live preview)."""
         if not self._check_comb.isChecked():
             return
-        self._plot_manager.refresh_curvature_comb(
-            self._fit_result,
+        settings = (
             self._spin_comb_scale.value(),
             self._spin_comb_density.value(),
             self._combo_comb_qty.currentData() or 0,
         )
+        self._plot_manager.comb_settings = settings
+        self._plot_manager.refresh_curvature_comb(self._fit_result, *settings)

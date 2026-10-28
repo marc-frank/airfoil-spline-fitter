@@ -114,6 +114,8 @@ class PlotManager:
         self._comb_items: dict = {}
         self._knot_items: dict = {}
         self.show_knots = False
+        # (scale, density, quantity) of the curvature comb; None = hidden
+        self.comb_settings: tuple[float, int, int] | None = None
 
         # Loss data
         self._loss_x_iters: list[float] = []
@@ -233,10 +235,14 @@ class PlotManager:
         self.clear_knot_items()
         if fit_result is None or not self.show_knots:
             return
+        self._draw_knots(fit_result.curves())
+
+    def _draw_knots(self, curves: list) -> None:
+        """Mark the curve points at the knots of the given curves."""
         try:
             xs, ys = [], []
-            for i, curve in enumerate(fit_result.curves()):
-                knots = np.unique(fit_result.knots(i))
+            for curve in curves:
+                knots = np.unique(curve.knot_vector)
                 kx, ky = curve.evaluate_array(knots)
                 xs.extend(kx.tolist())
                 ys.extend(ky.tolist())
@@ -383,10 +389,12 @@ class PlotManager:
                         pass
 
             # Plot each section
+            curves = []
             for section_idx, ctrl_pts in enumerate(section_ctrl_pts):
                 ctrl_pts = [(float(p[0]), float(p[1])) for p in ctrl_pts]
                 knots = None if section_knots is None else section_knots[section_idx]
                 curve = BSplineCurve2D(degree, ctrl_pts, knots)
+                curves.append(curve)
 
                 # Spline curve
                 ux, uy = curve.sample(1000)
@@ -425,6 +433,14 @@ class PlotManager:
                     symbolBrush=Colors.CONTROL_POLYGON,
                     symbolPen=None,
                 )
+
+            # Comb and knot markers of the curve in progress, if enabled
+            if self.comb_settings is not None:
+                self.clear_comb_items()
+                self._draw_combs(curves, *self.comb_settings)
+            if self.show_knots:
+                self.clear_knot_items()
+                self._draw_knots(curves)
 
         except Exception:
             pass
@@ -496,16 +512,16 @@ class PlotManager:
 
         # Clear existing comb items
         self.clear_comb_items()
+        self._draw_combs(fit_result.curves(), scale, density, qty)
 
+    def _draw_combs(self, curves: list, scale: float, density: int, qty: int) -> None:
+        """Draw the curvature comb of every section."""
         density = max(5, density)
-
         try:
-            # Draw comb for each section
-            for section_idx, curve in enumerate(fit_result.curves()):
+            for section_idx, curve in enumerate(curves):
                 # Use alternating colors for different sections
                 which = 'upper' if section_idx % 2 == 0 else 'lower'
                 self._draw_curvature_comb(f'{which}_{section_idx}', curve, scale, density, qty)
-
         except Exception:
             pass
 
