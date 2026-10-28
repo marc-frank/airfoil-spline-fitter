@@ -89,6 +89,12 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._restore_settings()
         self._set_advanced_baseline()
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not getattr(self, "_sidebar_sized", False):
+            self._sidebar_sized = True
+            self.size_sidebar()
+
     def closeEvent(self, event):
         """Stop a running fit so its worker thread ends with the window."""
         if self._is_fitting:
@@ -540,7 +546,7 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         # Toggle controls
         self._sweep_degree.setEnabled(not fitting)
         self._spin_ctrl.setEnabled(not fitting)
-        self._spin_sections.setEnabled(not fitting)
+        self._sweep_sections.setEnabled(not fitting)
         self._combo_cont.setEnabled(not fitting)
         self._combo_cont_kind.setEnabled(not fitting)
         self._combo_opt.setEnabled(not fitting)

@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import QApplication
 
 from ..analysis import fit_report, summary_line
 from ..formatting import format_duration, format_error, number
-from ..geometry import compute_optimization_bounds
+from ..geometry import compute_optimization_bounds, create_airfoil_data
 from ..optimization import (
     OptimizerErrorLogger,
     construct_control_points,
@@ -302,6 +302,9 @@ class FittingController:
 
         # Determine which parameter is being swept
         is_opt_config_sweep = False
+
+        def make_airfoil(v):
+            return airfoil
         if sweep_box is w._sweep_ctrl:
             param_name = "Control points"
             actual_min = config.continuity.minimum_control_points(config.degree)
@@ -322,16 +325,26 @@ class FittingController:
 
             def make_config(v):
                 return dc_replace(config, degree=v), opt_config
+        elif sweep_box is w._sweep_sections:
+            param_name = "Sections"
+            sweep_values = list(range(int(min_val), int(max_val) + 1))
+
+            def make_config(v):
+                # Per-junction overrides fit one section count only
+                junctions = config.junction_continuity
+                if junctions and len(junctions) != v - 1:
+                    junctions = ()
+                return dc_replace(config, num_sections=v, junction_continuity=junctions), opt_config
+
+            def make_airfoil(v):
+                return create_airfoil_data(
+                    list(airfoil.coordinates), filename=airfoil.filename, name=airfoil.name,
+                    precision=airfoil.precision, num_sections=v,
+                )
         elif sweep_box is w._sweep_smoothing_weight:
             param_name = "Smoothing weight"
             is_opt_config_sweep = True
-            n_steps = sweep_box.sweep_steps
-            if n_steps < 2:
-                n_steps = 2
-            sweep_values = [
-                min_val + (max_val - min_val) * i / (n_steps - 1)
-                for i in range(n_steps)
-            ]
+            sweep_values = sweep_box.sweep_values()
 
             def make_config(v):
                 return config, dc_replace(opt_config, smoothing_weight=v)
@@ -367,10 +380,11 @@ class FittingController:
                 break
 
             sweep_config, sweep_opt_config = make_config(val)
+            sweep_airfoil = make_airfoil(val)
             val_str = f"{number(val, '.5g')}" if is_opt_config_sweep else str(val)
 
             bounds = compute_optimization_bounds(
-                w._airfoil, sweep_config,
+                sweep_airfoil, sweep_config,
                 optimize_le_position=sweep_opt_config.optimize_le_position,
             )
 
@@ -382,11 +396,13 @@ class FittingController:
             error_logger = OptimizerErrorLogger(run_name=run_name)
             live = LiveProgress(
                 w, sweep_config, sweep_opt_config, error_logger, fit_start_time,
-                status_prefix=f"Sweep {idx + 1}/{total_fits} | {param_name}={val_str} | ",
+                status_prefix=f"Sweep {idx + 1}/{total_fits} | {param_name} {val_str} | ",
+                airfoil=sweep_airfoil,
             )
 
             def sweep_work(sweep_config=sweep_config, sweep_opt_config=sweep_opt_config,
-                           bounds=bounds, fit_start_time=fit_start_time, live=live):
+                           bounds=bounds, fit_start_time=fit_start_time, live=live,
+                           airfoil=sweep_airfoil):
                 """Run one sweep fit and measure it (worker thread)."""
                 result = run_optimization(
                     sweep_config,

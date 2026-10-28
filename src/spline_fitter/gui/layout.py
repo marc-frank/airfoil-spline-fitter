@@ -48,6 +48,10 @@ from .widgets import (
     SweepableSpinBox,
 )
 
+# Most sections the curve can be split into; each needs enough points
+# for its own spline, which airfoil files of 50 or more points give.
+MAX_SECTIONS = 20
+
 # Width of the label column in every sidebar form, so fields line up
 # across sections.
 LABEL_WIDTH = Size.LABEL_WIDTH
@@ -140,6 +144,7 @@ class WindowLayoutMixin:
         for field in sections.findChildren((QComboBox, QAbstractSpinBox)):
             field.setSizePolicy(QSizePolicy.Policy.Expanding, field.sizePolicy().verticalPolicy())
             field.setMinimumWidth(70)
+        self._sidebar_sections, self._sidebar_scroll = sections, sidebar_scroll
 
         sidebar_layout.addWidget(sidebar_scroll, stretch=1)
         sidebar_layout.addWidget(self._build_run_bar())
@@ -218,6 +223,8 @@ class WindowLayoutMixin:
         self._main_splitter.setStretchFactor(0, 0)
         self._main_splitter.setStretchFactor(1, 1)
         self._main_splitter.setStretchFactor(2, 0)
+        # The sidebar's width is set once shown (size_sidebar), when the
+        # styled fields have their real sizes
         self._main_splitter.setSizes([330, 730, 280])
 
         # The splitter, and at the right edge the rail a hidden explorer
@@ -230,6 +237,27 @@ class WindowLayoutMixin:
         central_layout.addWidget(self._build_explorer_rail())
         self.setCentralWidget(central)
         self.statusBar().showMessage("Ready")
+
+    def size_sidebar(self) -> None:
+        """Make the sidebar as wide as its widest row needs: Advanced open
+        and each sweep range shown in turn (the smoothing sweep is the
+        widest), taking the width from the plots."""
+        sections, advanced = self._sidebar_sections, self._advanced_section
+        was_expanded = advanced._expanded
+        advanced.set_expanded(True)
+        widest = sections.minimumSizeHint().width()
+        for box in self._sweep_group:
+            if box.isEnabled() and not box.is_sweep_active:
+                box._btn_sweep.click()
+                widest = max(widest, sections.minimumSizeHint().width())
+                box.stop_sweep()
+        advanced.set_expanded(was_expanded)
+        width = widest + self._sidebar_scroll.verticalScrollBar().sizeHint().width()
+        sizes = self._main_splitter.sizes()
+        if width > sizes[0]:
+            sizes[1] -= width - sizes[0]
+            sizes[0] = width
+            self._main_splitter.setSizes(sizes)
 
     # -- Menu Bar ----------------------------------------------------------
 
@@ -359,7 +387,7 @@ class WindowLayoutMixin:
 
         self._spin_comb_density = QSpinBox()
         self._spin_comb_density.setRange(5, 2000)
-        self._spin_comb_density.setValue(100)
+        self._spin_comb_density.setValue(250)
         _add_row(comb_form, "Density", self._spin_comb_density)
 
         # A drop-down panel rather than a menu, so the plots stay usable
@@ -650,13 +678,14 @@ class WindowLayoutMixin:
 
         # Sections
         self._spin_sections = QSpinBox()
-        self._spin_sections.setRange(1, 10)
+        self._spin_sections.setRange(1, MAX_SECTIONS)
         self._spin_sections.setValue(2)
         self._spin_sections.setToolTip(
             "Number of sections, each its own spline, joined at junctions.\n"
             "2 (default) splits upper and lower surface at the leading edge."
         )
-        _add_row(form, "Sections", self._spin_sections)
+        self._sweep_sections = SweepableSpinBox(self._spin_sections, group=self._sweep_group)
+        _add_row(form, "Sections", self._sweep_sections)
 
         # Continuity at the junctions; labels read G or C depending on the type
         self._combo_cont = SegmentedControl()
@@ -729,7 +758,7 @@ class WindowLayoutMixin:
         self._spin_smoothing_weight.setToolTip(
             "Bending energy weight for VarPro LM (0 turns it off; default 0.001).")
         self._sweep_smoothing_weight = SweepableDoubleSpinBox(
-            self._spin_smoothing_weight, group=self._sweep_group, default_steps=10,
+            self._spin_smoothing_weight, group=self._sweep_group,
         )
         self._lbl_smoothing_weight = _add_row(form, "Smoothing", self._sweep_smoothing_weight)
 

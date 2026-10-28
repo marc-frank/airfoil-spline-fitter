@@ -170,3 +170,28 @@ def test_batch_shows_every_file_live(window, counted, tmp_path):
     assert len(list(dst.glob("*.spline.dat"))) == 2
     assert counted["drawn"] == counted["steps"] > 0
     assert window.statusBar().currentMessage().startswith("Batch complete: 2 files")
+
+
+def test_sections_sweep_splits_the_airfoil_per_count(window):
+    window._combo_live.setCurrentIndex(0)
+    window._sweep_sections._btn_sweep.click()
+    window._sweep_sections._spin_max.setValue(3)
+    window._fitting_controller.on_fit()
+    results = window._fitting_controller._sweep_results
+    assert [v for v, _ in results] == [2, 3]
+    assert [len(r.section_control_points) for _, r in results] == [2, 3]
+    x, _ = window._plot_manager._comparison_curve.getData()
+    assert list(x) == [2, 3]
+    # The best count is applied, with the airfoil split to match it
+    assert window._airfoil.num_sections == window._spin_sections.value()
+
+
+def test_smoothing_sweep_steps_by_step_size(window):
+    sweep = window._sweep_smoothing_weight
+    window._spin_smoothing_weight.setValue(0.002)
+    sweep._btn_sweep.click()
+    sweep._spin_max.setValue(0.01)
+    sweep._spin_step.setValue(0.004)
+    assert sweep.sweep_values() == [0.002, 0.006, 0.01]
+    sweep._spin_step.setValue(0.003)
+    assert sweep.sweep_values() == [0.002, 0.005, 0.008]

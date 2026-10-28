@@ -372,10 +372,8 @@ class SweepableSpinBox(QWidget):
     def _on_toggle_sweep(self, checked: bool):
         if checked and self._group:
             for other in self._group:
-                if other is not self and other._sweep_active:
-                    other._btn_sweep.setChecked(False)
-                    other._sweep_active = False
-                    other._spin_max.setVisible(False)
+                if other is not self and other.is_sweep_active:
+                    other.stop_sweep()
         self._sweep_active = checked
         self._spin_max.setVisible(checked)
         if checked:
@@ -412,9 +410,9 @@ class SweepableSpinBox(QWidget):
 # =============================================================================
 
 class SweepableDoubleSpinBox(QWidget):
-    """A double-spinbox with an inline sweep-range toggle and step count.
+    """A double-spinbox with an inline sweep-range toggle and step size.
 
-    When the range button (a dimension line) is toggled, [max] and Steps fields appear,
+    When the range button (a dimension line) is toggled, [max] and Step fields appear,
     turning the single value into a range for parameter sweeps.  Only one
     sweepable widget in a *group* can be active at a time (works with
     both SweepableSpinBox and SweepableDoubleSpinBox in the same group).
@@ -424,7 +422,6 @@ class SweepableDoubleSpinBox(QWidget):
         self,
         spin_box: QDoubleSpinBox,
         group: list | None = None,
-        default_steps: int = 10,
         parent=None,
     ):
         super().__init__(parent)
@@ -458,37 +455,33 @@ class SweepableDoubleSpinBox(QWidget):
         self._spin_max.setVisible(False)
         lay.addWidget(self._spin_max, stretch=1)
 
-        self._lbl_steps = QLabel("Steps")
-        self._lbl_steps.setVisible(False)
-        lay.addWidget(self._lbl_steps)
+        self._lbl_step = QLabel("Step")
+        self._lbl_step.setVisible(False)
+        lay.addWidget(self._lbl_step)
 
-        self._spin_steps = QSpinBox()
-        self._spin_steps.setRange(2, 100)
-        self._spin_steps.setValue(default_steps)
-        self._spin_steps.setToolTip("Number of evenly-spaced values in sweep")
-        self._spin_steps.setVisible(False)
-        lay.addWidget(self._spin_steps)
+        self._spin_step = type(self._spin)()
+        self._spin_step.setRange(self._spin.singleStep() / 1000, self._spin.maximum())
+        self._spin_step.setDecimals(self._spin.decimals())
+        self._spin_step.setSingleStep(self._spin.singleStep())
+        self._spin_step.setToolTip("Distance between the swept values")
+        self._spin_step.setVisible(False)
+        lay.addWidget(self._spin_step, stretch=1)
 
     # ------------------------------------------------------------------
     def _on_toggle_sweep(self, checked: bool):
         if checked and self._group:
             for other in self._group:
-                if other is not self and other._sweep_active:
-                    other._btn_sweep.setChecked(False)
-                    other._sweep_active = False
-                    if hasattr(other, '_spin_max'):
-                        other._spin_max.setVisible(False)
-                    if hasattr(other, '_lbl_steps'):
-                        other._lbl_steps.setVisible(False)
-                    if hasattr(other, '_spin_steps'):
-                        other._spin_steps.setVisible(False)
+                if other is not self and other.is_sweep_active:
+                    other.stop_sweep()
         self._sweep_active = checked
-        self._spin_max.setVisible(checked)
-        self._lbl_steps.setVisible(checked)
-        self._spin_steps.setVisible(checked)
+        for widget in (self._spin_max, self._lbl_step, self._spin_step):
+            widget.setVisible(checked)
         if checked:
+            # Ten values from the current one: up to ten times it, in steps of it
+            start = self._spin.value() or self._spin.singleStep()
             self._spin_max.setMinimum(self._spin.minimum())
-            self._spin_max.setValue(min(self._spin.value() * 10, self._spin.maximum()))
+            self._spin_max.setValue(min(start * 10, self._spin.maximum()))
+            self._spin_step.setValue(start)
 
     def stop_sweep(self) -> None:
         """Leave sweep mode."""
@@ -505,9 +498,19 @@ class SweepableDoubleSpinBox(QWidget):
         return (self._spin.value(), self._spin_max.value())
 
     @property
-    def sweep_steps(self) -> int:
-        """Return the number of sweep steps."""
-        return self._spin_steps.value()
+    def sweep_step(self) -> float:
+        """The distance between swept values."""
+        return self._spin_step.value()
+
+    def sweep_values(self, limit: int = 1000) -> list[float]:
+        """The swept values: from the lower to the upper end of the range in
+        steps of the step size, the upper end included when a step lands on
+        it. At most ``limit`` values."""
+        low, high = sorted(self.sweep_range)
+        step = self.sweep_step
+        count = min(int(math.floor((high - low) / step * (1 + 1e-9))) + 1, limit)
+        # Rounded so 0.001 + 8 * 0.001 is 0.009, not 0.009000000000000001
+        return [float(f"{low + i * step:.12g}") for i in range(count)]
 
     @property
     def spinbox(self) -> QDoubleSpinBox:

@@ -625,6 +625,7 @@ class ProjectManager:
         sw_values = {r.optimization_config.smoothing_weight for r in runs}
         cp_values = {cp(r) for r in runs}
         deg_values = {r.spline_config.degree for r in runs}
+        sec_values = {r.spline_config.num_sections for r in runs}
 
         if len(sw_values) > 1 and len(cp_values) == 1 and len(deg_values) == 1:
             label = "Smoothing weight"
@@ -636,6 +637,10 @@ class ProjectManager:
             label = "Degree"
             sorted_runs = sorted(runs, key=lambda r: r.spline_config.degree)
             x = [r.spline_config.degree for r in sorted_runs]
+        elif len(sec_values) > 1 and len(cp_values) == 1 and len(deg_values) == 1:
+            label = "Sections"
+            sorted_runs = sorted(runs, key=lambda r: r.spline_config.num_sections)
+            x = [r.spline_config.num_sections for r in sorted_runs]
         else:
             label = "Control points"
             sorted_runs = sorted(runs, key=cp)
@@ -658,14 +663,21 @@ class ProjectManager:
         fixed = {
             "Control points": lambda c, o: c.num_control_points,
             "Degree": lambda c, o: c.degree,
+            "Sections": lambda c, o: c.num_sections,
             "Smoothing weight": lambda c, o: o.smoothing_weight,
         }
         by_value: dict = {}
         for run in self._project.optimization_runs:
             c, o = run.spline_config, run.optimization_config
+            # Along the sections axis the junction count changes: compare
+            # the continuity setting instead of the junctions themselves
+            if axis == "Sections":
+                same_junctions = (c.continuity == spline_config.continuity
+                                  and c.geometric_continuity == spline_config.geometric_continuity)
+            else:
+                same_junctions = c.junction_specs() == spline_config.junction_specs()
             if (o.optimizer != opt_config.optimizer
-                    or c.num_sections != spline_config.num_sections
-                    or c.junction_specs() != spline_config.junction_specs()
+                    or not same_junctions
                     or (o.tolerance is None) != (opt_config.tolerance is None)
                     or o.knot_placement != opt_config.knot_placement
                     or o.parameterization != opt_config.parameterization
@@ -690,6 +702,8 @@ class ProjectManager:
             return run.optimization_config.smoothing_weight
         elif label == "Degree":
             return run.spline_config.degree
+        elif label == "Sections":
+            return run.spline_config.num_sections
         else:
             return ProjectManager._run_control_points(run)
 
