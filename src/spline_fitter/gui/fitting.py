@@ -359,7 +359,7 @@ class FittingController:
         # runs of the same configuration
         self._sweep_axis = (config, opt_config, param_name)
         w._plot_manager.clear_plot_items()
-        w._plot_manager.set_comparison_label(param_name)
+        w._project_manager.show_axis(param_name)
         w._plot_manager.set_comparison_data([], [])
         w._plot_manager.set_comparison_marker([], [])
 
@@ -430,6 +430,7 @@ class FittingController:
                         fairness_weights=fairness_weights,
                         result=fit_result,
                         loss_history=self._loss_history(error_logger),
+                        replot=False,
                     )
 
                     # Show the finished fit and its point on the comparison plot

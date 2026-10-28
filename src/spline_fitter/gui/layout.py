@@ -20,7 +20,6 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QGridLayout,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -28,7 +27,6 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QSpinBox,
     QToolButton,
-    QTreeWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -38,6 +36,7 @@ from ..optimization.models import (
     ErrorMetric,
     OptimizerType,
 )
+from .explorer import COLUMNS, RunTable
 from .theme import Size, glyph_size, icon, label_plot, style_plot
 from .widgets import (
     CollapsibleSection,
@@ -51,9 +50,10 @@ from .widgets import (
 )
 
 # Default widths of the sidebar (at least: size_sidebar widens it to fit
-# Advanced with the smoothing sweep open) and the project explorer
+# Advanced with the smoothing sweep open) and the project explorer, whose
+# table scrolls sideways through its columns
 SIDEBAR_WIDTH = 330
-EXPLORER_WIDTH = 280
+EXPLORER_WIDTH = 380
 
 # Most sections the curve can be split into; each needs enough points
 # for its own spline, which airfoil files of 50 or more points give.
@@ -199,16 +199,13 @@ class WindowLayoutMixin:
         loss_layout.addWidget(self._loss_plot)
         bottom_plots_layout.addWidget(loss_container, stretch=1)
 
-        # Comparison plot (error vs control points), captioned so its top
-        # lines up with the loss plot under its toolbar
+        # Comparison plot: the runs that pass the explorer's filter, along
+        # the columns chosen in its toolbar
         comparison_container = QWidget()
         comparison_layout = QVBoxLayout(comparison_container)
         comparison_layout.setContentsMargins(0, 0, 0, 0)
         comparison_layout.setSpacing(Size.GAP)
-        comparison_caption = QLabel("ERROR BY CONTROL POINTS")
-        comparison_caption.setObjectName("SectionCaption")
-        comparison_caption.setFixedHeight(Size.CONTROL_HEIGHT)
-        comparison_layout.addWidget(comparison_caption)
+        comparison_layout.addLayout(self._build_comparison_toolbar())
         self._comparison_plot = pg.PlotWidget(parent=comparison_container)
         style_plot(self._comparison_plot)
         label_plot(self._comparison_plot, "bottom", "Control points")
@@ -240,7 +237,7 @@ class WindowLayoutMixin:
         # Widened to fit its rows once shown (size_sidebar), when the styled
         # fields have their real sizes
         self._sidebar_width = SIDEBAR_WIDTH
-        self._main_splitter.setSizes([SIDEBAR_WIDTH, 730, EXPLORER_WIDTH])
+        self._main_splitter.setSizes([SIDEBAR_WIDTH, 630, EXPLORER_WIDTH])
 
         # The splitter, and at the right edge the rail a hidden explorer
         # folds into: a chevron pointing back out shows it again
@@ -485,6 +482,42 @@ class WindowLayoutMixin:
         toolbar.addWidget(self._combo_log_scale)
         return toolbar
 
+    def _build_comparison_toolbar(self) -> QHBoxLayout:
+        """Build the toolbar above the comparison plot: which explorer
+        columns the runs are plotted along."""
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(Size.GAP)
+        toolbar.setContentsMargins(0, 0, 0, 0)
+
+        caption = QLabel("RUNS")
+        caption.setObjectName("SectionCaption")
+        toolbar.addWidget(caption)
+        toolbar.addStretch()
+
+        x_label = QLabel("X axis")
+        x_label.setObjectName("FormLabel")
+        toolbar.addWidget(x_label)
+        self._combo_runs_x = QComboBox()
+        for c in COLUMNS:
+            self._combo_runs_x.addItem(c.name)
+        self._combo_runs_x.setCurrentText("Control points")
+        self._combo_runs_x.setToolTip(
+            "The explorer column the runs are plotted along.\n"
+            "Only the runs that pass the explorer's filter are shown.")
+        toolbar.addWidget(self._combo_runs_x, stretch=1)
+
+        y_label = QLabel("Y axis")
+        y_label.setObjectName("FormLabel")
+        toolbar.addWidget(y_label)
+        self._combo_runs_y = QComboBox()
+        for c in COLUMNS:
+            if c.metric:
+                self._combo_runs_y.addItem(c.name)
+        self._combo_runs_y.setCurrentText("Error")
+        self._combo_runs_y.setToolTip("The fit metric plotted for each run")
+        toolbar.addWidget(self._combo_runs_y, stretch=1)
+        return toolbar
+
     # -- Project Explorer --------------------------------------------------
 
     def _build_explorer_rail(self) -> QWidget:
@@ -508,7 +541,7 @@ class WindowLayoutMixin:
 
 
     def _build_project_explorer(self) -> QWidget:
-        """Build the project explorer panel with tree view."""
+        """Build the project explorer panel: the table of runs (explorer.py)."""
         panel = QWidget()
         panel.setObjectName("Explorer")
         panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -537,15 +570,10 @@ class WindowLayoutMixin:
         self._lbl_project.setObjectName("Muted")
         layout.addWidget(self._lbl_project)
 
-        # Tree view for runs
-        self._project_tree = QTreeWidget()
-        self._project_tree.setHeaderLabels(["Optimization runs"])
-        self._project_tree.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
-        self._project_tree.setRootIsDecorated(True)
-        self._project_tree.setAnimated(True)
-        self._project_tree.header().setStretchLastSection(False)
-        self._project_tree.header().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        layout.addWidget(self._project_tree, stretch=1)
+        # Every run of the project, filterable and sortable; double-click
+        # applies a run's settings
+        self._run_table = RunTable()
+        layout.addWidget(self._run_table, stretch=1)
 
         # Run details label
         self._lbl_run_details = QLabel("Select a run to view details")
@@ -557,7 +585,7 @@ class WindowLayoutMixin:
         btn_row = QHBoxLayout()
         self._btn_delete_run = QPushButton("Delete")
         self._btn_delete_run.setEnabled(False)
-        self._btn_delete_run.setToolTip("Delete selected run(s) from project")
+        self._btn_delete_run.setToolTip("Delete the selected runs from the project")
         btn_row.addWidget(self._btn_delete_run)
         btn_row.addStretch()
         layout.addLayout(btn_row)

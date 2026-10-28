@@ -26,6 +26,7 @@ from ..optimization.models import (
     FairnessWeights,
     FitResult,
     OptimizationConfig,
+    OptimizationRun,
     OptimizerType,
     SplineConfig,
 )
@@ -296,8 +297,13 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
             lambda: self._action_toggle_explorer.setChecked(False))
         self._btn_show_explorer.clicked.connect(
             lambda: self._action_toggle_explorer.setChecked(True))
-        self._project_tree.itemSelectionChanged.connect(self._project_manager.on_tree_selection_changed)
-        self._project_tree.itemDoubleClicked.connect(self._project_manager.on_tree_item_double_clicked)
+        table = self._run_table
+        table.selection_changed.connect(self._project_manager.on_table_selection_changed)
+        table.run_activated.connect(self._project_manager.on_run_activated)
+        table.filter_changed.connect(self._project_manager.refresh_comparison_plot)
+        table.plot_column_requested.connect(self._project_manager.on_plot_column_requested)
+        for combo in (self._combo_runs_x, self._combo_runs_y):
+            combo.currentIndexChanged.connect(self._project_manager.refresh_comparison_plot)
         self._btn_delete_run.clicked.connect(self._project_manager.on_delete_selected_runs)
 
         # Initialize optimizer-dependent UI state
@@ -378,25 +384,57 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
             grow_control_points=self._check_grow.isChecked(),
         )
 
-    def _apply_run_config(self, cfg: SplineConfig, opt: OptimizationConfig) -> None:
-        """Show the continuity and tolerance settings of a stored run."""
-        for i in range(self._combo_cont_kind.count()):
-            if self._combo_cont_kind.itemData(i) == cfg.geometric_continuity:
-                self._combo_cont_kind.setCurrentIndex(i)
-                break
-        self._edit_junctions.setText(", ".join(cfg.junction_continuity))
-        self._seg_goal.setCurrentIndex(self._seg_goal.findData(opt.tolerance is not None))
+    def _apply_run_settings(self, run: OptimizationRun) -> None:
+        """Set every sidebar setting to that of a stored run (a double-click
+        in the explorer, or opening a project)."""
+        cfg, opt, weights = run.spline_config, run.optimization_config, run.fairness_weights
+
+        def choose(control, data) -> None:
+            index = control.findData(data)
+            if index >= 0:
+                control.setCurrentIndex(index)
+
+        # Method; the optimizer first, as it decides which settings apply
+        choose(self._combo_opt, opt.optimizer)
+        choose(self._seg_goal, opt.tolerance is not None)
         if opt.tolerance is not None:
             self._check_auto_tolerance.setChecked(False)
             self._spin_tolerance.setValue(opt.tolerance)
-        self._check_subsample.setChecked(opt.max_points_per_section is not None)
-        self._combo_knot_placement.setCurrentIndex(
-            max(self._combo_knot_placement.findData(opt.knot_placement), 0))
+        choose(self._combo_knot_placement, opt.knot_placement)
+        choose(self._seg_parameterization, opt.parameterization)
         self._check_grow.setChecked(opt.grow_control_points)
-        self._seg_parameterization.setCurrentIndex(
-            max(self._seg_parameterization.findData(opt.parameterization), 0))
+        choose(self._seg_err, opt.metric)
+
+        # Curve; degree and continuity before the count, whose minimum they set
+        self._spin_sections.setValue(cfg.num_sections)
+        self._spin_degree.setValue(cfg.degree)
+        choose(self._combo_cont, cfg.continuity)
+        choose(self._combo_cont_kind, cfg.geometric_continuity)
+        self._spin_ctrl.setMaximum(max(self._spin_ctrl.maximum(), cfg.num_control_points))
+        self._spin_ctrl.setValue(cfg.num_control_points)
+
+        # Advanced
+        self._edit_junctions.setText(", ".join(cfg.junction_continuity))
+        self._check_subsample.setChecked(opt.max_points_per_section is not None)
         if opt.max_points_per_section is not None:
             self._spin_subsample.setValue(opt.max_points_per_section)
+        self._spin_smoothing_weight.setValue(opt.smoothing_weight)
+        if opt.max_iterations:  # 0: VarPro's own limit, not a setting
+            self._spin_maxiter.setValue(opt.max_iterations)
+        self._spin_seed.setValue(opt.seed)
+        self._spin_bbox.setValue(cfg.bbox_scale)
+        self._check_optimize_le.setChecked(opt.optimize_le_position)
+
+        # Regularization
+        self._check_fairness.setChecked(weights.is_enabled)
+        for spin, weight in ((self._spin_w_lenvar, weights.length_variance),
+                             (self._spin_w_bend, weights.polygon_bend),
+                             (self._spin_w_short, weights.anti_bunching),
+                             (self._spin_w_tangent, weights.end_handles),
+                             (self._spin_w_curv, weights.curvature_squared),
+                             (self._spin_w_grad, weights.curvature_gradient)):
+            spin.setValue(weight)
+        self._on_optimizer_changed(self._combo_opt.currentIndex())
 
     def _get_fairness_weights(self) -> FairnessWeights:
         """Build FairnessWeights from current UI state."""

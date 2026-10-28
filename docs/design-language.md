@@ -232,11 +232,14 @@ never call `setStyleSheet` on it.
 | Rich text dialog | `show_document(parent, title, html, w, h)` around `theme.text_browser()`; mark status with `class='ok'`, `'warn'`, `'error'`, numbers with `class='num'` |
 | Slider | `QSlider`; the temperature slider is `TemperatureSlider` (cool-to-warm groove) |
 | Theme setting | `ThemeDialog` (`widgets.py`), from View > Theme... |
+| Table of records | `QTableView` without grid lines, rows selected whole; numbers monospaced and right-aligned, blanks for what does not apply (the explorer's `RunTable`, `explorer.py`) |
 
 **Layout of the main window**: sidebar (workflow order: data, method,
 curve, advanced, then the fixed run bar with the primary action and the
 result readouts) | plots (main canvas with its toolbar, convergence and
-comparison below) | project explorer.
+comparison below) | project explorer (the table of every run: filter it,
+sort it, plot the filtered runs along any column in the comparison plot,
+double-click a run to apply its settings).
 
 ---
 

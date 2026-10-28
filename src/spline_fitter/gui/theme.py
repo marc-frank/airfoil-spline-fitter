@@ -454,12 +454,13 @@ QSlider::handle:horizontal:hover {{ background: {P.TEXT}; }}
 QSlider#TemperatureSlider::groove:horizontal {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
     stop:0 {grey(0.62, -4)}, stop:0.5 {grey(0.62, 0)}, stop:1 {grey(0.62, 4)}); }}
 
-/* Lists and text; tree branches open and close with chevrons */
-QTreeView, QListView, QTextBrowser {{ background: {P.PANEL}; border: 1px solid {P.RULE};
+/* Lists, tables and text; tree branches open and close with chevrons */
+QTreeView, QListView, QTableView, QTextBrowser {{ background: {P.PANEL}; border: 1px solid {P.RULE};
     border-radius: {S.RADIUS}px; outline: none; }}
 QTreeView::item {{ padding: 2px 0; }}
+QTableView::item {{ padding: 0 6px; }}
 QTreeView::item:hover {{ background: {P.FIELD}; }}
-QTreeView::item:selected {{ background: {P.SELECT}; color: {P.TEXT}; }}
+QTreeView::item:selected, QTableView::item:selected {{ background: {P.SELECT}; color: {P.TEXT}; }}
 QTreeView::branch {{ background: transparent; }}
 QTreeView::branch:has-children:closed {{ image: url({_glyph("chevron_right", pad=6)}); }}
 QTreeView::branch:has-children:open {{ image: url({_glyph("chevron_down", pad=6)}); }}

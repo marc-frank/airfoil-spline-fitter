@@ -2,7 +2,10 @@
 Project Manager
 ===============
 
-Manages project file state (.asfproj) and the project explorer tree panel.
+Manages project file state (.asfproj) and the project explorer: the table
+of every run (explorer.py, whose docstring states what it is for), the
+comparison plot of the runs that pass its filter, and applying a run's
+settings to the sidebar.
 
 Extracted from SplineFitterWindow to keep project-related logic self-contained.
 All window widget access is routed through ``self._window``.
@@ -11,11 +14,10 @@ All window widget access is routed through ``self._window``.
 from __future__ import annotations
 
 import os
-from collections import defaultdict
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QDir, Qt
-from PyQt6.QtWidgets import QFileDialog, QTreeWidgetItem
+from PyQt6.QtCore import QDir
+from PyQt6.QtWidgets import QFileDialog
 
 from ..formatting import format_duration, number
 from ..optimization.models import (
@@ -24,11 +26,11 @@ from ..optimization.models import (
     IterationRecord,
     OptimizationConfig,
     OptimizationRun,
-    OptimizerType,
     ProjectFile,
     SplineConfig,
 )
 from ..project_io import create_optimization_run, create_project, load_project, save_project
+from .explorer import column, is_number
 from .theme import readout_table
 
 if TYPE_CHECKING:
@@ -36,7 +38,7 @@ if TYPE_CHECKING:
 
 
 class ProjectManager:
-    """Manages project file state and the project explorer tree."""
+    """Manages project file state and the project explorer table."""
 
     def __init__(self, window: SplineFitterWindow):
         self._window = window
@@ -113,34 +115,12 @@ class ProjectManager:
             self._window._plot_manager.clear_plot_items()
             self._window._plot_manager.plot_airfoil(self._window._airfoil.coordinates)
 
-            # If project has runs, load the last one
+            # If project has runs, load the last one: its settings first, as
+            # a different section count re-splits the airfoil
             if project.optimization_runs:
                 last_run = project.optimization_runs[-1]
-                self._window._fit_result = last_run.result
-
-                # Restore config to UI
-                cfg = last_run.spline_config
-                self._window._spin_degree.setValue(cfg.degree)
-                self._window._spin_ctrl.setValue(cfg.num_control_points)
-                for i in range(self._window._combo_cont.count()):
-                    if self._window._combo_cont.itemData(i) == cfg.continuity:
-                        self._window._combo_cont.setCurrentIndex(i)
-                        break
-                self._window._apply_run_config(cfg, last_run.optimization_config)
-
-                # Restore loss history
-                self._window._plot_manager.update_loss_data(
-                    [r.iteration_number for r in last_run.loss_history],
-                    [r.elapsed_seconds for r in last_run.loss_history],
-                    [r.error_value for r in last_run.loss_history],
-                )
-
-                # Update plots
-                self._window._plot_manager.plot_fitted_spline(self._window._fit_result)
-                self._window._plot_manager.set_loss_curve_data(
-                    self._window._combo_loss_x.currentData()
-                )
-                self._window._set_save_enabled(True)
+                self._window._apply_run_settings(last_run)
+                self._load_run_to_plots(last_run)
 
                 n_runs = len(project.optimization_runs)
                 self._window.statusBar().showMessage(
@@ -152,8 +132,9 @@ class ProjectManager:
                     f"Loaded project: {os.path.basename(file_path)}"
                 )
 
-            # Populate the project tree
-            self._populate_tree()
+            # Fill the explorer and plot its runs
+            self._populate_table()
+            self.refresh_comparison_plot()
 
         except Exception as e:
             self._window.statusBar().showMessage(f"Failed to load project: {e}")
@@ -228,10 +209,13 @@ class ProjectManager:
         fairness_weights: FairnessWeights,
         result: FitResult,
         loss_history: list[IterationRecord],
+        replot: bool = True,
     ):
         """Add a completed optimization run to the current project.
 
         If a run with identical configuration exists, it will be replaced.
+        ``replot`` redraws the comparison plot from the explorer; a sweep
+        draws its own series there instead.
         """
         if self._window._airfoil is None:
             return
@@ -264,8 +248,9 @@ class ProjectManager:
         self._project_modified = True
         self._show_project_label()
 
-        # Refresh the project tree
-        self._populate_tree()
+        self._populate_table()
+        if replot:
+            self.refresh_comparison_plot()
 
     def _show_project_label(self):
         """Name the project and count its runs; * marks unsaved changes."""
@@ -342,172 +327,98 @@ class ProjectManager:
         self._window._explorer_rail.setVisible(not visible)
 
     # ------------------------------------------------------------------
-    # Project tree
+    # Run table
     # ------------------------------------------------------------------
 
-    def _populate_tree(self):
-        """Populate the project tree with optimization runs grouped hierarchically."""
-        self._window._project_tree.clear()
+    def _populate_table(self):
+        """Show every run of the project in the explorer table."""
+        runs = self._project.optimization_runs if self._project else []
+        self._window._run_table.set_runs(runs)
 
-        if self._project is None or not self._project.optimization_runs:
-            return
-
-        # Build hierarchical structure (5 levels):
-        #   optimizer -> degree -> sections -> continuity -> control points
-        tree_data = defaultdict(
-            lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
-        )
-
-        for run in self._project.optimization_runs:
-            opt_name = run.optimization_config.optimizer.display_name
-            cfg = run.spline_config
-            degree_key = f"Degree {cfg.degree}"
-            sections_key = (
-                f"{cfg.num_sections} section{'s' if cfg.num_sections > 1 else ''}"
-            )
-            cont_key = ", ".join(dict.fromkeys(cfg.junction_specs())) or cfg.continuity.name
-            tree_data[opt_name][degree_key][sections_key][cont_key].append(run)
-
-        # Build tree items
-        for opt_name, degrees in sorted(tree_data.items()):
-            opt_item = QTreeWidgetItem([opt_name])
-            opt_item.setData(0, Qt.ItemDataRole.UserRole, ("optimizer", opt_name))
-
-            for degree_key, sections in sorted(degrees.items()):
-                degree_item = QTreeWidgetItem([degree_key])
-                degree_item.setData(
-                    0, Qt.ItemDataRole.UserRole, ("degree", degree_key)
-                )
-
-                for sections_key, continuities in sorted(sections.items()):
-                    sections_item = QTreeWidgetItem([sections_key])
-                    sections_item.setData(
-                        0, Qt.ItemDataRole.UserRole, ("sections", sections_key)
-                    )
-
-                    for cont_key, runs in sorted(continuities.items()):
-                        cont_item = QTreeWidgetItem([cont_key])
-                        cont_item.setData(
-                            0,
-                            Qt.ItemDataRole.UserRole,
-                            ("continuity", cont_key, runs),
-                        )
-
-                        # Sort runs by control points
-                        runs_sorted = sorted(
-                            runs, key=lambda r: r.spline_config.num_control_points
-                        )
-
-                        for run in runs_sorted:
-                            n_ctrl = run.spline_config.num_control_points
-                            error = run.result.final_error
-                            # Tolerance runs show their tolerance, VarPro runs their smoothing
-                            setting = ""
-                            tol = run.optimization_config.tolerance
-                            if tol is not None:
-                                n_ctrl = run.result.num_control_points
-                                setting = f"tolerance {number(tol, '.1e')}"
-                            elif run.optimization_config.optimizer == OptimizerType.GN_VARPRO:
-                                sw = run.optimization_config.smoothing_weight
-                                setting = f"smoothing {number(sw, '.5g')}"
-                            run_item = QTreeWidgetItem(
-                                [f"{n_ctrl} control points, {number(error, '.2e')}"])
-                            run_item.setData(
-                                0, Qt.ItemDataRole.UserRole, ("run", run)
-                            )
-                            details = [f"Error {number(error, '.3e')}", setting,
-                                       f"{run.result.num_evaluations} evaluations",
-                                       format_duration(run.result.elapsed_seconds)]
-                            run_item.setToolTip(0, ", ".join(d for d in details if d))
-                            cont_item.addChild(run_item)
-
-                        sections_item.addChild(cont_item)
-                    degree_item.addChild(sections_item)
-                opt_item.addChild(degree_item)
-            self._window._project_tree.addTopLevelItem(opt_item)
-
-        # Expand all by default
-        self._window._project_tree.expandAll()
-
-    # ------------------------------------------------------------------
-    # Tree selection / interaction
-    # ------------------------------------------------------------------
-
-    def on_tree_selection_changed(self):
-        """Handle tree selection changes."""
-        selected_items = self._window._project_tree.selectedItems()
-
-        if not selected_items:
-            self._selected_runs = []
-            self._window._btn_delete_run.setEnabled(False)
-            self._window._lbl_run_details.setText("Select a run to view details")
-            self._window._plot_manager.set_comparison_data([], [])
-            self._window._plot_manager.set_comparison_marker([], [])
-            return
-
-        # Collect all selected runs (including from folder selections)
-        runs: list[OptimizationRun] = []
-        for item in selected_items:
-            data = item.data(0, Qt.ItemDataRole.UserRole)
-            if data is None:
-                continue
-
-            if data[0] == "run":
-                runs.append(data[1])
-            elif data[0] == "continuity":
-                # Clicking a continuity folder selects all its runs
-                runs.extend(data[2])
-
+    def on_table_selection_changed(self):
+        """Show the selected run (details and plots); mark the selection on
+        the comparison plot."""
+        runs = self._window._run_table.selected_runs()
         self._selected_runs = runs
-        self._window._btn_delete_run.setEnabled(len(runs) > 0)
+        self._window._btn_delete_run.setEnabled(bool(runs))
 
-        if len(runs) == 0:
+        if not runs:
             self._window._lbl_run_details.setText("Select a run to view details")
-            self._window._plot_manager.set_comparison_data([], [])
-            self._window._plot_manager.set_comparison_marker([], [])
         elif len(runs) == 1:
-            # Single run selected - show details and update main plots
-            run = runs[0]
-            self._show_run_details(run)
-            self._load_run_to_plots(run)
-            # Update comparison plot with siblings
-            self._update_comparison_plot_for_run(run)
+            self._show_run_details(runs[0])
+            self._load_run_to_plots(runs[0])
         else:
-            # Multiple runs selected - show comparison
             self._window._lbl_run_details.setText(f"{len(runs)} runs selected")
-            self._update_comparison_plot(runs)
+        self.refresh_comparison_plot()
 
-    def on_tree_item_double_clicked(self, item: QTreeWidgetItem, column: int):
-        """Handle double-click to load run settings into UI."""
-        data = item.data(0, Qt.ItemDataRole.UserRole)
-        if data is None or data[0] != "run":
-            return
-
-        run = data[1]
-        cfg = run.spline_config
-        opt = run.optimization_config
-
-        # Load settings into UI controls
-        self._window._spin_degree.setValue(cfg.degree)
-        self._window._spin_ctrl.setMaximum(max(self._window._spin_ctrl.maximum(), cfg.num_control_points))
-        self._window._spin_ctrl.setValue(cfg.num_control_points)
-        self._window._spin_smoothing_weight.setValue(opt.smoothing_weight)
-
-        for i in range(self._window._combo_cont.count()):
-            if self._window._combo_cont.itemData(i) == cfg.continuity:
-                self._window._combo_cont.setCurrentIndex(i)
-                break
-
-        for i in range(self._window._combo_opt.count()):
-            if self._window._combo_opt.itemData(i) == opt.optimizer:
-                self._window._combo_opt.setCurrentIndex(i)
-                break
-        self._window._apply_run_config(cfg, opt)
-
+    def on_run_activated(self, run: OptimizationRun):
+        """Double-click: apply the run's settings to the sidebar and show it."""
+        self._window._apply_run_settings(run)
+        self._load_run_to_plots(run)
+        cfg, opt = run.spline_config, run.optimization_config
+        run_number = self._project.optimization_runs.index(run) + 1
         self._window.statusBar().showMessage(
-            f"Loaded settings from run: {cfg.num_control_points} control points, "
-            f"{opt.optimizer.display_name}"
+            f"Applied the settings of run {run_number} "
+            f"({opt.optimizer.display_name}, degree {cfg.degree}, "
+            f"{cfg.num_control_points} control points, {cfg.num_sections} sections)"
         )
+
+    # ------------------------------------------------------------------
+    # Comparison plot: the runs that pass the explorer's filter
+    # ------------------------------------------------------------------
+
+    def on_plot_column_requested(self, axis: str, name: str):
+        """A column header's context menu: plot along that column."""
+        combo = self._window._combo_runs_x if axis == "x" else self._window._combo_runs_y
+        combo.setCurrentText(name)
+
+    def show_axis(self, name: str):
+        """Name the swept column on the x axis (and the error on the y axis)
+        without redrawing the runs; the sweep draws its own series."""
+        for combo, text in ((self._window._combo_runs_x, name),
+                            (self._window._combo_runs_y, "Error")):
+            combo.blockSignals(True)
+            combo.setCurrentText(text)
+            combo.blockSignals(False)
+        self._window._plot_manager.set_comparison_label(name)
+
+    def refresh_comparison_plot(self):
+        """Plot the runs that pass the explorer's filter: the chosen fit
+        metric along the chosen column, the selected runs marked.
+
+        Numbers keep their value (on a log axis for columns spanning decades,
+        while all values are positive); a column of text or yes/no gets one
+        position per value, in alphabetical order. Runs without a value in
+        either column are left out. The points are joined by a line unless
+        several share an x value.
+        """
+        w = self._window
+        table = w._run_table
+        x_col = column(w._combo_runs_x.currentText())
+        y_col = column(w._combo_runs_y.currentText())
+        rows = table.visible_rows()
+        points = [(x, y, table.model.run(r))
+                  for r, x, y in zip(rows, table.values(x_col.name, rows),
+                                     table.values(y_col.name, rows), strict=True)
+                  if x is not None and is_number(y)]
+
+        ticks = None
+        if any(not is_number(x) for x, _, _ in points):
+            labels = sorted({x_col.text(x) for x, _, _ in points}, key=str.casefold)
+            position = {text: i for i, text in enumerate(labels)}
+            points = [(position[x_col.text(x)], y, run) for x, y, run in points]
+            ticks = list(enumerate(labels))
+        log_x = x_col.log and not ticks and all(x > 0 for x, _, _ in points)
+        log_y = y_col.log and all(y > 0 for _, y, _ in points)
+
+        points.sort(key=lambda p: (p[0], p[1]))
+        xs = [p[0] for p in points]
+        selected = table.selected_runs()
+        marked = [(x, y) for x, y, run in points if any(run is s for s in selected)]
+        plots = w._plot_manager
+        plots.set_comparison_axes(x_col.name, y_col.name, log_x, log_y, ticks)
+        plots.set_comparison_data(xs, [p[1] for p in points], connected=len(set(xs)) == len(xs))
+        plots.set_comparison_marker([m[0] for m in marked], [m[1] for m in marked])
 
     # ------------------------------------------------------------------
     # Run details / plot helpers
@@ -560,94 +471,9 @@ class ProjectManager:
         # Enable save buttons
         self._window._set_save_enabled(True)
 
-    def _update_comparison_plot_for_run(self, selected_run: OptimizationRun):
-        """Update comparison plot showing siblings of the selected run."""
-        if self._project is None:
-            return
-
-        # Find all runs with same optimizer, degree, sections, and continuity
-        siblings = []
-        for run in self._project.optimization_runs:
-            if (
-                run.optimization_config.optimizer
-                == selected_run.optimization_config.optimizer
-                and run.spline_config.degree == selected_run.spline_config.degree
-                and run.spline_config.num_sections
-                == selected_run.spline_config.num_sections
-                and run.spline_config.junction_specs()
-                == selected_run.spline_config.junction_specs()
-                and (run.optimization_config.tolerance is None)
-                == (selected_run.optimization_config.tolerance is None)
-            ):
-                siblings.append(run)
-
-        if len(siblings) > 1:
-            # Detect which parameter varies among siblings
-            x, y, label = self._detect_sweep_axis(siblings)
-            self._window._plot_manager.set_comparison_label(label)
-            self._window._plot_manager.set_comparison_data(x, y)
-
-            # Mark selected run
-            sel_x = self._get_run_axis_value(selected_run, label)
-            sel_y = selected_run.result.final_error
-            self._window._plot_manager.set_comparison_marker([sel_x], [sel_y])
-        else:
-            self._window._plot_manager.set_comparison_data([], [])
-            self._window._plot_manager.set_comparison_marker([], [])
-
-    def _update_comparison_plot(self, runs: list[OptimizationRun]):
-        """Update comparison plot for multiple selected runs."""
-        if not runs:
-            self._window._plot_manager.set_comparison_data([], [])
-            self._window._plot_manager.set_comparison_marker([], [])
-            return
-
-        x, y, label = self._detect_sweep_axis(runs)
-        self._window._plot_manager.set_comparison_label(label)
-        self._window._plot_manager.set_comparison_data(x, y)
-        # No single selection when multiple selected
-        self._window._plot_manager.set_comparison_marker([], [])
-
     # ------------------------------------------------------------------
-    # Sweep axis detection helpers
+    # Sweep series
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def _detect_sweep_axis(
-        runs: list[OptimizationRun],
-    ) -> tuple:
-        """Detect which parameter varies among runs and return (x, y, label).
-
-        Checks smoothing_weight first (float sweep), then falls back to
-        num_control_points (integer sweep), then degree.
-        """
-        cp = ProjectManager._run_control_points
-        sw_values = {r.optimization_config.smoothing_weight for r in runs}
-        cp_values = {cp(r) for r in runs}
-        deg_values = {r.spline_config.degree for r in runs}
-        sec_values = {r.spline_config.num_sections for r in runs}
-
-        if len(sw_values) > 1 and len(cp_values) == 1 and len(deg_values) == 1:
-            label = "Smoothing weight"
-            sorted_runs = sorted(
-                runs, key=lambda r: r.optimization_config.smoothing_weight
-            )
-            x = [r.optimization_config.smoothing_weight for r in sorted_runs]
-        elif len(deg_values) > 1 and len(cp_values) == 1:
-            label = "Degree"
-            sorted_runs = sorted(runs, key=lambda r: r.spline_config.degree)
-            x = [r.spline_config.degree for r in sorted_runs]
-        elif len(sec_values) > 1 and len(cp_values) == 1 and len(deg_values) == 1:
-            label = "Sections"
-            sorted_runs = sorted(runs, key=lambda r: r.spline_config.num_sections)
-            x = [r.spline_config.num_sections for r in sorted_runs]
-        else:
-            label = "Control points"
-            sorted_runs = sorted(runs, key=cp)
-            x = [cp(r) for r in sorted_runs]
-
-        y = [r.result.final_error for r in sorted_runs]
-        return x, y, label
 
     def sweep_series(self, spline_config: SplineConfig, opt_config: OptimizationConfig,
                      axis: str) -> tuple[list, list]:
@@ -726,9 +552,8 @@ class ProjectManager:
         self._project_modified = True
         self._selected_runs = []
 
-        # Refresh tree
-        self._populate_tree()
-
+        self._populate_table()
         self._show_project_label()
+        self.on_table_selection_changed()
 
         self._window.statusBar().showMessage(f"Deleted {count} run{'s' if count != 1 else ''}")

@@ -16,7 +16,7 @@ import pyqtgraph as pg
 from ..optimization import construct_control_points
 from ..optimization.models import FitResult, SplineConfig
 from ..spline import BSplineCurve2D, compute_signed_curvature
-from .theme import Ink, Palette, Size, Z, brush, pen
+from .theme import Ink, Palette, Size, Z, brush, label_plot, pen
 from .widgets import MAX_PLOT_POINTS
 
 # Curvature comb: dense grid for tooth placement and higher derivatives, and the
@@ -125,7 +125,10 @@ class PlotManager:
         # Loss curve item
         self._loss_curve = self._new_loss_curve()
 
-        # Comparison plot items: the trace of all runs, the current one in ink
+        # Comparison plot items: the trace of all runs, the current one in ink.
+        # The trace is a line through the runs, or only dots when several
+        # runs share an x value
+        self._comparison_connected = True
         self._comparison_curve = comparison_plot.plot(
             [], [], symbol='o', symbolSize=Size.TRACE_POINT + 2, **self._comparison_style())
         self._comparison_marker = comparison_plot.plot(
@@ -149,8 +152,9 @@ class PlotManager:
         return dict(pen=None, symbolBrush=brush(Ink.TRACE), symbolPen=None)
 
     @staticmethod
-    def _comparison_style() -> dict:
-        return dict(pen=pen(Ink.TRACE, 1.5), symbolBrush=brush(Ink.TRACE), symbolPen=None)
+    def _comparison_style(connected: bool = True) -> dict:
+        return dict(pen=pen(Ink.TRACE, 1.5) if connected else None,
+                    symbolBrush=brush(Ink.TRACE), symbolPen=None)
 
     @staticmethod
     def _marker_style() -> dict:
@@ -215,7 +219,7 @@ class PlotManager:
                 apply(item, self._item_style(key))
         apply(self._data_item, self._data_style())
         apply(self._loss_curve, self._loss_style())
-        apply(self._comparison_curve, self._comparison_style())
+        apply(self._comparison_curve, self._comparison_style(self._comparison_connected))
         apply(self._comparison_marker, self._marker_style())
 
     # -----------------------------------------------------------------
@@ -252,8 +256,12 @@ class PlotManager:
     # Comparison plot helpers
     # -----------------------------------------------------------------
 
-    def set_comparison_data(self, x: list, y: list) -> None:
-        """Update the comparison curve data."""
+    def set_comparison_data(self, x: list, y: list, connected: bool = True) -> None:
+        """Update the comparison curve data; ``connected`` draws a line
+        through the points, otherwise only the dots."""
+        if connected != self._comparison_connected:
+            self._comparison_connected = connected
+            self._comparison_curve.setPen(self._comparison_style(connected)['pen'])
         self._comparison_curve.setData(x, y)
 
     def set_comparison_marker(self, x: list, y: list) -> None:
@@ -262,9 +270,20 @@ class PlotManager:
 
     def set_comparison_label(self, label: str) -> None:
         """Change the comparison plot X-axis label."""
-        self._comparison_plot.setLabel("bottom", label)
-        self._comparison_plot.setLabel("left", "Error")
+        self.set_comparison_axes(label, "Error", log_x=False, log_y=True)
+
+    def set_comparison_axes(self, x_label: str, y_label: str, log_x: bool, log_y: bool,
+                            x_ticks: list[tuple[float, str]] | None = None) -> None:
+        """Label and scale the comparison axes. ``x_ticks`` names the x
+        positions of a column of text (one tick per value); None restores
+        numeric ticks."""
+        label_plot(self._comparison_plot, "bottom", x_label)
+        label_plot(self._comparison_plot, "left", y_label)
         self._comparison_plot.setTitle("")
+        item = self._comparison_plot.getPlotItem()
+        item.setLogMode(x=log_x, y=log_y)
+        item.getAxis("bottom").setTicks([x_ticks] if x_ticks else None)
+        item.enableAutoRange()
 
     # -----------------------------------------------------------------
     # Loss plot helpers

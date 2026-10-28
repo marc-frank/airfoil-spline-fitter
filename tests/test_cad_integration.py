@@ -205,9 +205,11 @@ def test_project_round_trip_keeps_knots_and_settings(tmp_path, tolerance_fit):
     assert run.spline_config == config and run.optimization_config == options
     assert run.result.section_knots == result.section_knots
     assert run.result.report["max_deviation"] == result.report["max_deviation"]
-    from spline_fitter.gui.project import ProjectManager
-    x, y, label = ProjectManager._detect_sweep_axis([run])
-    assert label == "Control points" and x == [result.num_control_points] and y == [raw.fun]
+    from spline_fitter.gui.explorer import column
+    assert column("Fitted control points").cell(run) == result.num_control_points
+    assert column("Error").cell(run) == raw.fun
+    assert column("Tolerance").cell(run) == pytest.approx(1e-5)
+    assert column("Type").cell(run) == "Geometric"
 
 
 def _window(monkeypatch):
