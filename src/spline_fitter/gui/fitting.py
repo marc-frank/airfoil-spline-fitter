@@ -350,6 +350,9 @@ class FittingController:
         w._cancel_requested = False
         self._sweep_results = []
         self._sweep_mode = True
+        # The comparison plot shows this sweep among the project's earlier
+        # runs of the same configuration
+        self._sweep_axis = (config, opt_config, param_name)
         w._plot_manager.clear_plot_items()
         w._plot_manager.set_comparison_label(param_name)
         w._plot_manager.set_comparison_data([], [])
@@ -479,10 +482,11 @@ class FittingController:
         w._set_fitting_ui(False)
 
     def _show_sweep_comparison(self) -> tuple[int | float, FitResult]:
-        """Plot the sweep's errors so far and mark the best; returns the best."""
+        """Plot the errors of all project runs along the sweep axis and mark
+        the best of this sweep; returns it."""
         plots = self._window._plot_manager
-        plots.set_comparison_data([v for v, _ in self._sweep_results],
-                                  [r.final_error for _, r in self._sweep_results])
+        x, y = self._window._project_manager.sweep_series(*self._sweep_axis)
+        plots.set_comparison_data(x, y)
         best_val, best_result = min(self._sweep_results, key=lambda vr: vr[1].final_error)
         plots.set_comparison_marker([best_val], [best_result.final_error])
         return best_val, best_result

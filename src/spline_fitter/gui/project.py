@@ -660,6 +660,37 @@ class ProjectManager:
         y = [r.result.final_error for r in sorted_runs]
         return x, y, label
 
+    def sweep_series(self, spline_config: SplineConfig, opt_config: OptimizationConfig,
+                     axis: str) -> tuple[list, list]:
+        """Errors of all project runs along a sweep axis, as (x, y) sorted by x.
+
+        A run belongs to the series when it matches the given configuration
+        in everything but the swept parameter, so earlier sweeps over other
+        ranges show next to the running one. Of runs at the same value, the
+        latest counts.
+        """
+        if self._project is None:
+            return [], []
+        fixed = {
+            "Control Points": lambda c, o: c.num_control_points,
+            "Degree": lambda c, o: c.degree,
+            "Smoothing Weight": lambda c, o: o.smoothing_weight,
+        }
+        by_value: dict = {}
+        for run in self._project.optimization_runs:
+            c, o = run.spline_config, run.optimization_config
+            if (o.optimizer != opt_config.optimizer
+                    or c.num_sections != spline_config.num_sections
+                    or c.junction_specs() != spline_config.junction_specs()
+                    or (o.tolerance is None) != (opt_config.tolerance is None)
+                    or o.knot_placement != opt_config.knot_placement
+                    or any(get(c, o) != get(spline_config, opt_config)
+                           for name, get in fixed.items() if name != axis)):
+                continue
+            by_value[self._get_run_axis_value(run, axis)] = run.result.final_error
+        x = sorted(by_value)
+        return x, [by_value[v] for v in x]
+
     @staticmethod
     def _run_control_points(run: OptimizationRun) -> int:
         """Configured count per section, or the fitted chain's count for tolerance runs."""

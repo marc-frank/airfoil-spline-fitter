@@ -16,7 +16,7 @@ This module provides:
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QEvent, QPoint, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QEvent, QPoint, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QDialog,
@@ -266,7 +266,7 @@ class SegmentedControl(QWidget):
 class SweepableSpinBox(QWidget):
     """A spinbox with an inline sweep-range toggle button.
 
-    When the [\u2194] button is toggled, a \u2192 [max] field appears, turning
+    When the range button (a dimension line) is toggled, a \u2192 [max] field appears, turning
     the single value into a range for parameter sweeps.  Only one
     SweepableSpinBox in a *group* can be active at a time.
     """
@@ -285,10 +285,12 @@ class SweepableSpinBox(QWidget):
         self._spin = spin_box
         lay.addWidget(self._spin, stretch=1)
 
-        self._btn_sweep = QPushButton("\u2194")
+        self._btn_sweep = QPushButton()
         self._btn_sweep.setObjectName("SweepToggle")
+        self._btn_sweep.setIcon(icon("range", checked_role="TEXT"))
+        self._btn_sweep.setIconSize(QSize(Size.GLYPH_LARGE, Size.GLYPH_LARGE))
         self._btn_sweep.setFixedSize(Size.CONTROL_HEIGHT, Size.CONTROL_HEIGHT)
-        self._btn_sweep.setToolTip("Toggle parameter sweep range")
+        self._btn_sweep.setToolTip("Sweep a range of values: one fit per value")
         self._btn_sweep.setCheckable(True)
         self._btn_sweep.clicked.connect(self._on_toggle_sweep)
         lay.addWidget(self._btn_sweep)
@@ -352,7 +354,7 @@ class SweepableSpinBox(QWidget):
 class SweepableDoubleSpinBox(QWidget):
     """A double-spinbox with an inline sweep-range toggle and step count.
 
-    When the [\u2194] button is toggled, \u2192 [max] and Steps fields appear,
+    When the range button (a dimension line) is toggled, \u2192 [max] and Steps fields appear,
     turning the single value into a range for parameter sweeps.  Only one
     sweepable widget in a *group* can be active at a time (works with
     both SweepableSpinBox and SweepableDoubleSpinBox in the same group).
@@ -378,10 +380,12 @@ class SweepableDoubleSpinBox(QWidget):
         self._spin = spin_box
         lay.addWidget(self._spin, stretch=1)
 
-        self._btn_sweep = QPushButton("\u2194")
+        self._btn_sweep = QPushButton()
         self._btn_sweep.setObjectName("SweepToggle")
+        self._btn_sweep.setIcon(icon("range", checked_role="TEXT"))
+        self._btn_sweep.setIconSize(QSize(Size.GLYPH_LARGE, Size.GLYPH_LARGE))
         self._btn_sweep.setFixedSize(Size.CONTROL_HEIGHT, Size.CONTROL_HEIGHT)
-        self._btn_sweep.setToolTip("Toggle parameter sweep range")
+        self._btn_sweep.setToolTip("Sweep a range of values: one fit per value")
         self._btn_sweep.setCheckable(True)
         self._btn_sweep.clicked.connect(self._on_toggle_sweep)
         lay.addWidget(self._btn_sweep)

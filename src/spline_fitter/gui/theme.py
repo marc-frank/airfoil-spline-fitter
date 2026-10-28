@@ -221,6 +221,7 @@ class Size:
     PAD_LARGE = 16            # dialogs and documents
     CONTROL_HEIGHT = 26       # every input and button, the primary one included
     GLYPH = 10                # chevrons and other icon glyphs
+    GLYPH_LARGE = 16          # glyphs with more detail: the sweep range
     RADIUS = 3
     LABEL_WIDTH = 92          # label column of every sidebar form
     CURVE_WIDTH = 2
@@ -253,6 +254,8 @@ _GLYPHS = {
     "chevron_right": "M4.5 2.5 L8 6 L4.5 9.5",
     "chevron_left": "M7.5 2.5 L4 6 L7.5 9.5",
     "check": "M2.5 6.2 L5 8.6 L9.5 3.6",
+    # A dimension line, as on a drawing: a range from one value to another
+    "range": "M1 3 L1 9 M11 3 L11 9 M3 6 L9 6 M4.6 4.4 L3 6 L4.6 7.6 M7.4 4.4 L9 6 L7.4 7.6",
 }
 
 
@@ -293,12 +296,17 @@ def _glyph_path(name: str) -> QPainterPath:
 class _GlyphEngine(QIconEngine):
     """Paints a glyph in the current color of a token, so icons follow theme changes."""
 
-    def __init__(self, name: str, role: str):
+    def __init__(self, name: str, role: str, checked_role: str | None = None):
         super().__init__()
-        self._name, self._role = name, role
+        self._name, self._role, self._checked_role = name, role, checked_role or role
 
     def paint(self, painter: QPainter, rect: QRect, mode, state) -> None:
-        color = Palette.TEXT_3 if mode == QIcon.Mode.Disabled else getattr(Palette, self._role)
+        if mode == QIcon.Mode.Disabled:
+            color = Palette.TEXT_3
+        elif state == QIcon.State.On:
+            color = getattr(Palette, self._checked_role)
+        else:
+            color = getattr(Palette, self._role)
         side = min(rect.width(), rect.height())
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -321,13 +329,14 @@ class _GlyphEngine(QIconEngine):
         return pix
 
     def clone(self) -> QIconEngine:
-        return _GlyphEngine(self._name, self._role)
+        return _GlyphEngine(self._name, self._role, self._checked_role)
 
 
-def icon(name: str, role: str = "TEXT_2") -> QIcon:
-    """A glyph as an icon (chevron_down/up/right/left or check) in the color
-    of the Palette token named ``role``; it follows theme changes."""
-    return QIcon(_GlyphEngine(name, role))
+def icon(name: str, role: str = "TEXT_2", checked_role: str | None = None) -> QIcon:
+    """A glyph as an icon (chevron_down/up/right/left, check or range) in the
+    color of the Palette token named ``role`` (``checked_role`` on a checked
+    button); it follows theme changes."""
+    return QIcon(_GlyphEngine(name, role, checked_role))
 
 
 def glyph_size() -> QSize:
@@ -482,8 +491,7 @@ QPushButton#Segment[position="first"] {{ border-top-left-radius: {S.RADIUS}px;
 QPushButton#Segment[position="last"] {{ border-top-right-radius: {S.RADIUS}px;
     border-bottom-right-radius: {S.RADIUS}px; }}
 QPushButton#Segment:checked {{ color: {P.TEXT}; }}
-QPushButton#SweepToggle {{ padding: 0; font-size: 13px; color: {P.TEXT_2}; }}
-QPushButton#SweepToggle:checked {{ color: {P.TEXT}; }}
+QPushButton#SweepToggle {{ padding: 0; }}
 """
 
 

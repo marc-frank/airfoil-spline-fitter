@@ -96,6 +96,27 @@ def test_sweep_shows_every_fit_and_its_comparison_point(window, counted, monkeyp
     assert sizes == [0, 1, 2, 3, 3]
 
 
+
+def test_second_sweep_shows_the_whole_project_range(window, monkeypatch):
+    """The comparison plot of a sweep keeps the runs of earlier sweeps of the
+    same configuration, but not runs whose other settings differ."""
+    window._combo_live.setCurrentIndex(0)
+    window._sweep_ctrl._btn_sweep.click()
+    window._sweep_ctrl._spin_max.setValue(11)
+    window._fitting_controller.on_fit()
+    # A run with another smoothing weight is a different series
+    window._sweep_ctrl.stop_sweep()
+    window._spin_smoothing_weight.setValue(window._spin_smoothing_weight.value() * 10)
+    window._fitting_controller.on_fit()
+    window._spin_smoothing_weight.setValue(window._spin_smoothing_weight.value() / 10)
+
+    window._spin_ctrl.setValue(14)
+    window._sweep_ctrl._btn_sweep.click()
+    window._sweep_ctrl._spin_max.setValue(15)
+    window._fitting_controller.on_fit()
+    x, _ = window._plot_manager._comparison_curve.getData()
+    assert list(x) == [10, 11, 14, 15]
+
 def test_batch_shows_every_file_live(window, counted, tmp_path):
     src, dst = tmp_path / "src", tmp_path / "dst"
     src.mkdir()

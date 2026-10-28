@@ -158,8 +158,11 @@ curve is a deviation worth seeing. Every new plot item takes a `Z` value.
   end with an ellipsis ("Export CAD...").
 - **Glyphs**: no emoji. Icons are the stroked glyphs from `theme.icon()`
   (`chevron_down`, `chevron_up`, `chevron_right`, `chevron_left`,
-  `check`), drawn in `TEXT_2` at `Size.GLYPH`. Text symbols are limited to
-  ↔ (sweep) and → (range), plus Greek letters for math (κ, dκ/ds).
+  `check`, `range`), drawn in `TEXT_2` at `Size.GLYPH`. Text symbols are limited to
+  → (from one value to the next), plus Greek letters for math (κ, dκ/ds).
+- **The sweep toggle is a dimension line** (`range`, at `Size.GLYPH_LARGE`):
+  |←→|, as a drawing marks a span. Glyphs on checkable buttons turn `TEXT` when checked
+  (`icon(name, checked_role="TEXT")`).
 - **Chevrons mean disclosure**: pointing right = closed, down = open
   (collapsible sections, tree branches, the comb settings drop-down).
   Sideways chevrons fold a side panel away: the explorer's hide button
