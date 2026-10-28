@@ -64,6 +64,10 @@ def accepts_preview(callback: Callable | None) -> bool:
         return False
 
 
+# bspline-varpro 2.1 can check for a cancel request inside tolerance refits
+_TOLERANCE_STOP = "should_stop" in inspect.signature(bspline_varpro.fit_to_tolerance).parameters
+
+
 def _continuity(spline_config: SplineConfig) -> str | list[str]:
     """Continuity argument for the library: a list with one spec per junction,
     or a single spec when there is at most one junction (a single section
@@ -100,6 +104,7 @@ class GNVarProOptimizer(AlgebraicOptimizer):
         opt_config: OptimizationConfig,
         airfoil: AirfoilData,
         callback: Callable[..., bool] | None = None,
+        should_stop: Callable[[], bool] | None = None,
     ) -> RawOptimResult:
         """
         Fit splines using variable projection.
@@ -115,13 +120,16 @@ class GNVarProOptimizer(AlgebraicOptimizer):
                 If it accepts a ``preview`` keyword, it also receives
                 ``(section_control_points, section_knots, degree)``.
                 Return True to stop early.
+            should_stop: Optional check for a cancel request; tolerance mode
+                calls it on every residual evaluation, also inside refits,
+                where ``callback`` is only reached between refits.
 
         Returns:
             RawOptimResult with fitted control points, knots and error
         """
         sections = [np.array(sec, dtype=np.float64) for sec in airfoil.sections]
         if opt_config.tolerance is not None:
-            return self._fit_tolerance(spline_config, opt_config, sections, callback)
+            return self._fit_tolerance(spline_config, opt_config, sections, callback, should_stop)
         return self._fit_fixed(spline_config, opt_config, sections, callback)
 
     def _fit_fixed(self, spline_config, opt_config, sections, callback) -> RawOptimResult:
@@ -160,7 +168,8 @@ class GNVarProOptimizer(AlgebraicOptimizer):
         )
         return self._raw(result, result.rms_error, result.nfev)
 
-    def _fit_tolerance(self, spline_config, opt_config, sections, callback) -> RawOptimResult:
+    def _fit_tolerance(self, spline_config, opt_config, sections, callback,
+                       should_stop=None) -> RawOptimResult:
         from ..engine import increment_evaluation
 
         with_preview = accepts_preview(callback)
@@ -191,6 +200,7 @@ class GNVarProOptimizer(AlgebraicOptimizer):
             initial_control_points=(None if opt_config.grow_control_points
                                     else spline_config.num_control_points),
             callback=on_refit,
+            **({"should_stop": should_stop} if _TOLERANCE_STOP and should_stop else {}),
         )
         return self._raw(result, result.max_deviation, max(refits, 1))
 

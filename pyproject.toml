@@ -84,5 +84,5 @@ strict = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "packages/bspline-varpro/src"]
 python_files = ["test_*.py"]

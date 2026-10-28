@@ -162,6 +162,7 @@ def run_optimization(
     callback: Callable[[np.ndarray, float], bool] | None = None,
     param_opt_outer_optimizer: OptimizerType | None = None,
     orth_lsq_use_local_bounds: bool = True,
+    should_stop: Callable[[], bool] | None = None,
 ) -> RawOptimResult:
     """
     Run the optimization algorithm to fit splines to airfoil data.
@@ -180,6 +181,8 @@ def run_optimization(
         callback: Optional callback(x, error) returning True to stop
         param_opt_outer_optimizer: Outer optimizer for PARAM_OPT mode
         orth_lsq_use_local_bounds: If True, Orthogonal LSQ uses local bounds
+        should_stop: Optional cancel check for optimizers that can stop
+            between callbacks (VarPro LM tolerance mode)
         
     Returns:
         RawOptimResult with best solution found
@@ -228,6 +231,7 @@ def run_optimization(
                 opt_config,
                 airfoil,
                 callback=callback,
+                should_stop=should_stop,
             )
 
     # Handle pure algebraic methods (no iteration)

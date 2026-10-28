@@ -48,6 +48,15 @@ Or programmatically:
 __version__ = "2.0.0"
 __author__ = "Airfoil Library Project"
 
+import sys as _sys
+from pathlib import Path as _Path
+
+# Running from a source checkout: use the checkout's own bspline-varpro, so the
+# app and the library always come from the same revision
+_checkout_library = _Path(__file__).resolve().parents[2] / "packages" / "bspline-varpro" / "src"
+if _checkout_library.is_dir() and str(_checkout_library) not in _sys.path:
+    _sys.path.insert(0, str(_checkout_library))
+
 # Core data models
 # Fit analysis
 from .analysis import fit_report, scipy_curves

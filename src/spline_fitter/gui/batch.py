@@ -27,6 +27,7 @@ from ..optimization import (
     reset_iteration_tracking,
     run_optimization,
 )
+from .background import run_in_background
 
 if TYPE_CHECKING:
     from .ui import SplineFitterWindow
@@ -182,40 +183,47 @@ class BatchController:
                 self._window.statusBar().showMessage(f"[{idx}/{len(files)}] Fitting {fname}...")
                 QApplication.processEvents()
 
-                # Batch callback for progress updates
-                batch_last_update = batch_start
+                # Progress for the GUI thread: the callback runs on the worker
+                # thread and must not touch widgets
+                last_error = [float("nan")]
 
-                def batch_callback(x: np.ndarray, error: float) -> bool:
-                    nonlocal batch_last_update
+                def batch_callback(x: np.ndarray, error: float, last_error=last_error) -> bool:
                     if self._window._cancel_requested:
                         return True
-
-                    current_time = time.perf_counter()
-                    if current_time - batch_last_update >= 1.0:  # Update every 1 second
-                        batch_last_update = current_time
-                        eval_count = get_evaluation_count()
-                        batch_elapsed = current_time - batch_start
-                        self._window.statusBar().showMessage(
-                            f"[{idx}/{len(files)}] {fname}: {eval_count} evals, "
-                            f"err \u02dc {format_error(error)}, t={format_duration(batch_elapsed)}"
-                        )
-                        QApplication.processEvents()
+                    last_error[0] = error
                     return False
+
+                def batch_tick(idx=idx, fname=fname, batch_start=batch_start,
+                               last_error=last_error):
+                    """Show the progress of the running file (GUI thread)."""
+                    self._window.statusBar().showMessage(
+                        f"[{idx}/{len(files)}] {fname}: {get_evaluation_count()} evals, "
+                        f"err \u02dc {format_error(last_error[0])}, "
+                        f"t={format_duration(time.perf_counter() - batch_start)}"
+                    )
 
                 # Get param optimizer settings
                 param_opt_outer = self._window._get_param_opt_settings()
+                orth_local_bounds = self._window._check_orth_lsq_local_bounds.isChecked()
 
-                # Run optimization with progress callback
-                result = run_optimization(
-                    config,
-                    file_opt_config,
-                    airfoil,
-                    fairness_weights,
-                    bounds,
-                    callback=batch_callback,
-                    param_opt_outer_optimizer=param_opt_outer,
-                    orth_lsq_use_local_bounds=self._window._check_orth_lsq_local_bounds.isChecked(),
-                )
+                def batch_work(airfoil=airfoil, file_opt_config=file_opt_config, bounds=bounds,
+                               batch_callback=batch_callback, param_opt_outer=param_opt_outer,
+                               orth_local_bounds=orth_local_bounds):
+                    """Fit one file (worker thread)."""
+                    return run_optimization(
+                        config,
+                        file_opt_config,
+                        airfoil,
+                        fairness_weights,
+                        bounds,
+                        callback=batch_callback,
+                        param_opt_outer_optimizer=param_opt_outer,
+                        orth_lsq_use_local_bounds=orth_local_bounds,
+                        should_stop=lambda: self._window._cancel_requested,
+                    )
+
+                # Run optimization off the GUI thread
+                result = run_in_background(batch_work, batch_tick)
 
                 if result.x is None:
                     raise RuntimeError("Optimization failed")

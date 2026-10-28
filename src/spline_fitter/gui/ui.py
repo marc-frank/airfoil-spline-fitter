@@ -86,6 +86,12 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._restore_settings()
         self._set_advanced_baseline()
 
+    def closeEvent(self, event):
+        """Stop a running fit so its worker thread ends with the window."""
+        if self._is_fitting:
+            self._cancel_requested = True
+        super().closeEvent(event)
+
     # -- Optimizer Visibility Logic ----------------------------------------
 
     def _on_optimizer_changed(self, index: int):

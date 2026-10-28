@@ -8,6 +8,7 @@ Open, save, export, and report actions for the main window.
 from __future__ import annotations
 
 import os
+import threading
 
 from PyQt6.QtCore import QDir
 from PyQt6.QtWidgets import (
@@ -28,6 +29,7 @@ from PyQt6.QtWidgets import (
 from ..analysis import fit_report, format_report_html, scipy_curves
 from ..geometry import create_airfoil_data
 from ..io import export_airfoil_data, export_spline_data, parse_airfoil_data
+from .background import run_in_background
 
 
 class FileActionsMixin:
@@ -447,9 +449,11 @@ class FileActionsMixin:
         try:
             report = self._fit_result.report
             if report is None:
-                report = fit_report(self._airfoil.sections, self._fit_result,
-                                    precision=self._airfoil.precision)
-                self._fit_result.report = report
+                self.statusBar().showMessage("Measuring the fit...")
+                fit_result, airfoil = self._fit_result, self._airfoil
+                report = run_in_background(lambda: fit_report(
+                    airfoil.sections, fit_result, precision=airfoil.precision))
+                fit_result.report = report
             dialog = QDialog(self)
             dialog.setWindowTitle("Fit Report")
             dialog.resize(560, 520)
@@ -473,18 +477,21 @@ class FileActionsMixin:
 
     def _play_completion_chime(self):
         """Play a chime sound to indicate optimization completion."""
-        try:
-            import chime
-            chime.theme('material')
-            chime.success()
-        except Exception:
-            pass  # Silently ignore if chime not installed or audio fails
+        _play_chime("success")
 
     def _play_error_chime(self):
         """Play a chime sound to indicate an error occurred."""
+        _play_chime("error")
+
+
+def _play_chime(kind: str) -> None:
+    """Play a chime on its own thread: loading the audio can take a second."""
+    def play():
         try:
             import chime
             chime.theme('material')
-            chime.error()
+            getattr(chime, kind)(sync=True)
         except Exception:
             pass  # Silently ignore if chime not installed or audio fails
+
+    threading.Thread(target=play, name="chime", daemon=True).start()

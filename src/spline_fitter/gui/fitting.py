@@ -30,12 +30,14 @@ from ..optimization import (
     run_optimization,
 )
 from ..optimization.models import (
+    AirfoilData,
     FairnessWeights,
     FitResult,
     IterationRecord,
     OptimizationConfig,
     SplineConfig,
 )
+from .background import run_in_background
 
 if TYPE_CHECKING:
     from .ui import SplineFitterWindow
@@ -117,10 +119,6 @@ class FittingController:
         no_improvement = 0
         early_stopped = False
 
-        # Progress tracking for non-live mode
-        last_status_update = start_time
-        status_update_interval = 0.5
-
         # Initialize logger
         run_name = w._airfoil.name or w._airfoil.filename
         error_logger = OptimizerErrorLogger(run_name=run_name)
@@ -131,11 +129,15 @@ class FittingController:
         if opt_config.optimizer.uses_error_metric:
             details += f", {opt_config.metric.display_name} error"
         w.statusBar().showMessage(f"Starting {opt_name} ({details})...")
-        QApplication.processEvents()
+
+        # Latest state for the GUI thread: the optimizer callback runs on the
+        # worker thread and must not touch widgets, so it only records here
+        latest: dict = {}
+        is_direct_cp = opt_config.optimizer.is_iterative_algebraic
 
         def iteration_callback(x: np.ndarray, error: float, preview=None) -> bool:
-            """Handle optimizer iteration updates."""
-            nonlocal best_error, no_improvement, early_stopped, last_status_update
+            """Handle optimizer iteration updates (worker thread)."""
+            nonlocal best_error, no_improvement, early_stopped
 
             # Check cancellation
             if w._cancel_requested:
@@ -146,18 +148,10 @@ class FittingController:
             iteration = increment_iteration()
 
             # Calculate elapsed time
-            current_time = time.perf_counter()
-            elapsed = current_time - start_time
+            elapsed = time.perf_counter() - start_time
 
             # Log error with elapsed time
             error_logger.log(iteration, eval_count, error, elapsed)
-
-            # Update loss plot data from logger
-            w._plot_manager.update_loss_data(
-                list(error_logger.iterations),
-                list(error_logger.elapsed_times),
-                error_logger.errors,
-            )
 
             # Find best error
             best_so_far = min(error_logger.errors) if error_logger.errors else error
@@ -181,77 +175,76 @@ class FittingController:
                 early_stopped = True
                 return True
 
-            # Get live preview mode: 0=Minimal, 1=Moderate, 2=Detailed
-            live_mode = w._combo_live.currentIndex()
-
-            # Check if optimizer uses direct control points (iterative algebraic)
-            is_direct_cp = opt_config.optimizer.is_iterative_algebraic
-
-            # Build status message
-            status_msg = (
-                f"Fitting... t={format_duration(elapsed)} | "
-                f"Iter {iteration} | Evals {eval_count} | Best \u02dc {format_error(best_so_far)}"
+            latest.update(
+                x=np.array(x, copy=True), preview=preview, new=True,
+                status=(f"Fitting... t={format_duration(elapsed)} | "
+                        f"Iter {iteration} | Evals {eval_count} | "
+                        f"Best ˜ {format_error(best_so_far)}"),
             )
+            return False
 
-            if live_mode == 2:
-                # Detailed: update plots on every callback
+        # Live preview pacing per mode (0=Minimal, 1=Moderate, 2=Detailed):
+        # seconds between plot updates; Minimal only updates the status bar
+        plot_interval = {1: 1.0, 2: 0.0}
+        last_plot = start_time
+        last_status = start_time
+
+        def on_tick():
+            """Draw the latest progress (GUI thread)."""
+            nonlocal last_plot, last_status
+            if not latest.get("new"):
+                return
+            now = time.perf_counter()
+            live_mode = w._combo_live.currentIndex()
+            interval = plot_interval.get(live_mode)
+            if interval is not None and now - last_plot >= interval:
+                last_plot = now
+                latest["new"] = False
+                w._plot_manager.update_loss_data(
+                    list(error_logger.iterations),
+                    list(error_logger.elapsed_times),
+                    list(error_logger.errors),
+                )
                 w._plot_manager.update_live_plot(
-                    x, config, w._airfoil.sections,
-                    opt_config.optimize_le_position, is_direct_cp, preview=preview,
+                    latest["x"], config, w._airfoil.sections,
+                    opt_config.optimize_le_position, is_direct_cp, preview=latest["preview"],
                 )
                 w._plot_manager.set_loss_curve_data(w._combo_loss_x.currentData())
-                w.statusBar().showMessage(status_msg)
-
-            elif live_mode == 1:
-                # Moderate: update plots every 1 second
-                if current_time - last_status_update >= 1.0:
-                    last_status_update = current_time
-                    w._plot_manager.update_live_plot(
-                        x, config, w._airfoil.sections,
-                        opt_config.optimize_le_position, is_direct_cp, preview=preview,
-                    )
-                    w._plot_manager.set_loss_curve_data(w._combo_loss_x.currentData())
-                    w.statusBar().showMessage(status_msg)
-
-            else:
-                # Minimal: only status bar updates (every 0.5s)
-                if current_time - last_status_update >= status_update_interval:
-                    last_status_update = current_time
-                    w.statusBar().showMessage(status_msg)
-
-            QApplication.processEvents()
-            return False
+                w.statusBar().showMessage(latest["status"])
+            elif now - last_status >= 0.5:
+                last_status = now
+                w.statusBar().showMessage(latest["status"])
 
         # Get param optimizer settings
         param_opt_outer = w._get_param_opt_settings()
+        orth_local_bounds = w._check_orth_lsq_local_bounds.isChecked()
+        airfoil = w._airfoil
 
-        try:
-            # Run optimization
+        def work():
+            """Run the optimization and measure the result (worker thread)."""
             result = run_optimization(
                 config,
                 opt_config,
-                w._airfoil,
+                airfoil,
                 fairness_weights,
                 bounds,
                 callback=iteration_callback,
                 param_opt_outer_optimizer=param_opt_outer,
-                orth_lsq_use_local_bounds=w._check_orth_lsq_local_bounds.isChecked(),
+                orth_lsq_use_local_bounds=orth_local_bounds,
+                should_stop=lambda: w._cancel_requested,
             )
-
             elapsed = time.perf_counter() - start_time
-
+            fit_result = None
             if result.x is not None:
-                # Build fit result
                 if result.section_control_points is not None:
                     section_ctrl_pts = result.section_control_points
                 else:
                     section_ctrl_pts = construct_control_points(
                         result.x, config,
-                        [list(sec) for sec in w._airfoil.sections],
+                        [list(sec) for sec in airfoil.sections],
                         optimize_le_position=opt_config.optimize_le_position,
                     )
-
-                w._fit_result = FitResult(
+                fit_result = FitResult(
                     section_control_points=section_ctrl_pts,
                     degree=config.degree,
                     final_error=result.fun,
@@ -263,7 +256,15 @@ class FittingController:
                     cancelled=w._cancel_requested,
                     section_knots=result.section_knots,
                 )
-                self._attach_report(w._fit_result, opt_config)
+                self._attach_report(fit_result, opt_config, airfoil)
+            return result, fit_result, elapsed
+
+        try:
+            # Run optimization off the GUI thread
+            result, fit_result, elapsed = run_in_background(work, on_tick)
+
+            if fit_result is not None:
+                w._fit_result = fit_result
 
                 # Build loss history from logger
                 loss_history = [
@@ -293,6 +294,11 @@ class FittingController:
                 w._refresh_curvature_comb()
 
             # Always update loss plot at completion (for Minimal mode)
+            w._plot_manager.update_loss_data(
+                list(error_logger.iterations),
+                list(error_logger.elapsed_times),
+                list(error_logger.errors),
+            )
             if w._plot_manager.has_loss_data:
                 w._plot_manager.set_loss_curve_data(w._combo_loss_x.currentData())
 
@@ -344,13 +350,13 @@ class FittingController:
         finally:
             w._set_fitting_ui(False)
 
-    def _attach_report(self, fit_result: FitResult, opt_config: OptimizationConfig) -> None:
+    def _attach_report(self, fit_result: FitResult, opt_config: OptimizationConfig,
+                       airfoil: AirfoilData) -> None:
         """Measure deviation, curvature and junctions of a fit (never fails the fit)."""
-        w = self._window
         try:
             fit_result.report = fit_report(
-                w._airfoil.sections, fit_result,
-                precision=w._airfoil.precision, tolerance=opt_config.tolerance,
+                airfoil.sections, fit_result,
+                precision=airfoil.precision, tolerance=opt_config.tolerance,
             )
         except Exception as e:
             print(f"Fit report failed: {e}")
@@ -382,6 +388,8 @@ class FittingController:
 
         # Get param optimizer settings
         param_opt_outer = w._get_param_opt_settings()
+        orth_local_bounds = w._check_orth_lsq_local_bounds.isChecked()
+        airfoil = w._airfoil
 
         # Ensure min <= max
         if min_val > max_val:
@@ -502,43 +510,60 @@ class FittingController:
 
                 return False
 
-            try:
+            def sweep_work(sweep_config=sweep_config, sweep_opt_config=sweep_opt_config,
+                           bounds=bounds, fit_start_time=fit_start_time,
+                           sweep_iteration_callback=sweep_iteration_callback):
+                """Run one sweep fit and measure it (worker thread)."""
                 result = run_optimization(
                     sweep_config,
                     sweep_opt_config,
-                    w._airfoil,
+                    airfoil,
                     fairness_weights,
                     bounds,
                     callback=sweep_iteration_callback,
                     param_opt_outer_optimizer=param_opt_outer,
-                    orth_lsq_use_local_bounds=w._check_orth_lsq_local_bounds.isChecked(),
+                    orth_lsq_use_local_bounds=orth_local_bounds,
+                    should_stop=lambda: w._cancel_requested,
+                )
+                if result.x is None:
+                    return None
+                fit_elapsed = time.perf_counter() - fit_start_time
+                if result.section_control_points is not None:
+                    section_ctrl_pts = result.section_control_points
+                else:
+                    section_ctrl_pts = construct_control_points(
+                        result.x, sweep_config,
+                        [list(sec) for sec in airfoil.sections],
+                        optimize_le_position=sweep_opt_config.optimize_le_position,
+                    )
+                fit_result = FitResult(
+                    section_control_points=section_ctrl_pts,
+                    degree=sweep_config.degree,
+                    final_error=result.fun,
+                    num_iterations=result.nit,
+                    num_evaluations=get_evaluation_count(),
+                    elapsed_seconds=fit_elapsed,
+                    converged=result.success and not (w._cancel_requested or early_stopped),
+                    early_stopped=early_stopped,
+                    cancelled=w._cancel_requested,
+                    section_knots=result.section_knots,
+                )
+                self._attach_report(fit_result, sweep_opt_config, airfoil)
+                return fit_result
+
+            def sweep_tick(idx=idx, val=val, fit_start_time=fit_start_time):
+                """Show the progress of the running sweep fit (GUI thread)."""
+                val_str = f"{val:.5g}" if is_opt_config_sweep else str(val)
+                w.statusBar().showMessage(
+                    f"Sweep: {idx + 1}/{total_fits} | {param_name}={val_str} | "
+                    f"{get_evaluation_count()} evals, "
+                    f"t={format_duration(time.perf_counter() - fit_start_time)}"
                 )
 
-                fit_elapsed = time.perf_counter() - fit_start_time
+            try:
+                fit_result = run_in_background(sweep_work, sweep_tick)
 
-                if result.x is not None:
-                    if result.section_control_points is not None:
-                        section_ctrl_pts = result.section_control_points
-                    else:
-                        section_ctrl_pts = construct_control_points(
-                            result.x, sweep_config,
-                            [list(sec) for sec in w._airfoil.sections],
-                            optimize_le_position=opt_config.optimize_le_position,
-                        )
-
-                    fit_result = FitResult(
-                        section_control_points=section_ctrl_pts,
-                        degree=sweep_config.degree,
-                        final_error=result.fun,
-                        num_iterations=result.nit,
-                        num_evaluations=get_evaluation_count(),
-                        elapsed_seconds=fit_elapsed,
-                        converged=result.success and not (w._cancel_requested or early_stopped),
-                        early_stopped=early_stopped,
-                        cancelled=w._cancel_requested,
-                        section_knots=result.section_knots,
-                    )
-                    self._attach_report(fit_result, sweep_opt_config)
+                if fit_result is not None:
                     self._sweep_results.append((val, fit_result))
 
                     # Build loss history
