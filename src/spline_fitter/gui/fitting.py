@@ -119,9 +119,6 @@ class FittingController:
 
         live = LiveProgress(w, config, opt_config, error_logger, start_time)
 
-        # Get param optimizer settings
-        param_opt_outer = w._get_param_opt_settings()
-        orth_local_bounds = w._check_orth_lsq_local_bounds.isChecked()
         airfoil = w._airfoil
 
         def work():
@@ -133,8 +130,6 @@ class FittingController:
                 fairness_weights,
                 bounds,
                 callback=live.callback,
-                param_opt_outer_optimizer=param_opt_outer,
-                orth_lsq_use_local_bounds=orth_local_bounds,
                 should_stop=lambda: w._cancel_requested,
             )
             elapsed = time.perf_counter() - start_time
@@ -299,9 +294,6 @@ class FittingController:
 
         min_val, max_val = sweep_box.sweep_range
 
-        # Get param optimizer settings
-        param_opt_outer = w._get_param_opt_settings()
-        orth_local_bounds = w._check_orth_lsq_local_bounds.isChecked()
         airfoil = w._airfoil
 
         # Ensure min <= max
@@ -403,8 +395,6 @@ class FittingController:
                     fairness_weights,
                     bounds,
                     callback=live.callback,
-                    param_opt_outer_optimizer=param_opt_outer,
-                    orth_lsq_use_local_bounds=orth_local_bounds,
                     should_stop=lambda: w._cancel_requested,
                 )
                 return self._fit_result(result, sweep_config, sweep_opt_config, airfoil,

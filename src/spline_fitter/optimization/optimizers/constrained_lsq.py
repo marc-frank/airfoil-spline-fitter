@@ -7,7 +7,6 @@ Algebraic (non-iterative) spline fitting using constrained LSQ.
 
 from __future__ import annotations
 
-from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -26,12 +25,6 @@ if TYPE_CHECKING:
     )
 
 
-class Parameterization(Enum):
-    """Parameterization strategy for the design matrix."""
-    ARC_LENGTH = "arc_length"
-    CENTRIPETAL = "centripetal"
-
-
 class ConstrainedLSQOptimizer(AlgebraicOptimizer):
     """
     Constrained Least-Squares spline fitting.
@@ -45,30 +38,13 @@ class ConstrainedLSQOptimizer(AlgebraicOptimizer):
     - Fixed to data points (optimize_le_position=False)
     - Free to optimize (optimize_le_position=True)
     
-    This is very fast with proper constraint enforcement.
+    Data points get their parameters from opt_config.custom_parameters, or
+    else by opt_config.parameterization (centripetal or arc length).
     """
-
-    def __init__(
-        self,
-        parameterization: Parameterization = Parameterization.ARC_LENGTH,
-        alpha: float = 0.5,
-    ) -> None:
-        """
-        Initialize the Constrained LSQ optimizer.
-        
-        Args:
-            parameterization: Strategy for assigning parameter values to data points.
-            alpha: Centripetal exponent (only used when parameterization=CENTRIPETAL).
-                   0.5 = centripetal (recommended), 1.0 = chord-length, 0.0 = uniform.
-        """
-        self.parameterization = parameterization
-        self.alpha = alpha
 
     @property
     def name(self) -> str:
-        if self.parameterization == Parameterization.CENTRIPETAL:
-            return "Direct LSQ"
-        return "Constrained LSQ"
+        return "Direct LSQ"
 
     def fit(
         self,
@@ -119,11 +95,10 @@ class ConstrainedLSQOptimizer(AlgebraicOptimizer):
                         f"but section has {n_pts} points"
                     )
                 u = np.array(custom_t, dtype=np.float64)
-            elif self.parameterization == Parameterization.CENTRIPETAL:
-                t_params = centripetal_parametrize(section, alpha=self.alpha)
+            elif opt_config.parameterization == "centripetal":
+                t_params = centripetal_parametrize(section, alpha=0.5)
                 u = np.array(t_params, dtype=np.float64)
             else:
-                # Arc-length parameterization (default behavior)
                 t_params = compute_arc_length_parameters(section)
                 u = np.array(t_params, dtype=np.float64)
 

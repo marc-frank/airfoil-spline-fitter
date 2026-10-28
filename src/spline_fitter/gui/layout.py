@@ -559,6 +559,17 @@ class WindowLayoutMixin:
             1, "Knots move to where they reduce the error most.")
         self._lbl_knot_placement = _add_row(form, "Knots", self._combo_knot_placement)
 
+        # Parameterization (Direct LSQ)
+        self._seg_parameterization = SegmentedControl()
+        self._seg_parameterization.addItem("Centripetal", userData="centripetal")
+        self._seg_parameterization.addItem("Arc length", userData="arc_length")
+        self._seg_parameterization.setItemToolTip(
+            0, "Space the data parameters by the square root of the point distances.\n"
+               "Follows tight curvature, such as the leading edge, more closely.")
+        self._seg_parameterization.setItemToolTip(
+            1, "Space the data parameters by the distance along the data.")
+        self._lbl_parameterization = _add_row(form, "Parameterization", self._seg_parameterization)
+
         self._check_grow = QCheckBox("Add where the fit is worst")
         self._check_grow.setChecked(False)
         self._check_grow.setToolTip(
@@ -707,35 +718,6 @@ class WindowLayoutMixin:
         self._spin_seed.setToolTip("Random seed (Random = system random, \u22650 = deterministic).")
         self._lbl_seed = _add_row(form, "Seed", self._spin_seed)
 
-        # Outer optimizer (parameter optimisation)
-        from ..optimization.optimizers import get_optimizer
-        self._combo_param_opt_outer = QComboBox()
-        for opt_type in OptimizerType:
-            if opt_type.is_param_optimizer or opt_type.is_algebraic or opt_type.is_iterative_algebraic:
-                continue
-            try:
-                opt = get_optimizer(opt_type)
-                if not opt.supports_bounds:
-                    continue
-            except Exception:
-                continue
-            self._combo_param_opt_outer.addItem(opt_type.display_name, userData=opt_type)
-            self._combo_param_opt_outer.setItemData(
-                self._combo_param_opt_outer.count() - 1,
-                opt_type.tooltip, Qt.ItemDataRole.ToolTipRole,
-            )
-        idx = self._combo_param_opt_outer.findData(OptimizerType.L_BFGS_B)
-        if idx >= 0:
-            self._combo_param_opt_outer.setCurrentIndex(idx)
-        self._combo_param_opt_outer.setToolTip("Outer-loop optimizer for parameter optimisation.")
-        self._lbl_param_opt_outer = _add_row(form, "Outer optimizer", self._combo_param_opt_outer)
-
-        # Orthogonal LSQ local bounds
-        self._check_orth_lsq_local_bounds = QCheckBox("Use local t bounds")
-        self._check_orth_lsq_local_bounds.setChecked(False)
-        self._check_orth_lsq_local_bounds.setToolTip("Restrict foot-point search to local bounds.")
-        self._lbl_orth_lsq_local_bounds = _add_row(form, "Foot points", self._check_orth_lsq_local_bounds)
-
         # Search bounds and junction
         self._spin_bbox = QDoubleSpinBox()
         self._spin_bbox.setRange(1.0, 100.0)
@@ -765,8 +747,6 @@ class WindowLayoutMixin:
             ("Smoothing", self._spin_smoothing_weight),
             ("Iteration limit", self._spin_maxiter),
             ("Seed", self._spin_seed),
-            ("Outer optimizer", self._combo_param_opt_outer),
-            ("Foot points", self._check_orth_lsq_local_bounds),
             ("Search scale", self._spin_bbox),
             ("Junctions", self._check_optimize_le),
             ("Fairness penalties", self._check_fairness),

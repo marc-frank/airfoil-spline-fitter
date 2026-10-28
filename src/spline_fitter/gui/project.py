@@ -312,6 +312,8 @@ class ProjectManager:
         if (eo.tolerance != opt_config.tolerance
                 or eo.max_points_per_section != opt_config.max_points_per_section
                 or eo.knot_placement != opt_config.knot_placement
+                or eo.parameterization != opt_config.parameterization
+                or eo.optimize_le_position != opt_config.optimize_le_position
                 or eo.grow_control_points != opt_config.grow_control_points):
             return False
 
@@ -684,6 +686,7 @@ class ProjectManager:
                     or c.junction_specs() != spline_config.junction_specs()
                     or (o.tolerance is None) != (opt_config.tolerance is None)
                     or o.knot_placement != opt_config.knot_placement
+                    or o.parameterization != opt_config.parameterization
                     or any(get(c, o) != get(spline_config, opt_config)
                            for name, get in fixed.items() if name != axis)):
                 continue

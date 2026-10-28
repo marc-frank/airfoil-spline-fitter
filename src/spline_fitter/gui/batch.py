@@ -195,13 +195,8 @@ class BatchController:
                     airfoil=airfoil,
                 )
 
-                # Get param optimizer settings
-                param_opt_outer = self._window._get_param_opt_settings()
-                orth_local_bounds = self._window._check_orth_lsq_local_bounds.isChecked()
-
                 def batch_work(airfoil=airfoil, file_opt_config=file_opt_config, bounds=bounds,
-                               live=live, param_opt_outer=param_opt_outer,
-                               orth_local_bounds=orth_local_bounds):
+                               live=live):
                     """Fit one file (worker thread)."""
                     return run_optimization(
                         config,
@@ -210,8 +205,6 @@ class BatchController:
                         fairness_weights,
                         bounds,
                         callback=live.callback,
-                        param_opt_outer_optimizer=param_opt_outer,
-                        orth_lsq_use_local_bounds=orth_local_bounds,
                         should_stop=lambda: self._window._cancel_requested,
                     )
 

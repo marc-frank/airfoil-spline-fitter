@@ -139,14 +139,6 @@ class OptimizerType(Enum):
     DA = "da"
     BH = "bh"
 
-    # Algebraic (non-iterative) method
-    CONSTRAINED_LSQ = "constrained-lsq"
-
-    # Alternating LSQ for orthogonal distance
-    ORTHOGONAL_LSQ = "orthogonal-lsq"
-
-    # Two-stage parameterization optimizer
-    PARAM_OPT = "param-opt"
 
     # Direct LSQ (single-step, no iteration)
     DIRECT_LSQ = "direct-lsq"
@@ -162,16 +154,12 @@ class OptimizerType(Enum):
     @property
     def is_algebraic(self) -> bool:
         """Return True if this is an algebraic (non-iterative) method."""
-        return self in (OptimizerType.CONSTRAINED_LSQ, OptimizerType.DIRECT_LSQ)
+        return self == OptimizerType.DIRECT_LSQ
 
     @property
     def is_iterative_algebraic(self) -> bool:
         """Return True if this uses iterative algebraic (LSQ) steps."""
-        return self in (
-            OptimizerType.ORTHOGONAL_LSQ,
-            OptimizerType.PARAM_OPT,
-            OptimizerType.GN_VARPRO,
-        )
+        return self == OptimizerType.GN_VARPRO
 
     @property
     def uses_error_metric(self) -> bool:
@@ -181,11 +169,6 @@ class OptimizerType(Enum):
         methods (VarPro LM included) fix their own error measure.
         """
         return not (self.is_algebraic or self.is_iterative_algebraic)
-
-    @property
-    def is_param_optimizer(self) -> bool:
-        """Return True if this is the two-stage parameterization optimizer."""
-        return self == OptimizerType.PARAM_OPT
 
     @property
     def display_name(self) -> str:
@@ -206,11 +189,6 @@ class OptimizerType(Enum):
             OptimizerType.DE: "Differential Evolution (global)",
             OptimizerType.DA: "Dual Annealing (global)",
             OptimizerType.BH: "Basin-hopping (global)",
-            # Algebraic
-            OptimizerType.CONSTRAINED_LSQ: "Constrained LSQ (algebraic)",
-            OptimizerType.ORTHOGONAL_LSQ: "Orthogonal LSQ (alternating)",
-            # Two-stage parameterization
-            OptimizerType.PARAM_OPT: "Param Optimizer (two-stage)",
             # New high-performance optimizers
             OptimizerType.DIRECT_LSQ: "Direct LSQ (fastest, single-step)",
             OptimizerType.GN_VARPRO: "VarPro LM (CAD: tolerance, G1-G3)",
@@ -279,32 +257,11 @@ class OptimizerType(Enum):
                 "Local optimizer with random restarts. Slow.\n"
                 "Use only if local optimizers fail."
             ),
-            # Algebraic method
-            OptimizerType.CONSTRAINED_LSQ: (
-                "Constrained Least-Squares B-spline fitting.\n"
-                "Non-iterative: algebraically optimal control points.\n"
-                "Fixed TE endpoints, configurable continuity (G0-G2).\n"
-                "Junction positions fixed or free via 'Optimize junctions' checkbox.\n"
-                "Very fast with proper constraint enforcement."
-            ),
-            OptimizerType.ORTHOGONAL_LSQ: (
-                "Alternating LSQ for orthogonal distance fitting.\n"
-                "Iterates: LSQ solve → foot-point projection → repeat.\n"
-                "Combines LSQ speed with orthogonal distance accuracy.\n"
-                "Typically converges in 3-10 iterations."
-            ),
-            # Two-stage parameterization optimizer
-            OptimizerType.PARAM_OPT: (
-                "Two-stage parameterization optimization.\n"
-                "Outer: Optimizes parameter (t) values for each data point.\n"
-                "Inner: Constrained LSQ fits control points.\n"
-                "Objective: Minimize orthogonal distance or bending energy.\n"
-                "Use Param Optimizer settings panel to configure."
-            ),
             # New high-performance optimizers
             OptimizerType.DIRECT_LSQ: (
                 "Direct LSQ (single-step, no iteration).\n"
-                "Uses centripetal parameterization + one LSQ solve.\n"
+                "One constrained least-squares solve, with fixed TE endpoints\n"
+                "and junctions fixed or free (Advanced).\n"
                 "Fastest option (~1ms), moderate accuracy (~1e-4).\n"
                 "Ideal for dense data or real-time preview."
             ),
@@ -471,7 +428,9 @@ class OptimizationConfig:
         custom_parameters: Optional per-section parameter values for data points.
             If provided, must be a list with one array per section, each array
             having same length as data points in that section. Values should
-            be in [0, 1] range. If None, arc-length parametrisation is used.
+            be in [0, 1] range. If None, `parameterization` is used.
+        parameterization: Direct LSQ only. How data points get their curve
+            parameters: "centripetal" (default) or "arc_length".
         tolerance: Maximum orthogonal deviation for VarPro LM tolerance mode,
             which picks the number of control points and the knots itself.
             None fits the configured number of control points.
@@ -495,6 +454,7 @@ class OptimizationConfig:
     optimize_le_position: bool = False
     smoothing_weight: float = 1e-3
     custom_parameters: list[np.ndarray] | None = None
+    parameterization: str = "centripetal"
     tolerance: float | None = None
     max_points_per_section: int | None = None
     knot_placement: str = "free"
@@ -508,6 +468,10 @@ class OptimizationConfig:
                 f"max_points_per_section must be at least 2, got {self.max_points_per_section}")
         if self.knot_placement not in ("uniform", "free"):
             raise ValueError(f"knot_placement must be 'uniform' or 'free', got {self.knot_placement!r}")
+        if self.parameterization not in ("centripetal", "arc_length"):
+            raise ValueError(
+                "parameterization must be 'centripetal' or 'arc_length', "
+                f"got {self.parameterization!r}")
 
     @property
     def random_seed(self) -> int | None:

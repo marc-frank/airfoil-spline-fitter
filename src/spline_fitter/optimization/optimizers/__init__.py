@@ -8,7 +8,7 @@ This package provides:
     - Base classes for optimizer interface
     - Global optimizers (DE, DA, Basin-Hopping)
     - Local optimizers (BFGS, L-BFGS-B, CG, SLSQP, etc.)
-    - Algebraic methods (Constrained LSQ)
+    - Algebraic methods (Direct LSQ)
 
 Usage:
     >>> from spline_fitter.optimization.optimizers import get_optimizer, OptimizerType
@@ -27,7 +27,7 @@ from .base import (
     RawOptimResult,
 )
 from .basin_hopping import BasinHoppingOptimizer
-from .constrained_lsq import ConstrainedLSQOptimizer, Parameterization
+from .constrained_lsq import ConstrainedLSQOptimizer
 from .differential_evolution import DifferentialEvolutionOptimizer
 from .dual_annealing import DualAnnealingOptimizer
 from .gn_varpro import GNVarProOptimizer
@@ -42,8 +42,6 @@ from .local import (
     SLSQPOptimizer,
     TNCOptimizer,
 )
-from .orthogonal_lsq import OrthogonalLSQOptimizer
-from .param_optimizer import ParamOptimizer
 
 if TYPE_CHECKING:
     from ..models import OptimizerType
@@ -94,11 +92,6 @@ def get_optimizer(optimizer_type: OptimizerType) -> BaseOptimizer:
         ValueError: If optimizer type is not recognized
     """
     from ..models import OptimizerType
-    from .constrained_lsq import Parameterization
-
-    # DIRECT_LSQ is ConstrainedLSQ with centripetal parameterization
-    if optimizer_type == OptimizerType.DIRECT_LSQ:
-        return ConstrainedLSQOptimizer(parameterization=Parameterization.CENTRIPETAL)
 
     optimizer_map = {
         # Global optimizers
@@ -115,11 +108,8 @@ def get_optimizer(optimizer_type: OptimizerType) -> BaseOptimizer:
         OptimizerType.NELDER_MEAD: NelderMeadOptimizer,
         OptimizerType.COBYLA: COBYLAOptimizer,
         # Algebraic
-        OptimizerType.CONSTRAINED_LSQ: ConstrainedLSQOptimizer,
-        OptimizerType.ORTHOGONAL_LSQ: OrthogonalLSQOptimizer,
+        OptimizerType.DIRECT_LSQ: ConstrainedLSQOptimizer,
         OptimizerType.GN_VARPRO: GNVarProOptimizer,
-        # Two-stage parameterization
-        OptimizerType.PARAM_OPT: ParamOptimizer,
     }
 
     optimizer_class = optimizer_map.get(optimizer_type)
@@ -151,11 +141,8 @@ __all__ = [
     "COBYLAOptimizer",
     # Algebraic
     "ConstrainedLSQOptimizer",
-    "Parameterization",
-    "OrthogonalLSQOptimizer",
     "GNVarProOptimizer",
     # Two-stage parameterization
-    "ParamOptimizer",
     # Factory function
     "get_optimizer",
     # Iteration tracking

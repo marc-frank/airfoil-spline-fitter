@@ -374,39 +374,71 @@ class TestIntegration:
         assert result.section_control_points is not None
         assert len(result.section_control_points) == 2
 
-    def test_orthogonal_lsq_uses_footpoint_module(self, airfoil_like_points):
-        """Test OrthogonalLSQOptimizer runs and uses footpoint module."""
+    @pytest.mark.parametrize("parameterization", ["centripetal", "arc_length"])
+    @pytest.mark.parametrize("free_junctions", [False, True])
+    def test_direct_lsq_parameterization_and_junctions(
+        self, airfoil_like_points, parameterization, free_junctions
+    ):
+        """Direct LSQ honours the parameterization and the free-junction option."""
         from spline_fitter.optimization.models import (
             AirfoilData,
             OptimizationConfig,
+            OptimizerType,
             SplineConfig,
         )
-        from spline_fitter.optimization.optimizers.orthogonal_lsq import OrthogonalLSQOptimizer
+        from spline_fitter.optimization.optimizers import get_optimizer
 
         upper, lower = airfoil_like_points
-
-        # Combine coordinates in Selig format
-        all_coords = list(upper) + list(lower[1:])
-        junction_idx = len(upper) - 1
-
         airfoil = AirfoilData(
-            coordinates=tuple(all_coords),
+            coordinates=tuple(list(upper) + list(lower[1:])),
             sections=(tuple(upper), tuple(lower)),
-            junction_indices=(junction_idx,),
+            junction_indices=(len(upper) - 1,),
             num_sections=2,
             name="test_airfoil",
         )
-
         config = SplineConfig(degree=5, num_control_points=15, num_sections=2)
-        opt_config = OptimizationConfig(max_iterations=3)  # Few iterations for speed
+        opt_config = OptimizationConfig(
+            optimizer=OptimizerType.DIRECT_LSQ,
+            parameterization=parameterization,
+            optimize_le_position=free_junctions,
+        )
 
-        optimizer = OrthogonalLSQOptimizer(max_outer_iterations=3)
-        result = optimizer.fit(config, opt_config, airfoil)
+        result = get_optimizer(OptimizerType.DIRECT_LSQ).fit(config, opt_config, airfoil)
 
-        # Should complete without error
-        assert result is not None
-        assert result.fun >= 0
-        assert result.section_control_points is not None
+        first, second = result.section_control_points
+        np.testing.assert_allclose(first[-1], second[0], atol=1e-9)
+        junction_on_data = np.allclose(first[-1], upper[-1], atol=1e-9)
+        assert junction_on_data != free_junctions
+        assert result.fun < 1e-2
+
+    def test_direct_lsq_parameterization_changes_fit(self, airfoil_like_points):
+        """Centripetal and arc-length parameters give different fits."""
+        from spline_fitter.optimization.models import (
+            AirfoilData,
+            OptimizationConfig,
+            OptimizerType,
+            SplineConfig,
+        )
+        from spline_fitter.optimization.optimizers import get_optimizer
+
+        upper, lower = airfoil_like_points
+        airfoil = AirfoilData(
+            coordinates=tuple(list(upper) + list(lower[1:])),
+            sections=(tuple(upper), tuple(lower)),
+            junction_indices=(len(upper) - 1,),
+            num_sections=2,
+            name="test_airfoil",
+        )
+        config = SplineConfig(degree=5, num_control_points=15, num_sections=2)
+        fits = [
+            get_optimizer(OptimizerType.DIRECT_LSQ).fit(
+                config,
+                OptimizationConfig(optimizer=OptimizerType.DIRECT_LSQ, parameterization=p),
+                airfoil,
+            ).x
+            for p in ("centripetal", "arc_length")
+        ]
+        assert not np.allclose(fits[0], fits[1])
 
 
 # =============================================================================

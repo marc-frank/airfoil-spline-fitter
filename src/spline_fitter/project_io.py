@@ -80,6 +80,10 @@ _logger = logging.getLogger(__name__)
 _RETIRED_OPTIMIZERS = {
     # Its coarse-to-fine role is taken over by VarPro LM tolerance mode.
     "hierarchical-lsq": OptimizerType.GN_VARPRO,
+    # Direct LSQ with arc-length parameters, and two methods VarPro LM supersedes.
+    "constrained-lsq": OptimizerType.DIRECT_LSQ,
+    "orthogonal-lsq": OptimizerType.GN_VARPRO,
+    "param-opt": OptimizerType.GN_VARPRO,
 }
 
 
@@ -145,6 +149,7 @@ def _encode_optimization_config(config: OptimizationConfig) -> dict[str, Any]:
         "early_stop_patience": config.early_stop_patience,
         "relative_tolerance": config.relative_tolerance,
         "optimize_le_position": config.optimize_le_position,
+        "parameterization": config.parameterization,
         "tolerance": config.tolerance,
         "max_points_per_section": config.max_points_per_section,
         "knot_placement": config.knot_placement,
@@ -276,6 +281,7 @@ def _decode_optimization_config(data: dict[str, Any]) -> OptimizationConfig:
         early_stop_patience=data.get("early_stop_patience", 50),
         relative_tolerance=data.get("relative_tolerance", 1e-6),
         optimize_le_position=data.get("optimize_le_position", False),
+        parameterization=data.get("parameterization", "centripetal"),
         tolerance=data.get("tolerance"),
         max_points_per_section=data.get("max_points_per_section"),
         # Projects from before these settings: fixed counts used uniform knots,

@@ -158,9 +158,8 @@ def run_benchmark():
     
     # Optimizer configurations to test
     optimizers = [
-        (OptimizerType.CONSTRAINED_LSQ, "Constrained LSQ (baseline)"),
-        (OptimizerType.ORTHOGONAL_LSQ, "Orthogonal LSQ (vectorized)"),
-        (OptimizerType.VARPRO_LSQ, "VARPRO LSQ (Gauss-Newton)"),
+        (OptimizerType.DIRECT_LSQ, "Direct LSQ (baseline)"),
+        (OptimizerType.GN_VARPRO, "VarPro LM"),
     ]
     
     # Spline configuration

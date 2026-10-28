@@ -138,6 +138,13 @@ purpose (adding control points where the error is large). Projects that
 contain Hierarchical LSQ runs still open, and those runs load as VarPro LM
 runs.
 
+### Retired: Constrained LSQ, Orthogonal LSQ, Param Optimizer
+
+Constrained LSQ was Direct LSQ with arc-length parameters; Direct LSQ now has
+a Parameterization setting (centripetal or arc length) and the free-junction
+option. Orthogonal LSQ and the two-stage Param Optimizer refined the data
+parameters around an LSQ solve, which VarPro LM does better.
+
 ## Architecture
 
 The package is organized into focused modules:
@@ -147,7 +154,6 @@ The package is organized into focused modules:
 | `optimization/models.py` | Data structures (AirfoilData, SplineConfig, FitResult, etc.) |
 | `optimization/engine.py` | Objective function and optimizer dispatch (`run_optimization`) |
 | `optimization/control_points.py` | Control points from optimizer variables, junction continuity, initial guess |
-| `optimization/constrained_fit.py` | Algebraic constrained least-squares fitting |
 | `optimization/run_log.py` | Optimizer progress CSVs (`optimizer_logs/`, or `SPLINE_FITTER_LOG_DIR`) |
 | `optimization/optimizers/` | Optimizer adapters, including `gn_varpro.py` for bspline-varpro |
 | `spline.py` | B-spline mathematics and curve evaluation |

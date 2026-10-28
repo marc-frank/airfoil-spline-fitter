@@ -27,7 +27,6 @@ import numpy as np
 from ..geometry import compute_arc_length_parameters
 from ..spline.fairness import compute_fairness_penalty
 from ..spline.spline import BSplineCurve2D
-from .constrained_fit import run_constrained_lsq_fit
 from .control_points import construct_control_points, generate_initial_guess
 from .models import (
     AirfoilData,
@@ -160,8 +159,6 @@ def run_optimization(
     fairness_weights: FairnessWeights,
     bounds: Sequence[Bounds],
     callback: Callable[[np.ndarray, float], bool] | None = None,
-    param_opt_outer_optimizer: OptimizerType | None = None,
-    orth_lsq_use_local_bounds: bool = True,
     should_stop: Callable[[], bool] | None = None,
 ) -> RawOptimResult:
     """
@@ -179,8 +176,6 @@ def run_optimization(
         fairness_weights: Regularization weights
         bounds: Variable bounds
         callback: Optional callback(x, error) returning True to stop
-        param_opt_outer_optimizer: Outer optimizer for PARAM_OPT mode
-        orth_lsq_use_local_bounds: If True, Orthogonal LSQ uses local bounds
         should_stop: Optional cancel check for optimizers that can stop
             between callbacks (VarPro LM tolerance mode)
         
@@ -193,67 +188,21 @@ def run_optimization(
     optimizer = get_optimizer(optimizer_type)
 
     # -------------------------------------------------------------------------
-    # Two-Stage Parameterization Optimizer
+    # LSQ-Based Methods
     # -------------------------------------------------------------------------
 
-    if optimizer_type.is_param_optimizer:
-        from .optimizers.param_optimizer import ParamOptimizer
-        if isinstance(optimizer, ParamOptimizer):
-            return optimizer.fit(
-                config=config,
-                opt_config=opt_config,
-                airfoil=airfoil,
-                outer_optimizer_type=param_opt_outer_optimizer,
-                fairness_weights=fairness_weights,
-                callback=callback,
-            )
+    if optimizer_type == OptimizerType.GN_VARPRO:
+        optimizer.config.smoothing_weight = opt_config.smoothing_weight
+        return optimizer.fit(
+            config,
+            opt_config,
+            airfoil,
+            callback=callback,
+            should_stop=should_stop,
+        )
 
-    # -------------------------------------------------------------------------
-    # Algebraic and Iterative-Algebraic Methods
-    # -------------------------------------------------------------------------
-
-    # Handle iterative-algebraic methods (with callback support)
-    if opt_config.optimizer.is_iterative_algebraic:
-        from .optimizers.gn_varpro import GNVarProOptimizer
-        from .optimizers.orthogonal_lsq import OrthogonalLSQOptimizer
-
-        if isinstance(optimizer, OrthogonalLSQOptimizer):
-            return optimizer.fit(
-                config,
-                opt_config,
-                airfoil,
-                callback=callback,
-            )
-        elif isinstance(optimizer, GNVarProOptimizer):
-            optimizer.config.smoothing_weight = opt_config.smoothing_weight
-            return optimizer.fit(
-                config,
-                opt_config,
-                airfoil,
-                callback=callback,
-                should_stop=should_stop,
-            )
-
-    # Handle pure algebraic methods (no iteration)
-    if optimizer.is_algebraic:
-        from .optimizers.constrained_lsq import ConstrainedLSQOptimizer
-        if isinstance(optimizer, ConstrainedLSQOptimizer):
-            return optimizer.fit(config, opt_config, airfoil)
-        else:
-            # Fallback for other algebraic methods
-            section_ctrl_pts, final_error = run_constrained_lsq_fit(
-                config, opt_config, airfoil
-            )
-            flat_vars = []
-            for ctrl_pts in section_ctrl_pts:
-                for x, y in ctrl_pts:
-                    flat_vars.extend([x, y])
-            return RawOptimResult(
-                x=np.array(flat_vars, dtype=np.float64),
-                fun=final_error,
-                nit=1,
-                section_control_points=section_ctrl_pts,
-            )
+    if optimizer_type == OptimizerType.DIRECT_LSQ:
+        return optimizer.fit(config, opt_config, airfoil)
 
     # -------------------------------------------------------------------------
     # Iterative Optimizers (Global and Local)

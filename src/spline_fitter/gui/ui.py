@@ -99,11 +99,10 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
 
     def _on_optimizer_changed(self, index: int):
         """Show the settings the selected optimizer reads; disable the ones
-        another setting rules out (goal, growth, section count, outer optimizer)."""
+        another setting rules out (goal, growth, section count)."""
         opt_type = self._combo_opt.currentData()
         if opt_type is None:
             return
-        is_param_opt = opt_type.is_param_optimizer
         is_gn_varpro = opt_type == OptimizerType.GN_VARPRO
         uses_metric = opt_type.uses_error_metric
         tolerance_mode = is_gn_varpro and self._tolerance_mode_selected()
@@ -125,6 +124,8 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
              self._lbl_tolerance, self._tolerance_row,
              self._lbl_knot_placement, self._combo_knot_placement,
              self._lbl_grow, self._check_grow)
+        show(opt_type == OptimizerType.DIRECT_LSQ,
+             self._lbl_parameterization, self._seg_parameterization)
         enable(tolerance_mode, self._lbl_tolerance)
         self._spin_tolerance.setEnabled(
             editable and tolerance_mode and not self._check_auto_tolerance.isChecked())
@@ -160,27 +161,18 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         show(not opt_type.is_algebraic and not is_gn_varpro,
              self._lbl_maxiter, self._spin_maxiter)
 
-        # Seed: the stochastic global optimizers, directly or as the outer
-        # optimizer of the parameter optimisation
-        outer = self._combo_param_opt_outer.currentData()
-        show(opt_type.is_global or is_param_opt, self._lbl_seed, self._spin_seed)
-        enable(opt_type.is_global or (outer is not None and outer.is_global),
-               self._lbl_seed, self._spin_seed)
+        # Seed: the stochastic global optimizers
+        show(opt_type.is_global, self._lbl_seed, self._spin_seed)
 
         # Search scale: the bounds, which only bounded optimizers receive
         show(uses_metric and self._optimizer_takes_bounds(opt_type),
              self._lbl_bbox, self._spin_bbox)
 
-        # Junction position: every method but Direct LSQ can move it
-        show(opt_type != OptimizerType.DIRECT_LSQ, self._lbl_optimize_le, self._check_optimize_le)
+        # Junction position: every method can move it
         enable(has_junctions, self._lbl_optimize_le, self._check_optimize_le)
 
-        show(is_param_opt, self._lbl_param_opt_outer, self._combo_param_opt_outer)
-        show(opt_type == OptimizerType.ORTHOGONAL_LSQ,
-             self._lbl_orth_lsq_local_bounds, self._check_orth_lsq_local_bounds)
-        # Fairness penalties: the objective of the general-purpose optimizers,
-        # and the bending energy of the parameter optimizer
-        show(uses_metric or is_param_opt, self._regularization_box)
+        # Fairness penalties: the objective of the general-purpose optimizers
+        show(uses_metric, self._regularization_box)
         self._update_advanced_badge()
 
     @staticmethod
@@ -243,9 +235,6 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
             lambda _: self._on_optimizer_changed(self._combo_opt.currentIndex())
         )
         self._check_grow.toggled.connect(
-            lambda _: self._on_optimizer_changed(self._combo_opt.currentIndex())
-        )
-        self._combo_param_opt_outer.currentIndexChanged.connect(
             lambda _: self._on_optimizer_changed(self._combo_opt.currentIndex())
         )
         self._check_auto_tolerance.toggled.connect(
@@ -374,6 +363,7 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
                                     if opt_type == OptimizerType.GN_VARPRO
                                     and self._check_subsample.isChecked() else None),
             knot_placement=self._combo_knot_placement.currentData(),
+            parameterization=self._seg_parameterization.currentData(),
             grow_control_points=self._check_grow.isChecked(),
         )
 
@@ -392,16 +382,10 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._combo_knot_placement.setCurrentIndex(
             max(self._combo_knot_placement.findData(opt.knot_placement), 0))
         self._check_grow.setChecked(opt.grow_control_points)
+        self._seg_parameterization.setCurrentIndex(
+            max(self._seg_parameterization.findData(opt.parameterization), 0))
         if opt.max_points_per_section is not None:
             self._spin_subsample.setValue(opt.max_points_per_section)
-
-    def _get_param_opt_settings(self) -> OptimizerType | None:
-        """Get parameterization optimizer settings from UI state.
-
-        Returns:
-            Outer optimizer type for param optimizer
-        """
-        return self._combo_param_opt_outer.currentData()
 
     def _get_fairness_weights(self) -> FairnessWeights:
         """Build FairnessWeights from current UI state."""
@@ -564,6 +548,7 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._seg_goal.setEnabled(not fitting)
         self._tolerance_row.setEnabled(not fitting)
         self._combo_knot_placement.setEnabled(not fitting)
+        self._seg_parameterization.setEnabled(not fitting)
         self._check_grow.setEnabled(not fitting)
         self._combo_err.setEnabled(not fitting)
         self._advanced_section.content_widget().setEnabled(not fitting)
