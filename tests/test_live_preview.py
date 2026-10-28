@@ -94,3 +94,20 @@ def test_sweep_shows_every_fit_and_its_comparison_point(window, counted, monkeyp
     assert counted["drawn"] == counted["steps"] > 0
     # Cleared at the start, one more point after each fit, then the final view
     assert sizes == [0, 1, 2, 3, 3]
+
+
+def test_batch_shows_every_file_live(window, counted, tmp_path):
+    src, dst = tmp_path / "src", tmp_path / "dst"
+    src.mkdir()
+    dst.mkdir()
+    for code in ("0012", "2412"):
+        pts = np.round(NACA4(code).points(81), 6)
+        lines = [f"NACA {code}"] + [f"{x:.6f} {y:.6f}" for x, y in pts]
+        (src / f"naca{code}.dat").write_text("\n".join(lines) + "\n")
+    window._combo_live.setCurrentIndex(2)
+    batch = window._batch_controller
+    batch._batch_src_dir, batch._batch_dst_dir = str(src), str(dst)
+    batch._on_batch_convert()
+    assert len(list(dst.glob("*.spline.dat"))) == 2
+    assert counted["drawn"] == counted["steps"] > 0
+    assert window.statusBar().currentMessage().startswith("Batch complete! 2 files")

@@ -5,7 +5,6 @@ import time
 from dataclasses import replace as dc_replace
 from typing import TYPE_CHECKING
 
-import numpy as np
 from PyQt6.QtCore import QDir
 from PyQt6.QtWidgets import (
     QApplication,
@@ -22,12 +21,14 @@ from ..formatting import format_duration, format_error
 from ..geometry import compute_optimization_bounds, create_airfoil_data
 from ..io import export_spline_data, parse_airfoil_data
 from ..optimization import (
+    OptimizerErrorLogger,
     construct_control_points,
     get_evaluation_count,
     reset_iteration_tracking,
     run_optimization,
 )
 from .background import run_in_background
+from .live import LiveProgress
 
 if TYPE_CHECKING:
     from .ui import SplineFitterWindow
@@ -178,36 +179,28 @@ class BatchController:
                 # Reset tracking
                 reset_iteration_tracking()
 
-                # Status update
+                # Status update; the file's points replace the plot
                 batch_start = time.perf_counter()
                 self._window.statusBar().showMessage(f"[{idx}/{len(files)}] Fitting {fname}...")
+                plots = self._window._plot_manager
+                plots.plot_airfoil(airfoil.coordinates)
+                self._window._fitting_controller._reset_loss_plot()
                 QApplication.processEvents()
 
-                # Progress for the GUI thread: the callback runs on the worker
-                # thread and must not touch widgets
-                last_error = [float("nan")]
-
-                def batch_callback(x: np.ndarray, error: float, last_error=last_error) -> bool:
-                    if self._window._cancel_requested:
-                        return True
-                    last_error[0] = error
-                    return False
-
-                def batch_tick(idx=idx, fname=fname, batch_start=batch_start,
-                               last_error=last_error):
-                    """Show the progress of the running file (GUI thread)."""
-                    self._window.statusBar().showMessage(
-                        f"[{idx}/{len(files)}] {fname}: {get_evaluation_count()} evals, "
-                        f"err \u02dc {format_error(last_error[0])}, "
-                        f"t={format_duration(time.perf_counter() - batch_start)}"
-                    )
+                # Each file is shown live like a single fit
+                live = LiveProgress(
+                    self._window, config, file_opt_config,
+                    OptimizerErrorLogger(run_name=airfoil.name or airfoil.filename),
+                    batch_start, status_prefix=f"[{idx}/{len(files)}] {fname} | ",
+                    airfoil=airfoil,
+                )
 
                 # Get param optimizer settings
                 param_opt_outer = self._window._get_param_opt_settings()
                 orth_local_bounds = self._window._check_orth_lsq_local_bounds.isChecked()
 
                 def batch_work(airfoil=airfoil, file_opt_config=file_opt_config, bounds=bounds,
-                               batch_callback=batch_callback, param_opt_outer=param_opt_outer,
+                               live=live, param_opt_outer=param_opt_outer,
                                orth_local_bounds=orth_local_bounds):
                     """Fit one file (worker thread)."""
                     return run_optimization(
@@ -216,20 +209,21 @@ class BatchController:
                         airfoil,
                         fairness_weights,
                         bounds,
-                        callback=batch_callback,
+                        callback=live.callback,
                         param_opt_outer_optimizer=param_opt_outer,
                         orth_lsq_use_local_bounds=orth_local_bounds,
                         should_stop=lambda: self._window._cancel_requested,
                     )
 
                 # Run optimization off the GUI thread
-                result = run_in_background(batch_work, batch_tick)
+                result = run_in_background(batch_work, live.on_tick)
+                live.show_loss()
 
                 if result.x is None:
                     raise RuntimeError("Optimization failed")
                 if self._window._cancel_requested:
                     break
-                if not result.success:
+                if not result.success and not live.early_stopped:
                     raise ValueError("Optimizer did not converge: " + result.message)
 
                 # Construct control points for all sections
@@ -237,6 +231,12 @@ class BatchController:
                     result.x, config,
                     [list(sec) for sec in airfoil.sections],
                     optimize_le_position=opt_config.optimize_le_position,
+                )
+
+                # Show the finished fit
+                plots.update_live_plot(
+                    result.x, config, airfoil.sections, opt_config.optimize_le_position,
+                    preview=(section_ctrl_pts, result.section_knots, config.degree),
                 )
 
                 # Export
@@ -272,6 +272,14 @@ class BatchController:
             msg = f"Batch cancelled after {format_duration(elapsed)}. Completed {done}/{len(files)}, failed {failed}."
         else:
             msg = f"Batch complete! {done} files in {format_duration(elapsed)} ({failed} failed)"
+
+        # Back to the window's own airfoil and fit
+        w = self._window
+        if w._airfoil is not None:
+            w._plot_manager.plot_airfoil(w._airfoil.coordinates)
+            if w._fit_result is not None:
+                w._plot_manager.plot_fitted_spline(w._fit_result)
+                w._refresh_curvature_comb()
 
         self._window.statusBar().showMessage(msg)
         self._window._set_fitting_ui(False)

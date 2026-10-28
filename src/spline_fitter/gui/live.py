@@ -24,7 +24,7 @@ import numpy as np
 
 from ..formatting import format_duration, format_error
 from ..optimization import OptimizerErrorLogger, get_evaluation_count, increment_iteration
-from ..optimization.models import OptimizationConfig, SplineConfig
+from ..optimization.models import AirfoilData, OptimizationConfig, SplineConfig
 from .background import request_tick
 
 if TYPE_CHECKING:
@@ -48,8 +48,11 @@ class LiveProgress:
         error_logger: OptimizerErrorLogger,
         start_time: float,
         status_prefix: str = "",
+        airfoil: AirfoilData | None = None,
     ):
+        """``airfoil`` is the one being fitted, if not the window's (batch)."""
         self._w = window
+        self._airfoil = airfoil or window._airfoil
         self._config = config
         self._opt_config = opt_config
         self._logger = error_logger
@@ -160,7 +163,7 @@ class LiveProgress:
         self._latest["new"] = False
         self.show_loss()
         w._plot_manager.update_live_plot(
-            self._latest["x"], self._config, w._airfoil.sections,
+            self._latest["x"], self._config, self._airfoil.sections,
             self._opt_config.optimize_le_position, self._is_direct_cp,
             preview=self._latest["preview"],
         )

@@ -266,6 +266,8 @@ class PlotManager:
         Args:
             coords: List of (x, y) tuples.
         """
+        # Forget the items too, or later drawings would reuse removed ones
+        self.clear_plot_items()
         self._plot.clear()
         x = [p[0] for p in coords]
         y = [p[1] for p in coords]
