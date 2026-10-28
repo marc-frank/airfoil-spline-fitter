@@ -11,26 +11,31 @@ This module provides:
     - SidebarSection / CollapsibleSection: Captioned sidebar sections
     - SegmentedControl: Button row with a combo-box-like API
     - SweepableSpinBox: Spinbox with parameter sweep toggle
+    - ThemeDialog: Light / dark mode and the temperature of the greys
 """
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QEvent, QPoint, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QPoint, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QButtonGroup,
+    QDialog,
+    QDialogButtonBox,
     QDoubleSpinBox,
+    QFormLayout,
     QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
     QSizePolicy,
+    QSlider,
     QSpinBox,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
-from .theme import Size, glyph_size, icon
+from .theme import Scheme, Size, glyph_size, icon, set_theme
 
 # =============================================================================
 # Constants
@@ -449,3 +454,78 @@ class SweepableDoubleSpinBox(QWidget):
     @property
     def spinbox(self) -> QDoubleSpinBox:
         return self._spin
+
+
+# =============================================================================
+# Theme Dialog
+# =============================================================================
+
+class ThemeDialog(QDialog):
+    """Light or dark mode (or the system's) and the temperature of the greys,
+    applied while they change and saved by theme.set_theme."""
+
+    # Temperatures this close to 0 snap to neutral
+    SNAP = 4
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Theme")
+        form = QFormLayout(self)
+        form.setContentsMargins(Size.PAD_LARGE, Size.PAD_LARGE, Size.PAD_LARGE, Size.PAD_LARGE)
+        form.setSpacing(Size.GAP)
+
+        self._mode = SegmentedControl()
+        for mode in Scheme.MODES:
+            self._mode.addItem(mode.capitalize(), userData=mode)
+        self._mode.setItemToolTip(0, "Follow the light or dark setting of the system")
+        self._mode.setCurrentIndex(self._mode.findData(Scheme.MODE))
+        self._mode.currentIndexChanged.connect(lambda _: set_theme(mode=self._mode.currentData()))
+        self._add_row(form, "Mode", self._mode)
+
+        self._slider = QSlider(Qt.Orientation.Horizontal)
+        self._slider.setObjectName("TemperatureSlider")
+        self._slider.setRange(-100, 100)
+        self._slider.setPageStep(10)
+        self._slider.setMinimumWidth(220)
+        self._slider.setValue(Scheme.TEMPERATURE)
+        self._slider.setToolTip("Tint the greys cool (blue) or warm (sand); neutral in the middle")
+        cool, warm = QLabel("Cool"), QLabel("Warm")
+        for label in (cool, warm):
+            label.setObjectName("Muted")
+        row = QWidget()
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(Size.GAP)
+        lay.addWidget(cool)
+        lay.addWidget(self._slider, stretch=1)
+        lay.addWidget(warm)
+        self._add_row(form, "Temperature", row)
+
+        self._btn_neutral = QPushButton("Neutral")
+        self._btn_neutral.setToolTip("Untinted greys (the default)")
+        self._btn_neutral.clicked.connect(lambda: self._slider.setValue(0))
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.addButton(self._btn_neutral, QDialogButtonBox.ButtonRole.ResetRole)
+        buttons.rejected.connect(self.accept)
+        form.addRow(buttons)
+
+        # Restyling the whole app takes a moment: apply the slider when it pauses
+        self._apply_timer = QTimer(self, singleShot=True, interval=60)
+        self._apply_timer.timeout.connect(self._apply_temperature)
+        self._slider.valueChanged.connect(self._on_slider)
+
+    @staticmethod
+    def _add_row(form: QFormLayout, text: str, field) -> None:
+        label = QLabel(text)
+        label.setObjectName("FormLabel")
+        label.setFixedWidth(Size.LABEL_WIDTH)
+        form.addRow(label, field)
+
+    def _on_slider(self, value: int):
+        if value and abs(value) <= self.SNAP:
+            self._slider.setValue(0)
+            return
+        self._apply_timer.start()
+
+    def _apply_temperature(self):
+        set_theme(temperature=self._slider.value())

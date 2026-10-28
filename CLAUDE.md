@@ -12,8 +12,11 @@ anything in `src/spline_fitter/gui/`.
   object name (`PrimaryButton`, `SectionCaption`, `Muted`, `Readout`, ...), never with
   `setStyleSheet`, hex colors or RGB tuples.
 - Orange ink is reserved for the fitted curve, the one primary button and the
-  current-run marker. The chrome is warm neutral grey (Claude Code greys); selection is
-  a lighter grey. Every input and button is `Size.CONTROL_HEIGHT` tall.
+  current-run marker. The chrome is grey; selection is a lighter grey. Every input and
+  button is `Size.CONTROL_HEIGHT` tall.
+- The user chooses light/dark/system and a cool-to-warm temperature (View > Theme...),
+  applied live. Greys are lightness values in `GREY_LIGHTNESS`, never hex; read tokens at
+  draw time, and restyle on `theme_changed` whatever the stylesheet does not cover.
 - Labels: sentence case, no trailing colons; captions uppercase; no emoji.
 - `tests/test_design_language.py` enforces this; run it after GUI changes.
 

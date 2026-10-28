@@ -269,6 +269,8 @@ class WindowLayoutMixin:
         self._action_toggle_explorer.setCheckable(True)
         self._action_toggle_explorer.setChecked(True)
         self._action_toggle_explorer.setShortcut("Ctrl+Shift+E")
+        view_menu.addSeparator()
+        self._action_theme = view_menu.addAction("&Theme...")
 
         # Help menu
         help_menu = menubar.addMenu("&Help")

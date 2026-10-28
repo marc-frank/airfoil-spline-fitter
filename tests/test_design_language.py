@@ -57,8 +57,8 @@ def test_documented_tokens_exist():
     from spline_fitter.gui import theme
 
     doc = (ROOT / "docs" / "design-language.md").read_text(encoding="utf-8")
-    defined = set()
-    for cls in (theme.Palette, theme.Ink, theme.Z, theme.Size, theme.Type):
+    defined = {name for name in vars(theme) if name.isupper()}
+    for cls in (theme.Palette, theme.Ink, theme.Z, theme.Size, theme.Type, theme.Scheme):
         defined |= {name for name in vars(cls) if name.isupper()}
     missing = {t for t in re.findall(r"`(?:[A-Za-z]+\.)?([A-Z][A-Z_]{2,})`", doc)} - defined
     assert not missing, f"documented but not in theme.py: {sorted(missing)}"
@@ -116,5 +116,84 @@ def test_inputs_and_buttons_share_one_height():
                  if c.height() != Size.CONTROL_HEIGHT]
         assert not wrong, f"controls not {Size.CONTROL_HEIGHT} px tall: {wrong}"
     finally:
+        w.deleteLater()
+        app.processEvents()
+
+
+def _contrast(fg: str, bg: str) -> float:
+    """WCAG contrast ratio of two hex colors."""
+    def luminance(color: str) -> float:
+        channels = [int(color[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+        r, g, b = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in channels]
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+    hi, lo = sorted((luminance(fg), luminance(bg)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+@pytest.fixture
+def scheme():
+    """Restore the tokens of the default scheme after a test changed them."""
+    from spline_fitter.gui import theme
+
+    yield theme
+    theme._set_tokens(theme.Scheme.DARK, theme.Scheme.TEMPERATURE)
+
+
+@pytest.mark.parametrize("dark", [True, False], ids=["dark", "light"])
+def test_neutral_temperature_has_no_tint(scheme, dark):
+    scheme._set_tokens(dark, 0)
+    for name in scheme.GREY_LIGHTNESS:
+        color = getattr(scheme.Palette, name, None)
+        if color:
+            assert color[1:3] == color[3:5] == color[5:7], f"{name} {color} is tinted"
+
+
+@pytest.mark.parametrize("dark", [True, False], ids=["dark", "light"])
+def test_temperature_tints_warm_and_cool(scheme, dark):
+    scheme._set_tokens(dark, 100)
+    warm = scheme.rgb(scheme.Palette.PANEL)
+    scheme._set_tokens(dark, -100)
+    cool = scheme.rgb(scheme.Palette.PANEL)
+    assert warm[0] > warm[2] and cool[2] > cool[0]
+
+
+@pytest.mark.parametrize("dark", [True, False], ids=["dark", "light"])
+@pytest.mark.parametrize("temperature", [-100, 0, 100])
+def test_text_stays_readable(scheme, dark, temperature):
+    scheme._set_tokens(dark, temperature)
+    P = scheme.Palette
+    for surface in (P.CANVAS, P.WINDOW, P.PANEL, P.FIELD):
+        assert _contrast(P.TEXT, surface) >= 7
+        assert _contrast(P.TEXT_2, surface) >= 4.5
+        assert _contrast(P.TEXT_3, surface) >= 2.5
+
+
+def test_theme_setting_restyles_the_running_app(tmp_path, monkeypatch):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt6.QtCore import QSettings
+    from PyQt6.QtWidgets import QApplication
+
+    from spline_fitter.gui import theme
+    from spline_fitter.gui.ui import SplineFitterWindow
+
+    ini = str(tmp_path / "settings.ini")
+    monkeypatch.setattr(theme, "_settings", lambda: QSettings(ini, QSettings.Format.IniFormat))
+    app = QApplication.instance() or QApplication([])
+    w = SplineFitterWindow()
+    before = (theme.Scheme.MODE, theme.Scheme.TEMPERATURE)
+    try:
+        w._plot_manager.plot_airfoil([(1, 0), (0, 0), (1, 0.01)])
+        theme.set_theme("light", -40)
+        app.processEvents()
+        assert not theme.Scheme.DARK
+        assert app.palette().window().color().name().lower() == theme.Palette.WINDOW.lower()
+        assert w._plot.backgroundBrush().color().name().lower() == theme.Palette.CANVAS.lower()
+        data = w._plot_manager._data_item.opts["symbolBrush"].color()
+        assert (data.red(), data.green(), data.blue()) == theme.Ink.DATA
+        saved = QSettings(ini, QSettings.Format.IniFormat)
+        assert saved.value("theme/mode") == "light"
+        assert int(saved.value("theme/temperature")) == -40
+    finally:
+        theme.set_theme(*before)
         w.deleteLater()
         app.processEvents()

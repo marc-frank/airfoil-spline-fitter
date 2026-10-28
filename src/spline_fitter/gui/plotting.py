@@ -127,22 +127,96 @@ class PlotManager:
 
         # Comparison plot items: the trace of all runs, the current one in ink
         self._comparison_curve = comparison_plot.plot(
-            [], [], pen=pen(Ink.TRACE, 1.5),
-            symbol='o', symbolSize=Size.TRACE_POINT + 2,
-            symbolBrush=brush(Ink.TRACE), symbolPen=None,
-        )
+            [], [], symbol='o', symbolSize=Size.TRACE_POINT + 2, **self._comparison_style())
         self._comparison_marker = comparison_plot.plot(
-            [], [], pen=None, symbol='o', symbolSize=Size.MARKER_SIZE,
-            symbolBrush=brush(Ink.MARKER),
-            symbolPen=pen(Palette.CANVAS, 2),
-        )
+            [], [], symbol='o', symbolSize=Size.MARKER_SIZE, **self._marker_style())
+
+        # The measured stations
+        self._data_item = None
 
     def _new_loss_curve(self):
         """The convergence trace: one dot per step."""
         return self._loss_plot.plot(
-            [], [], pen=None, symbol='o', symbolSize=Size.TRACE_POINT,
-            symbolBrush=brush(Ink.TRACE), symbolPen=None,
+            [], [], symbol='o', symbolSize=Size.TRACE_POINT, **self._loss_style())
+
+    # -----------------------------------------------------------------
+    # Styles: the colors are read when called, so restyle() can reapply
+    # them after a theme change
+    # -----------------------------------------------------------------
+
+    @staticmethod
+    def _loss_style() -> dict:
+        return dict(pen=None, symbolBrush=brush(Ink.TRACE), symbolPen=None)
+
+    @staticmethod
+    def _comparison_style() -> dict:
+        return dict(pen=pen(Ink.TRACE, 1.5), symbolBrush=brush(Ink.TRACE), symbolPen=None)
+
+    @staticmethod
+    def _marker_style() -> dict:
+        return dict(pen=None, symbolBrush=brush(Ink.MARKER), symbolPen=pen(Palette.CANVAS, 2))
+
+    @staticmethod
+    def _data_style() -> dict:
+        return dict(pen=None, symbolBrush=brush(Ink.DATA, 220), symbolPen=None)
+
+    @staticmethod
+    def _curve_style() -> dict:
+        """The fitted curve: a solid line in ink."""
+        return dict(pen=pen(Ink.CURVE, Size.CURVE_WIDTH), z=Z.CURVE)
+
+    @staticmethod
+    def _polygon_style() -> dict:
+        """The control polygon: dashed construction line, hollow square vertices."""
+        return dict(
+            pen=pen(Ink.CONSTRUCTION, dashed=True, alpha=170),
+            symbol='s', symbolSize=Size.CONTROL_SIZE,
+            symbolBrush=brush(Palette.CANVAS), symbolPen=pen(Ink.CONSTRUCTION),
+            z=Z.CONSTRUCTION,
         )
+
+    @staticmethod
+    def _knot_style() -> dict:
+        """Knots: diamonds ringed in the canvas color."""
+        return dict(pen=None, symbol='d', symbolSize=Size.KNOT_SIZE,
+                    symbolBrush=brush(Ink.KNOTS), symbolPen=pen(Palette.CANVAS), z=Z.KNOTS)
+
+    @staticmethod
+    def _comb_style(which: str, tips: bool) -> dict:
+        """Comb of a section: faint teeth, and the envelope through their tips.
+        Suction side cool, pressure side warm ('upper_0', 'lower_1', ...)."""
+        color = Ink.COMB_UPPER if which.startswith('upper') else Ink.COMB_LOWER
+        if tips:
+            return dict(pen=pen(color, 1.5), z=Z.COMB)
+        return dict(pen=pen(color, alpha=Ink.COMB_TEETH_ALPHA), z=Z.COMB)
+
+    def _item_style(self, key: str) -> dict:
+        """The style of a main-plot item, by its key."""
+        if key == 'knots':
+            return self._knot_style()
+        if '_ctrl_' in key:
+            return self._polygon_style()
+        if key.startswith(('comb_', 'tips_')):
+            return self._comb_style(key.split('_', 1)[1], key.startswith('tips_'))
+        return self._curve_style()
+
+    def restyle(self) -> None:
+        """Reapply the theme's colors to every plot item (after a theme change)."""
+        def apply(item, style: dict) -> None:
+            if item is None:
+                return
+            item.setPen(style.get('pen'))
+            if 'symbolBrush' in style:
+                item.setSymbolBrush(style['symbolBrush'])
+                item.setSymbolPen(style['symbolPen'])
+
+        for items in (self._curve_items, self._comb_items, self._knot_items):
+            for key, item in items.items():
+                apply(item, self._item_style(key))
+        apply(self._data_item, self._data_style())
+        apply(self._loss_curve, self._loss_style())
+        apply(self._comparison_curve, self._comparison_style())
+        apply(self._comparison_marker, self._marker_style())
 
     # -----------------------------------------------------------------
     # Loss data management
@@ -250,9 +324,7 @@ class PlotManager:
                 kx, ky = curve.evaluate_array(knots)
                 xs.extend(kx.tolist())
                 ys.extend(ky.tolist())
-            self._put(self._knot_items, 'knots', xs, ys, pen=None, symbol='d',
-                      symbolSize=Size.KNOT_SIZE, symbolBrush=brush(Ink.KNOTS),
-                      symbolPen=pen(Palette.CANVAS), z=Z.KNOTS)
+            self._put(self._knot_items, 'knots', xs, ys, **self._knot_style())
         except Exception:
             pass
 
@@ -276,15 +348,9 @@ class PlotManager:
         self._plot.clear()
         x = [p[0] for p in coords]
         y = [p[1] for p in coords]
-        data = self._plot.plot(
-            x, y,
-            pen=None,
-            symbol='o',
-            symbolSize=Size.DATA_SIZE,
-            symbolBrush=brush(Ink.DATA, 220),
-            symbolPen=None,
-        )
-        data.setZValue(Z.DATA)
+        self._data_item = self._plot.plot(
+            x, y, symbol='o', symbolSize=Size.DATA_SIZE, **self._data_style())
+        self._data_item.setZValue(Z.DATA)
         self._plot.autoRange()
 
     def reset_loss_plot(self, x_label: str, log_x: bool, log_y: bool) -> None:
@@ -517,29 +583,10 @@ class PlotManager:
             seg_x.extend([x0, x1, np.nan])
             seg_y.extend([y0, y1, np.nan])
 
-        # Suction side cool, pressure side warm (handles 'upper_0', 'lower_1', etc.)
-        color = Ink.COMB_UPPER if which.startswith('upper') else Ink.COMB_LOWER
-
-        # Faint teeth; the envelope through their tips is what is read
         self._put(self._comb_items, f'comb_{which}', seg_x, seg_y,
-                  pen=pen(color, alpha=Ink.COMB_TEETH_ALPHA), z=Z.COMB)
+                  **self._comb_style(which, tips=False))
         self._put(self._comb_items, f'tips_{which}', cx, cy,
-                  pen=pen(color, 1.5), z=Z.COMB)
-
-    @staticmethod
-    def _curve_style() -> dict:
-        """The fitted curve: a solid line in ink."""
-        return dict(pen=pen(Ink.CURVE, Size.CURVE_WIDTH), z=Z.CURVE)
-
-    @staticmethod
-    def _polygon_style() -> dict:
-        """The control polygon: dashed construction line, hollow square vertices."""
-        return dict(
-            pen=pen(Ink.CONSTRUCTION, dashed=True, alpha=170),
-            symbol='s', symbolSize=Size.CONTROL_SIZE,
-            symbolBrush=brush(Palette.CANVAS), symbolPen=pen(Ink.CONSTRUCTION),
-            z=Z.CONSTRUCTION,
-        )
+                  **self._comb_style(which, tips=True))
 
     def _put(self, items: dict, key: str, x, y, z: float = 0, **style) -> None:
         """Plot ``x, y`` as ``items[key]``, reusing the item if it exists:

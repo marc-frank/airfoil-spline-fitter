@@ -7,9 +7,10 @@ through the measured stations and held in place by lead weights called
 exactly what this application does, so the interface borrows the floor's
 look and vocabulary.
 
-> The window is the lofting floor in graphite: warm neutral greys (the
-> Claude Code greys), construction lines in pencil, and one ink (the orange
-> of the app icon) for the curve and for the one action that makes it.
+> The window is the lofting floor: graphite at night or paper by day, in
+> greys you can tint cool or warm, construction lines in pencil, and one ink
+> (the orange of the app icon) for the curve and for the one action that
+> makes it.
 
 Everything below is implemented in
 [`src/spline_fitter/gui/theme.py`](../src/spline_fitter/gui/theme.py).
@@ -36,37 +37,60 @@ fails if another GUI module sets its own.
 4. **Hairlines, not boxes.** Regions are separated by 1 px rules and steps
    in surface lightness, never by heavy frames or drop shadows.
 5. **One theme, owned by the app.** The look does not depend on the OS
-   theme: the Fusion style and the palette are set by `apply_theme()`.
+   style: the Fusion style and the palette are set by `apply_theme()`. Only
+   light or dark follows the OS, and only while the user leaves it so.
 
 ---
 
 ## 2. Color
 
+### Theme setting (`theme.Scheme`, View > Theme...)
+
+The user picks two things; both are saved in QSettings and applied live:
+
+- **Mode**: system (the default: follows the OS, also when it switches),
+  light or dark.
+- **Temperature**: -100 (cool, blue) .. 0 (neutral, the default) .. +100
+  (warm, sand). +50 reproduces the Claude Code greys.
+
+The greys are therefore **not fixed hex values**. Each is a lightness in
+`GREY_LIGHTNESS` (one for dark, one for light), and `grey(lightness,
+temperature)` turns it into a color in OKLab, so a temperature change keeps
+every contrast. At temperature 0 the greys have no hue at all. Colors that
+must differ between light and dark but are not greys (status, knots, comb)
+are pairs in `MODE_COLORS`. Never write a grey as a hex value anywhere: add
+a lightness pair to `GREY_LIGHTNESS`.
+
 ### UI tokens (`theme.Palette`)
 
-All chrome is **warm neutral grey**, taken from the Claude Code dark
-theme; there is no blue or other tint. Surfaces get lighter the closer
-they are to the hand.
+Dark mode: surfaces get lighter the closer they are to the hand. Light
+mode: paper-white canvas and fields on slightly darker panels. Lightness
+values are OKLab (dark / light).
+
+| Token | Lightness | Use |
+|---|---|---|
+| `CANVAS` | 0.213 / 0.995 | Plot area: the drafting film |
+| `WINDOW` | 0.236 / 0.970 | Window, toolbars, run bar, status bar |
+| `PANEL` | 0.268 / 0.950 | Sidebar, project explorer, disabled fields |
+| `FIELD` | 0.309 / 1.000 | Inputs, secondary buttons, menus, drop-down panels |
+| `FIELD_HOVER` | 0.344 / 0.965 | Hovered field or button |
+| `RULE` | 0.360 / 0.870 | Hairlines and borders |
+| `RULE_STRONG` | 0.434 / 0.780 | Borders of hovered fields, popups |
+| `TEXT` | 0.982 / 0.250 | Values, primary text |
+| `TEXT_2` | 0.807 / 0.430 | Field labels, axis text, status bar, glyphs, badges |
+| `TEXT_3` | 0.686 / 0.580 | Captions, hints, disabled text |
+| `SELECT` | 0.405 / 0.895 | Checked toggles, selected rows, menu highlight |
+| `SELECT_LINE` | 0.609 / 0.600 | Focus and checked borders |
+
+Fixed colors, the same in both modes:
 
 | Token | Hex | Use |
 |---|---|---|
-| `CANVAS` | `#191918` | Plot area: the drafting film |
-| `WINDOW` | `#1F1E1D` | Window, toolbars, run bar, status bar |
-| `PANEL` | `#262624` | Sidebar, project explorer, disabled fields |
-| `FIELD` | `#30302E` | Inputs, secondary buttons, menus, drop-down panels |
-| `FIELD_HOVER` | `#393936` | Hovered field or button |
-| `RULE` | `#3E3D3A` | Hairlines and borders |
-| `RULE_STRONG` | `#52514C` | Borders of hovered fields, popups |
-| `TEXT` | `#FAF9F5` | Values, primary text |
-| `TEXT_2` | `#C2C0B6` | Field labels, axis text, status bar, glyphs, badges |
-| `TEXT_3` | `#9C9A92` | Captions, hints, disabled text |
 | `INK` | `#FF6E10` | The icon's orange: fitted curve, primary button |
 | `INK_HOVER` / `INK_PRESSED` | `#FF8636` / `#E05E08` | Primary button states |
 | `INK_DEEP` | `#AD4200` | The icon's shadowed underside (reserved) |
 | `ON_INK` | `#1A0C02` | Text on ink |
-| `SELECT` | `#4A4945` | Checked toggles, selected rows, menu highlight |
-| `SELECT_LINE` | `#85837B` | Focus and checked borders |
-| `OK` / `WARN` / `ERROR` | `#4FBF85` / `#F2B84B` / `#F0605D` | Status only |
+| `OK` / `WARN` / `ERROR` | dark `#4FBF85` / `#F2B84B` / `#F0605D`, light `#23905A` / `#B87A00` / `#D23B37` | Status only |
 
 **Rules**
 
@@ -81,6 +105,15 @@ they are to the hand.
   that something is fine, doubtful or failed, never to decorate.
 - **Disabled is `TEXT_3` on `PANEL`.** Disabled things are not hidden or
   greyed by opacity.
+- **Everything follows a theme change.** The stylesheet restyles widgets by
+  itself. Whatever takes a color some other way must restyle on
+  `theme_changed.changed`: plot items get their style from a `_..._style()`
+  method of `PlotManager` that `restyle()` reapplies; icons come from
+  `theme.icon()`, which paints in the current token color. Read tokens when
+  drawing, never copy them into a constant at import time.
+- **Readable at every setting.** Tests check, in both modes and at both
+  temperature extremes, that `TEXT` / `TEXT_2` / `TEXT_3` keep a contrast of
+  7 / 4.5 / 2.5 on every surface.
 
 ### Plot tokens (`theme.Ink`)
 
@@ -88,12 +121,12 @@ Named by what they draw, never by hue.
 
 | Token | Drawn as | Meaning |
 |---|---|---|
-| `DATA` | chalk dots, `Size.DATA_SIZE` | Measured stations |
+| `DATA` | chalk (or graphite) dots in `TEXT`, `Size.DATA_SIZE` | Measured stations |
 | `CURVE` | solid ink line, `Size.CURVE_WIDTH` | The fitted spline (the batten) |
-| `CONSTRUCTION` | dashed pencil grey line, hollow squares | Control polygon and control points (CAD convention: squares) |
-| `KNOTS` | sulfur diamonds with a canvas outline | Knots (the ducks that hold the batten) |
-| `COMB_UPPER` | sky blue | Comb on the suction side (upper surface, even sections) |
-| `COMB_LOWER` | rose | Comb on the pressure side (lower surface, odd sections) |
+| `CONSTRUCTION` | dashed pencil grey line, hollow squares (a grey in `GREY_LIGHTNESS`) | Control polygon and control points (CAD convention: squares) |
+| `KNOTS` | sulfur diamonds with a canvas outline (`MODE_COLORS`) | Knots (the ducks that hold the batten) |
+| `COMB_UPPER` | sky blue (`MODE_COLORS`) | Comb on the suction side (upper surface, even sections) |
+| `COMB_LOWER` | rose (`MODE_COLORS`) | Comb on the pressure side (lower surface, odd sections) |
 | `TRACE` | light grey dots or line | Convergence and comparison traces |
 | `MARKER` | ink dot with a canvas ring | The current run in a trace |
 | `GRID` | `TEXT_2` at `GRID_ALPHA` | Grid and axes |
@@ -180,6 +213,8 @@ never call `setStyleSheet` on it.
 | Plot | `pg.PlotWidget` + `style_plot(plot)` + `label_plot(plot, side, text)` |
 | Plot pens and brushes | `theme.pen(Ink.X, width, dashed, alpha)`, `theme.brush(Ink.X, alpha)` |
 | Rich text dialog | `theme.text_browser()`; mark status with `class='ok'`, `'warn'`, `'error'` |
+| Slider | `QSlider`; the temperature slider is `TemperatureSlider` (cool-to-warm groove) |
+| Theme setting | `ThemeDialog` (`widgets.py`), from View > Theme... |
 
 **Layout of the main window**: sidebar (workflow order: data, method,
 curve, advanced, then the fixed run bar with the primary action and the
@@ -192,17 +227,24 @@ comparison below) | project explorer.
 
 1. Need a color, size or font? Take it from `theme.py`. If none fits, add
    a **named** token there (named by role, not hue) and document it here.
-2. Need a new look for a widget kind? Add an object-name rule to
+   A new grey is a lightness pair in `GREY_LIGHTNESS`; another color that
+   must change with the mode is a pair in `MODE_COLORS`.
+2. Check it in light and dark, cool and warm (View > Theme...), and make
+   sure it follows a switch while the window is open.
+3. Need a new look for a widget kind? Add an object-name rule to
    `theme._qss()`, not a `setStyleSheet` call.
-3. Drawing something in a plot? Decide whether it is measured, constructed
-   or derived, give it an `Ink` token and a `Z` value.
-4. Orange? Re-read section 2.
-5. Labels: sentence case, no colons, captions uppercase.
-6. Run `pytest tests/test_design_language.py`.
+4. Drawing something in a plot? Decide whether it is measured, constructed
+   or derived, give it an `Ink` token, a `Z` value and a `_..._style()`
+   method that `PlotManager.restyle()` reapplies.
+5. Orange? Re-read section 2.
+6. Labels: sentence case, no colons, captions uppercase.
+7. Run `pytest tests/test_design_language.py`.
 
 ## 7. Assets
 
 `src/spline_fitter/gui/assets/` holds the app icon (`app_icon.png`,
 `.ico`), from which the ink colors are sampled. Glyphs are not stored as
-files: `theme.py` writes them as SVGs from their path data in the token
-colors, so changing a color token also recolors every chevron.
+files: `theme.icon()` paints them from their path data in the current token
+color, and the stylesheet's glyphs (spin box and combo arrows, tree
+branches, check marks) are SVGs `theme.py` writes in the token colors, so a
+theme change recolors every chevron.
