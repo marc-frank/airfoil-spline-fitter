@@ -9,6 +9,7 @@ polish") and knots whose removal keeps the fit within tolerance are removed.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Callable, List, Optional, Sequence, Union
 
 import numpy as np
@@ -17,8 +18,9 @@ from .basis import centripetal_parameters, clamped_knots, interior_knots, open_u
 from .constraints import ContinuitySpec, End, minimum_control_points, parse_junctions
 from .diagnostics import section_deviations
 from .fitting import (
-    ChainOptions, FitResult, _Stop, _validate_parameters, _validate_sections, as_sections,
-    levenberg_marquardt, reduced_jacobian, result_from_problem, solve_problem, solve_with_continuation,
+    STOPPED, ChainOptions, FitResult, _Stop, _validate_parameters, _validate_sections, as_sections,
+    levenberg_marquardt, reduced_jacobian, report, result_from_problem, solve_problem,
+    solve_with_continuation,
 )
 from .reparam import eta_to_t, inverse_softplus, softplus, t_to_eta
 
@@ -50,7 +52,8 @@ def fit_subsampled(sections, knots, degree, options: ChainOptions, t_sections, t
     Variable projection costs O(n^3) per iteration in the number of points,
     the joint solver O(n k^2) in the number of control coordinates k.
     ``callback`` (as for :func:`~bspline_varpro.fitting.fit`) sees the
-    subsample stage; if it stops the fit, the refinement is skipped.
+    subsample fit and the refinement; if it stops the subsample fit, the
+    refinement is skipped.
     """
     from .diagnostics import project
     from .refinement import refine
@@ -66,9 +69,9 @@ def fit_subsampled(sections, knots, degree, options: ChainOptions, t_sections, t
         t_all.append(t)
     coarse.parameters = t_all
     coarse.options = options
-    if coarse.message == "Stopped by callback.":
+    if coarse.message == STOPPED:
         return coarse
-    refined = refine(sections, coarse, options)
+    refined = refine(sections, coarse, options, callback=callback)
     refined.nfev += coarse.nfev
     return refined
 
@@ -121,13 +124,16 @@ def polish_knots(
     max_nfev: int = 60,
     min_gap: float = 1e-3,
     should_stop: Optional[Callable[[], bool]] = None,
+    callback=None,
 ) -> FitResult:
     """Optimize interior knot positions (at fixed counts) together with the fit.
 
     Knots stay ordered with a minimum spacing through a normalized softplus gap
     parameterization. Knot columns of the Jacobian are finite differences; the
-    data-parameter and shape columns are exact. If ``should_stop()`` returns
-    True during the solve, the unpolished ``result`` is returned.
+    data-parameter and shape columns are exact. ``callback`` (as for
+    :func:`~bspline_varpro.fitting.fit`, with the moving knots) is called on
+    every residual evaluation. If it or ``should_stop()`` returns True, the
+    unpolished ``result`` is returned with the message ``STOPPED``.
     """
     sections = as_sections(points)
     options = options or result.options or ChainOptions(continuity=result.continuity or "G1")
@@ -170,7 +176,12 @@ def polish_knots(
         if should_stop is not None and should_stop():
             raise _Stop
         eta, theta, xi = split(x)
-        return problem_for(xi).residual(eta_to_t(eta, sizes)[0], theta)
+        problem = problem_for(xi)
+        r = problem.residual(eta_to_t(eta, sizes)[0], theta)
+        if report(callback, problem.split_control_points(problem.last_control_points),
+                  problem.last_rms_error, problem.knots):
+            raise _Stop
+        return r
 
     def jacobian(x):
         eta, theta, xi = split(x)
@@ -190,7 +201,9 @@ def polish_knots(
     x0 = np.concatenate([t_to_eta(result.parameters), result.theta, xi0])
     try:
         solution = levenberg_marquardt(residual_at, jacobian, x0, max_nfev=max_nfev)
-    except (_Stop, ValueError, np.linalg.LinAlgError):
+    except _Stop:
+        return replace(result, success=False, message=STOPPED)
+    except (ValueError, np.linalg.LinAlgError):
         return result
     eta, theta, xi = split(solution.x)
     problem = options.problem(sections, to_knots(xi), degree)
@@ -222,6 +235,7 @@ def fit_to_tolerance(
     callback: Optional[ProgressCallback] = None,
     knot_placement: str = "free",
     should_stop: Optional[Callable[[], bool]] = None,
+    step_callback=None,
 ) -> FitResult:
     """Fit a chain with few control points so every point lies within ``tolerance``.
 
@@ -256,6 +270,11 @@ def fit_to_tolerance(
         should_stop: Checked at every residual evaluation, also inside refits
             and knot polishing; returning True stops the search with the best
             result so far (``callback`` is only reached between refits).
+        step_callback: ``step_callback(control_points, rms_error)`` on every
+            residual evaluation of every refit and knot polish, as the
+            callback of :func:`~bspline_varpro.fitting.fit` (with a ``knots``
+            keyword it also gets the knot vectors); return True to stop like
+            ``should_stop``.
 
     Returns:
         :class:`FitResult` with ``max_deviation`` and a ``history`` of stages.
@@ -301,11 +320,23 @@ def fit_to_tolerance(
                         "max_deviation": deviation, "rms_error": result.rms_error})
         return callback is not None and bool(callback(result, deviation))
 
-    # Per-evaluation stop for the refits: lets should_stop end a long refit
-    step = None if should_stop is None else (lambda *_: should_stop())
+    # Per-evaluation progress and stop for the refits and knot polishing
+    stopped = []
+    step = None
+    if should_stop is not None or step_callback is not None:
+        def step(control_points, rms_error, knots):
+            if ((should_stop is not None and should_stop())
+                    or report(step_callback, control_points, rms_error, knots)):
+                stopped.append(True)
+                return True
+            return False
 
     def halted(trial):
-        return trial.message == "Stopped by callback."
+        return trial.message == STOPPED
+
+    def stop_requested():
+        """True once a step asked to stop (a rejected polish hides that)."""
+        return bool(stopped) or (should_stop is not None and should_stop())
 
     def finish(result, deviation, success, message):
         result.max_deviation = deviation
@@ -323,7 +354,7 @@ def fit_to_tolerance(
         devs = section_deviations(sections, result.curves())
         deviation = float(max(np.max(d) for d in devs))
         if halted(result) or record("insert", result, deviation):
-            return finish(result, deviation, False, "Stopped by callback.")
+            return finish(result, deviation, False, STOPPED)
         if deviation <= tolerance:
             break
         inserted = False
@@ -355,13 +386,13 @@ def fit_to_tolerance(
                 trial = _refit(sections, trial_knots, degree, options, result.parameters, result.theta,
                                max_nfev, max_points_per_section, step)
                 if halted(trial):
-                    return finish(result, deviation, False, "Stopped by callback.")
+                    return finish(result, deviation, False, STOPPED)
                 trial_dev = _max_deviation(sections, trial)
                 if trial_dev > tolerance:
                     break
                 result, deviation = trial, trial_dev
                 if record("remove", result, deviation):
-                    return finish(result, deviation, False, "Stopped by callback.")
+                    return finish(result, deviation, False, STOPPED)
         return finish(result, deviation, True, f"Within tolerance {tolerance:g}.")
 
     dense = max_points_per_section is not None and any(len(s) > max_points_per_section for s in sections)
@@ -369,7 +400,9 @@ def fit_to_tolerance(
 
     def polished(result, deviation):
         """Knot-polished result if it stays within tolerance without raising the RMS error."""
-        candidate = polish_knots(sections, result, options, should_stop=should_stop)
+        candidate = polish_knots(sections, result, options, callback=step)
+        if halted(candidate):
+            return result, deviation, False
         candidate_dev = _max_deviation(sections, candidate)
         if candidate_dev <= tolerance and candidate.rms_error <= result.rms_error:
             return candidate, candidate_dev, True
@@ -378,9 +411,8 @@ def fit_to_tolerance(
     # Polish before removing: better-placed knots make more of them redundant.
     if polish:
         result, deviation, improved = polished(result, deviation)
-        if (improved and record("polish", result, deviation)) or (
-                should_stop is not None and should_stop()):
-            return finish(result, deviation, False, "Stopped by callback.")
+        if (improved and record("polish", result, deviation)) or stop_requested():
+            return finish(result, deviation, False, STOPPED)
 
     if remove_knots:
         removed_any = False
@@ -398,19 +430,19 @@ def fit_to_tolerance(
                     trial = _refit(sections, trial_knots, degree, options, result.parameters, result.theta,
                                    max_nfev, max_points_per_section, step)
                     if halted(trial):
-                        return finish(result, deviation, False, "Stopped by callback.")
+                        return finish(result, deviation, False, STOPPED)
                     trial_dev = _max_deviation(sections, trial)
                     if trial_dev > tolerance and polish:
-                        trial = polish_knots(sections, trial, options, should_stop=should_stop)
-                        if should_stop is not None and should_stop():
-                            return finish(result, deviation, False, "Stopped by callback.")
+                        trial = polish_knots(sections, trial, options, callback=step)
+                        if halted(trial):
+                            return finish(result, deviation, False, STOPPED)
                         trial_dev = _max_deviation(sections, trial)
                     if trial_dev <= tolerance:
                         result, deviation, removed, removed_any = trial, trial_dev, True, True
                         if record("remove", result, deviation):
-                            return finish(result, deviation, False, "Stopped by callback.")
+                            return finish(result, deviation, False, STOPPED)
                         break
-        if polish and removed_any and not (should_stop is not None and should_stop()):
+        if polish and removed_any and not stop_requested():
             result, deviation, improved = polished(result, deviation)
             if improved:
                 record("polish", result, deviation)
@@ -436,7 +468,7 @@ def grow_to_counts(sections, counts, degree, options: ChainOptions, t_sections, 
     knots = [open_uniform_knots(degree, min(n, c)) for n, c in zip(need, counts)]
     while True:
         result = _refit(sections, knots, degree, options, t_sections, theta, max_nfev, max_points, callback)
-        if result.message == "Stopped by callback.":
+        if result.message == STOPPED:
             return result
         t_sections, theta = result.parameters, result.theta
         missing = [c - (len(k) - degree - 1) for c, k in zip(counts, knots)]
@@ -457,7 +489,9 @@ def grow_to_counts(sections, counts, degree, options: ChainOptions, t_sections, 
         if not inserted:
             break
     if knot_placement == "free" and (max_points is None or all(len(s) <= max_points for s in sections)):
-        polished = polish_knots(sections, result, options)
+        polished = polish_knots(sections, result, options, callback=callback)
+        if polished.message == STOPPED:
+            return polished
         if polished.rms_error <= result.rms_error:
             polished.nfev += result.nfev
             polished.success, polished.message = result.success, result.message

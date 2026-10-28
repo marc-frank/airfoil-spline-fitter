@@ -50,6 +50,19 @@ def test_subsampled_fit_reports_progress_and_can_be_stopped():
     assert [len(t) for t in result.parameters] == [401, 401]
 
 
+def test_refinement_reports_every_iteration_and_can_be_stopped():
+    sections = dense_sections(401)
+    # A subsample fit with uniform parameters on all points: far from converged
+    coarse = bv.fit([s[::20] for s in sections], 10, 5, continuity="G2")
+    coarse.parameters = [np.linspace(0, 1, len(s)) for s in sections]
+    seen = []
+    refined = bv.refine(sections, coarse, max_iterations=20, callback=lambda cp, rms: seen.append(rms))
+    assert len(seen) == refined.nfev == 20
+    assert seen[-1] < seen[0]
+    stopped = bv.refine(sections, coarse, callback=lambda cp, rms: True)
+    assert stopped.nfev == 1 and stopped.message == "Stopped by callback."
+
+
 def test_levenberg_marquardt_solves_rosenbrock():
     def residual(x):
         return np.array([10 * (x[1] - x[0] ** 2), 1 - x[0]])

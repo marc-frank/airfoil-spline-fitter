@@ -31,7 +31,7 @@ from .joint import JointProblem
 from .problem import KKTSolver, VarProProblem
 from .tolerance import fit_to_tolerance, polish_knots
 
-__version__ = "2.1.0"
+__version__ = "2.2.0"
 
 __all__ = [
     "airfoil",

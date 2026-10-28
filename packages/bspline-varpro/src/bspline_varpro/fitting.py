@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass, field, replace
 from typing import Callable, List, Optional, Sequence, Tuple, Union
 
@@ -16,6 +17,31 @@ from .problem import VarProProblem
 from .reparam import eta_jacobian_block, eta_to_t, t_to_eta
 
 Callback = Callable[[List[np.ndarray], float], Optional[bool]]
+
+# Message of a result whose fit a callback stopped
+STOPPED = "Stopped by callback."
+
+
+def _takes_knots(callback: Callable) -> bool:
+    try:
+        return "knots" in inspect.signature(callback).parameters
+    except (TypeError, ValueError):
+        return False
+
+
+def report(callback: Optional[Callback], control_points: List[np.ndarray], rms_error: float,
+           knots: Sequence[np.ndarray]) -> bool:
+    """Call a progress callback; True if it asks to stop.
+
+    A callback that accepts a ``knots`` keyword also gets the knot vectors the
+    control points belong to, which change while knots are inserted, moved or
+    removed.
+    """
+    if callback is None:
+        return False
+    if _takes_knots(callback):
+        return bool(callback(control_points, rms_error, knots=knots))
+    return bool(callback(control_points, rms_error))
 
 
 @dataclass
@@ -192,16 +218,18 @@ def fit(
         initial_theta: Starting raw constraint parameters (``FitResult.theta``).
         max_points_per_section: For dense data: sections with more points are
             fitted on an evenly spaced subsample, then refined jointly on all
-            points (:func:`~bspline_varpro.refinement.refine`). The callback only
-            sees the subsample stage.
+            points (:func:`~bspline_varpro.refinement.refine`).
         max_nfev: Maximum number of residual evaluations.
         tolerance: ``ftol``, ``xtol`` and ``gtol`` for the solver.
         exact_jacobian: Use the analytic reduced Jacobian instead of finite differences.
         verbose: Verbosity passed to :func:`scipy.optimize.least_squares`.
         callback: Called after every residual evaluation as
             ``callback(control_points, rms_error)`` with one control-point array
-            per section. Return True to stop; the result then holds the last
-            evaluated state and ``success`` is False.
+            per section, also while knots are grown or moved and during dense
+            refinement. A callback with a ``knots`` keyword also gets the knot
+            vectors. Return True to stop; the result then holds the last
+            evaluated state (or, while knots are moved, the fit before) and
+            ``success`` is False.
         knot_placement: ``"uniform"`` keeps the knots where they start
             (evenly spaced with ``num_control_points``). ``"free"`` then moves
             the interior knots to where they reduce the error most
@@ -262,10 +290,12 @@ def fit(
         result = _fit_once(sections, knot_vectors, degree, options, t_sections, initial_theta,
                            max_nfev, tolerance, exact_jacobian, verbose, callback)
     result.options = options
-    if knot_placement == "free" and not grow and not dense and result.message != "Stopped by callback.":
+    if knot_placement == "free" and not grow and not dense and result.message != STOPPED:
         from .tolerance import polish_knots
-        polished = polish_knots(sections, result, options)
-        if polished.rms_error <= result.rms_error:
+        polished = polish_knots(sections, result, options, callback=callback)
+        if polished.message == STOPPED:
+            result = polished
+        elif polished.rms_error <= result.rms_error:
             # Moving the knots only refines a converged fit: keep its status.
             polished.nfev += result.nfev
             polished.success, polished.message = result.success, result.message
@@ -312,7 +342,7 @@ def solve_with_continuation(
     base_problem = parametric_options(options, problem).problem(
         problem.sections, problem.knots, problem.degree)
     base = solve_problem(base_problem, t_sections, base_problem.theta, **kwargs)
-    if base.message == "Stopped by callback.":
+    if base.message == STOPPED:
         return base
     theta0 = problem.constraints.theta_from_parametric(base.theta)
     result = solve_problem(problem, base.parameters, theta0, **kwargs)
@@ -346,9 +376,8 @@ def solve_problem(
         r = problem.residual(t_flat, theta)
         nfev += 1
         last_x = x.copy()
-        if callback is not None and callback(
-            problem.split_control_points(problem.last_control_points), problem.last_rms_error
-        ):
+        if report(callback, problem.split_control_points(problem.last_control_points),
+                  problem.last_rms_error, problem.knots):
             raise _Stop
         return r
 
@@ -363,7 +392,7 @@ def solve_problem(
         success, message = bool(solution.success), str(solution.message)
     except _Stop:
         x_final = last_x
-        success, message = False, "Stopped by callback."
+        success, message = False, STOPPED
     except (ValueError, np.linalg.LinAlgError) as exc:
         raise ValueError(f"VarPro fit failed: {exc}") from exc
 

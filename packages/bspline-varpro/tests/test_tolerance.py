@@ -73,6 +73,33 @@ def test_callback_can_stop_tolerance_fit():
     assert not result.success and result.message == "Stopped by callback."
 
 
+def test_step_callback_sees_every_refit_step_with_its_knots():
+    steps, refits = [], []
+
+    def step(control_points, rms, knots):
+        assert [len(c) for c in control_points] == [len(k) - 6 for k in knots]
+        steps.append(rms)
+
+    result = bv.fit_to_tolerance(naca_sections(41), 1e-5, 5, step_callback=step,
+                                 callback=lambda r, d: refits.append(d))
+    assert result.success
+    assert len(steps) > 5 * len(refits)
+
+
+@pytest.mark.parametrize("placement", ["free", "uniform"])
+def test_step_callback_can_stop_tolerance_fit(placement):
+    calls = []
+
+    def stop_after(control_points, rms):
+        calls.append(rms)
+        return len(calls) == 20
+
+    result = bv.fit_to_tolerance(naca_sections(41), 1e-7, 5, step_callback=stop_after,
+                                 knot_placement=placement)
+    assert len(calls) == 20
+    assert not result.success and result.message == "Stopped by callback."
+
+
 def test_warm_start_does_not_stall():
     # A warm start from a coarser fit used to stop early on collapsed parameter gaps.
     sections = naca_sections(81)

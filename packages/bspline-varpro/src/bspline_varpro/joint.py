@@ -11,7 +11,7 @@ coordinates, which handles dense data.
 
 from __future__ import annotations
 
-from typing import Sequence, Tuple
+from typing import Callable, Optional, Sequence, Tuple
 
 import numpy as np
 from scipy.linalg import block_diag
@@ -121,8 +121,12 @@ def solve_joint(
     z: np.ndarray,
     max_iterations: int = 100,
     tolerance: float = 1e-12,
+    on_step: Optional[Callable[[np.ndarray, np.ndarray], bool]] = None,
 ) -> Tuple[np.ndarray, np.ndarray, int, bool, str]:
     """Levenberg-Marquardt with Schur elimination of the per-point parameters.
+
+    ``on_step(t, z)`` is called after every accepted step; returning True
+    stops with that state and the message ``"Stopped by callback."``.
 
     Returns ``(t, z, iterations, converged, message)``.
     """
@@ -189,6 +193,8 @@ def solve_joint(
         t, z = t_new, z_new
         r, (tangent, Jz) = problem.evaluate(t, z, with_jacobian=True)
         cost = cost_new
+        if on_step is not None and on_step(t, z):
+            return t, z, iteration, False, "Stopped by callback."
         if decrease <= tolerance * cost:
             converged, message = True, "Relative decrease below tolerance."
             break

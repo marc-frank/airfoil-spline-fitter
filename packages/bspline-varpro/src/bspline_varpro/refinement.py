@@ -14,7 +14,7 @@ from typing import Optional, Sequence, Union
 import numpy as np
 
 from .diagnostics import section_deviations
-from .fitting import ChainOptions, FitResult, as_sections
+from .fitting import ChainOptions, FitResult, as_sections, report
 from .joint import JointProblem, solve_joint
 
 
@@ -61,19 +61,26 @@ def refine(
     result: FitResult,
     options: Optional[ChainOptions] = None,
     max_iterations: int = 100,
+    callback=None,
 ) -> FitResult:
     """Joint Levenberg-Marquardt refinement of a fit on all points.
 
     Useful for dense data: fit a subsample by variable projection, then refine
     on all points. Knots and junction shape parameters stay fixed. The result
-    has ``max_deviation`` set.
+    has ``max_deviation`` set. ``callback`` (as for
+    :func:`~bspline_varpro.fitting.fit`) is called after every iteration.
     """
     sections = as_sections(points)
     options = _options(result, options)
     problem = _joint_problem(sections, result, options)
     t0 = np.concatenate(result.parameters)
     z0 = problem.z_from(np.vstack(result.control_points))
-    t, z, iterations, converged, message = solve_joint(problem, t0, z0, max_iterations)
+    on_step = None
+    if callback is not None:
+        def on_step(t, z):
+            step = _to_result(problem, t, z, result, 0, False, "", options)
+            return report(callback, step.control_points, step.rms_error, step.knots)
+    t, z, iterations, converged, message = solve_joint(problem, t0, z0, max_iterations, on_step=on_step)
     refined = _to_result(problem, t, z, result, iterations, converged, message, options)
     refined.max_deviation = float(max(np.max(d) for d in section_deviations(sections, refined.curves())))
     return refined

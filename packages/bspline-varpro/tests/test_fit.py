@@ -120,6 +120,17 @@ def test_callback_can_stop_the_fit():
     assert np.isfinite(result.rms_error)
 
 
+def test_callback_follows_knot_polishing():
+    knots_seen = []
+
+    def watch(control_points, rms, knots):
+        knots_seen.append(np.concatenate(knots))
+
+    bv.fit(two_sections(0.002), 8, 3, max_nfev=300, knot_placement="free", callback=watch)
+    # The knots move while they are polished
+    assert len({k.tobytes() for k in knots_seen}) > 1
+
+
 def test_finite_difference_jacobian_reaches_same_cost():
     sections = two_sections(0.002)
     exact = bv.fit(sections, 8, 3, max_nfev=300)
