@@ -38,7 +38,7 @@ from .motion import install_smooth_scrolling
 from .plotting import PlotManager
 from .project import ProjectManager
 from .theme import apply_theme, style_plot, theme_changed
-from .widgets import SweepableSpinBox, ThemeDialog
+from .widgets import MotionDialog, SweepableSpinBox, ThemeDialog
 
 # =============================================================================
 # Main Window
@@ -293,6 +293,7 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         # Theme: the stylesheet restyles the widgets, the plots restyle here
         self._action_theme.triggered.connect(lambda: ThemeDialog(self).exec())
         theme_changed.changed.connect(self._on_theme_changed)
+        self._action_motion.triggered.connect(lambda: MotionDialog(self).exec())
 
         # Project explorer
         self._action_toggle_explorer.toggled.connect(self._project_manager.on_toggle_explorer)

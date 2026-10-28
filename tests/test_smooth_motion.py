@@ -119,3 +119,38 @@ def test_plot_zoom_glides_to_pyqtgraph_scale(app):
     assert final < midway < width
     assert math.isclose(final, expected, rel_tol=1e-6)
     plot.close()
+
+
+def test_durations_are_user_settings(app, tmp_path, monkeypatch):
+    from PyQt6.QtCore import QSettings
+
+    from spline_fitter.gui import theme
+    from spline_fitter.gui.widgets import MotionDialog
+
+    ini = str(tmp_path / "settings.ini")
+    monkeypatch.setattr(theme, "_settings", lambda: QSettings(ini, QSettings.Format.IniFormat))
+    monkeypatch.setattr(Motion, "SCROLL_MS", Motion.SCROLL_MS)
+    monkeypatch.setattr(Motion, "ZOOM_MS", Motion.ZOOM_MS)
+    dialog = MotionDialog()
+    dialog._spin_scroll.setValue(0)
+    dialog._spin_zoom.setValue(400)
+    assert (Motion.SCROLL_MS, Motion.ZOOM_MS) == (0, 400)
+    saved = QSettings(ini, QSettings.Format.IniFormat)
+    assert int(saved.value("motion/scroll_ms")) == 0
+    assert int(saved.value("motion/zoom_ms")) == 400
+
+    # Off: the wheel jumps the whole way at once
+    view = QListWidget()
+    view.addItems([f"Run {i}" for i in range(500)])
+    view.resize(200, 200)
+    view.show()
+    QTest.qWait(10)
+    bar = view.verticalScrollBar()
+    _wheel(view.viewport(), -1)
+    QApplication.processEvents()
+    assert bar.value() == QApplication.wheelScrollLines() * bar.singleStep()
+
+    dialog._btn_default.click()
+    assert (Motion.SCROLL_MS, Motion.ZOOM_MS) == (350, 650)
+    view.close()
+    dialog.deleteLater()

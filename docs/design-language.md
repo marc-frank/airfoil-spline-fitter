@@ -203,15 +203,20 @@ Use the named gaps, not numbers:
 - Sidebar form labels are `Size.LABEL_WIDTH` wide so fields line up across
   sections; add rows with `_add_row()` in `layout.py`.
 
-### Motion (`theme.Motion`, `motion.py`)
+### Motion (`theme.Motion`, `motion.py`, View > Scrolling and zooming...)
 
 The wheel glides rather than jumps, like a batten easing into place: each
 notch starts a short ease-out, and notches during a glide extend it.
 
 | Token | ms | For |
 |---|---|---|
-| `SCROLL_MS` | 160 | A wheel notch in any list, table, panel or document |
-| `ZOOM_MS` | 180 | A wheel notch zooming a plot, about the cursor |
+| `SCROLL_MS` | 350 (`DEFAULT_SCROLL_MS`) | A wheel notch in any list, table, panel or document |
+| `ZOOM_MS` | 650 (`DEFAULT_ZOOM_MS`) | A wheel notch zooming a plot, about the cursor |
+
+- The user sets both in `MotionDialog` (`widgets.py`), from `0` (off: the
+  wheel jumps) to `MAX_MS`; `set_motion()` saves them and the next wheel
+  step uses them. Default restores the defaults. Read the tokens at each
+  step, never once at construction.
 
 - Scrolling is app-wide: `install_smooth_scrolling()` (called by the main
   window) filters wheel events, and item views scroll by pixel. Nothing to
@@ -249,6 +254,7 @@ never call `setStyleSheet` on it.
 | Rich text dialog | `show_document(parent, title, html, w, h)` around `theme.text_browser()`; mark status with `class='ok'`, `'warn'`, `'error'`, numbers with `class='num'` |
 | Slider | `QSlider`; the temperature slider is `TemperatureSlider` (cool-to-warm groove) |
 | Theme setting | `ThemeDialog` (`widgets.py`), from View > Theme... |
+| Scroll and zoom glide | `MotionDialog` (`widgets.py`), from View > Scrolling and zooming... |
 | Table of records | `QTableView` without grid lines, rows selected whole; numbers monospaced and right-aligned, blanks for what does not apply (the explorer's `RunTable`, `explorer.py`) |
 | Column filter | As in a spreadsheet: a `chevron_down` in `TEXT_3` at the right of each header section opens a `#DropDownPanel` (sort, checklist of values, and a condition that previews which values it unchecks, greying them in `TEXT_3`, until Enter keeps it); a filtered column shows the `filter` funnel in `TEXT`; the sorted column has `sort_up`/`sort_down` in `TEXT_2` left of it (`FilterHeader`, `ColumnFilterPopup`) |
 

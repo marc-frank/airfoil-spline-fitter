@@ -40,7 +40,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .theme import Scheme, Size, glyph_size, icon, set_theme, text_browser
+from .theme import Motion, Scheme, Size, glyph_size, icon, set_motion, set_theme, text_browser
 
 # =============================================================================
 # Constants
@@ -642,3 +642,47 @@ class ThemeDialog(QDialog):
 
     def _apply_temperature(self):
         set_theme(temperature=self._slider.value())
+
+
+class MotionDialog(QDialog):
+    """How long a wheel step glides when scrolling and when zooming a plot,
+    applied at once and saved by theme.set_motion."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Scrolling and zooming")
+        form = dialog_form(self)
+        self._spin_scroll = self._duration(
+            Motion.SCROLL_MS, "How long a wheel step glides in lists, tables, panels and documents",
+            lambda ms: set_motion(scroll_ms=ms))
+        add_form_row(form, "Scrolling", self._spin_scroll)
+        self._spin_zoom = self._duration(
+            Motion.ZOOM_MS, "How long a wheel step glides when zooming a plot",
+            lambda ms: set_motion(zoom_ms=ms))
+        add_form_row(form, "Zooming", self._spin_zoom)
+
+        self._btn_default = QPushButton("Default")
+        self._btn_default.setToolTip(
+            f"{Motion.DEFAULT_SCROLL_MS} milliseconds scrolling, {Motion.DEFAULT_ZOOM_MS} zooming")
+        self._btn_default.clicked.connect(self._restore_defaults)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.addButton(self._btn_default, QDialogButtonBox.ButtonRole.ResetRole)
+        buttons.rejected.connect(self.accept)
+        form.addRow(buttons)
+
+    @staticmethod
+    def _duration(ms: int, tooltip: str, apply) -> QSpinBox:
+        spin = QSpinBox()
+        spin.setRange(0, Motion.MAX_MS)
+        spin.setSingleStep(25)
+        spin.setSuffix(" milliseconds")
+        # 0: the wheel jumps, without a glide
+        spin.setSpecialValueText("Off")
+        spin.setValue(ms)
+        spin.setToolTip(tooltip + "; off jumps at once")
+        spin.valueChanged.connect(apply)
+        return spin
+
+    def _restore_defaults(self):
+        self._spin_scroll.setValue(Motion.DEFAULT_SCROLL_MS)
+        self._spin_zoom.setValue(Motion.DEFAULT_ZOOM_MS)

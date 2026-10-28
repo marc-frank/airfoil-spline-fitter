@@ -12,7 +12,9 @@ jumped to.
     - SmoothViewBox: a plot view box whose wheel zoom is animated; pass
       ``viewBox=SmoothViewBox()`` to ``pg.PlotWidget``
 
-Durations are the ``Motion`` tokens in theme.py.
+Durations are the ``Motion`` tokens in theme.py, read at each wheel step,
+so a change in View > Scrolling and zooming... applies at once; with 0 the
+wheel jumps as it did without this module.
 """
 
 from __future__ import annotations
@@ -44,7 +46,6 @@ class _ScrollAnimation(QVariantAnimation):
         super().__init__(bar)
         self._bar = bar
         self.target = 0.0
-        self.setDuration(Motion.SCROLL_MS)
         self.setEasingCurve(QEasingCurve.Type.OutCubic)
         # Start and end are both floats, or the animation cannot interpolate
         self.valueChanged.connect(lambda value: bar.setValue(round(value)))
@@ -61,6 +62,7 @@ class _ScrollAnimation(QVariantAnimation):
         if round(target) == round(current) and not running:
             return False
         self.stop()
+        self.setDuration(Motion.SCROLL_MS)  # read now: the user may have changed it
         self.target = target
         self.setStartValue(current)
         self.setEndValue(target)
@@ -140,7 +142,6 @@ class SmoothViewBox(pg.ViewBox):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._zoom = QVariantAnimation(self)
-        self._zoom.setDuration(Motion.ZOOM_MS)
         self._zoom.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._zoom.setStartValue(0.0)
         self._zoom.setEndValue(1.0)
@@ -167,6 +168,7 @@ class SmoothViewBox(pg.ViewBox):
         self._zoom_center = pg.Point(
             fn.invertQTransform(self.childGroup.transform()).map(ev.pos()))
         self._resetTarget()
+        self._zoom.setDuration(Motion.ZOOM_MS)
         self._zoom.start()
         ev.accept()
         self.sigRangeChangedManually.emit(mask)

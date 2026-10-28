@@ -21,7 +21,8 @@ This module provides:
       temperature setting, applied live
     - Z: drawing order of plot items
     - Size / Type: spacing, heights and fonts
-    - Motion: durations of the wheel scroll and zoom animations
+    - Motion / set_motion: durations of the wheel scroll and zoom animations,
+      set by the user
     - apply_theme / style_plot / icon / pen helpers
 """
 
@@ -248,10 +249,15 @@ class Type:
 
 
 class Motion:
-    """Durations of the animations that ease wheel scrolling and zooming (motion.py)."""
+    """Durations of the animations that ease wheel scrolling and zooming
+    (motion.py). The user sets them in View > Scrolling and zooming...
+    (set_motion); 0 turns the glide off."""
 
-    SCROLL_MS = 160           # a wheel step in any scrolling list, table, panel or document
-    ZOOM_MS = 180             # a wheel step zooming a plot
+    DEFAULT_SCROLL_MS = 350   # a wheel step in any scrolling list, table, panel or document
+    DEFAULT_ZOOM_MS = 650     # a wheel step zooming a plot
+    SCROLL_MS = DEFAULT_SCROLL_MS   # the user's setting
+    ZOOM_MS = DEFAULT_ZOOM_MS
+    MAX_MS = 1000
 
 
 # =============================================================================
@@ -586,6 +592,8 @@ def apply_theme(app: QApplication | None = None) -> None:
     mode = settings.value("theme/mode", Scheme.MODE)
     Scheme.MODE = mode if mode in Scheme.MODES else "system"
     Scheme.TEMPERATURE = max(-100, min(100, settings.value("theme/temperature", 0, type=int)))
+    Motion.SCROLL_MS = _motion_ms(settings.value("motion/scroll_ms", Motion.DEFAULT_SCROLL_MS, type=int))
+    Motion.ZOOM_MS = _motion_ms(settings.value("motion/zoom_ms", Motion.DEFAULT_ZOOM_MS, type=int))
     app.setStyle("Fusion")
     # Numbers take the decimal point of the system locale, in fields,
     # readouts, messages and plots alike; no group separators
@@ -614,6 +622,21 @@ def set_theme(mode: str | None = None, temperature: int | None = None) -> None:
     app = QApplication.instance()
     if app is not None and app.property("loftTheme"):
         _restyle(app)
+
+
+def _motion_ms(ms: int) -> int:
+    return max(0, min(Motion.MAX_MS, int(ms)))
+
+
+def set_motion(scroll_ms: int | None = None, zoom_ms: int | None = None) -> None:
+    """Change and save the glide durations; the next wheel step uses them."""
+    settings = _settings()
+    if scroll_ms is not None:
+        Motion.SCROLL_MS = _motion_ms(scroll_ms)
+        settings.setValue("motion/scroll_ms", Motion.SCROLL_MS)
+    if zoom_ms is not None:
+        Motion.ZOOM_MS = _motion_ms(zoom_ms)
+        settings.setValue("motion/zoom_ms", Motion.ZOOM_MS)
 
 
 def _restyle(app: QApplication) -> None:
