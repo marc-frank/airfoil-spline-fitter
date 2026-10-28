@@ -246,10 +246,8 @@ class PlotManager:
                 kx, ky = curve.evaluate_array(knots)
                 xs.extend(kx.tolist())
                 ys.extend(ky.tolist())
-            self._knot_items['knots'] = self._plot.plot(
-                xs, ys, pen=None, symbol='d', symbolSize=8,
-                symbolBrush=Colors.KNOTS, symbolPen=None,
-            )
+            self._put(self._knot_items, 'knots', xs, ys, pen=None, symbol='d', symbolSize=8,
+                      symbolBrush=Colors.KNOTS, symbolPen=None)
         except Exception:
             pass
 
@@ -396,18 +394,15 @@ class PlotManager:
                 curve = BSplineCurve2D(degree, ctrl_pts, knots)
                 curves.append(curve)
 
-                # Spline curve
+                # Spline curve (items are reused: every step of a fit may be drawn)
                 ux, uy = curve.sample(1000)
 
                 key = f'live_curve_{section_idx}'
                 if key in self._curve_items:
-                    try:
-                        self._plot.removeItem(self._curve_items[key])
-                    except Exception:
-                        pass
-
-                pen = pg.mkPen(color=Colors.SPLINE_CURVE, width=2)
-                self._curve_items[key] = self._plot.plot(ux, uy, pen=pen)
+                    self._curve_items[key].setData(ux, uy)
+                else:
+                    pen = pg.mkPen(color=Colors.SPLINE_CURVE, width=2)
+                    self._curve_items[key] = self._plot.plot(ux, uy, pen=pen)
 
                 # Control polygon
                 cx = [p[0] for p in ctrl_pts]
@@ -415,31 +410,27 @@ class PlotManager:
 
                 key = f'live_ctrl_{section_idx}'
                 if key in self._curve_items:
-                    try:
-                        self._plot.removeItem(self._curve_items[key])
-                    except Exception:
-                        pass
-
-                ctrl_pen = pg.mkPen(
-                    color=Colors.CONTROL_POLYGON,
-                    width=1,
-                    style=Qt.PenStyle.DashLine,
-                )
-                self._curve_items[key] = self._plot.plot(
-                    cx, cy,
-                    pen=ctrl_pen,
-                    symbol='o',
-                    symbolSize=5,
-                    symbolBrush=Colors.CONTROL_POLYGON,
-                    symbolPen=None,
-                )
+                    self._curve_items[key].setData(cx, cy)
+                else:
+                    ctrl_pen = pg.mkPen(
+                        color=Colors.CONTROL_POLYGON,
+                        width=1,
+                        style=Qt.PenStyle.DashLine,
+                    )
+                    self._curve_items[key] = self._plot.plot(
+                        cx, cy,
+                        pen=ctrl_pen,
+                        symbol='o',
+                        symbolSize=5,
+                        symbolBrush=Colors.CONTROL_POLYGON,
+                        symbolPen=None,
+                    )
 
             # Comb and knot markers of the curve in progress, if enabled
+            # (their items are updated in place)
             if self.comb_settings is not None:
-                self.clear_comb_items()
                 self._draw_combs(curves, *self.comb_settings)
             if self.show_knots:
-                self.clear_knot_items()
                 self._draw_knots(curves)
 
         except Exception:
@@ -566,9 +557,18 @@ class PlotManager:
             tips_color = Colors.COMB_TIPS_LOWER
 
         # Draw comb lines
-        pen = pg.mkPen(color=comb_color, width=1)
-        self._comb_items[f'comb_{which}'] = self._plot.plot(seg_x, seg_y, pen=pen)
+        self._put(self._comb_items, f'comb_{which}', seg_x, seg_y,
+                  pen=pg.mkPen(color=comb_color, width=1))
 
         # Draw tips
-        tips_pen = pg.mkPen(color=tips_color, width=1, style=Qt.PenStyle.DashLine)
-        self._comb_items[f'tips_{which}'] = self._plot.plot(cx, cy, pen=tips_pen)
+        self._put(self._comb_items, f'tips_{which}', cx, cy,
+                  pen=pg.mkPen(color=tips_color, width=1, style=Qt.PenStyle.DashLine))
+
+    def _put(self, items: dict, key: str, x, y, **style) -> None:
+        """Plot ``x, y`` as ``items[key]``, reusing the item if it exists:
+        adding and removing items is what makes redrawing every fit step slow."""
+        item = items.get(key)
+        if item is None:
+            items[key] = self._plot.plot(x, y, **style)
+        else:
+            item.setData(x, y)

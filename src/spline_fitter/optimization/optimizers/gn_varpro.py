@@ -54,18 +54,25 @@ class GNVarProConfig:
     tolerance_smoothing: float = 1e-7
 
 
-def accepts_preview(callback: Callable | None) -> bool:
-    """True if ``callback`` takes a ``preview`` keyword with live curves."""
+def _accepts(callback: Callable | None, keyword: str) -> bool:
     if callback is None:
         return False
     try:
-        return "preview" in inspect.signature(callback).parameters
+        return keyword in inspect.signature(callback).parameters
     except (TypeError, ValueError):
         return False
 
 
-# bspline-varpro 2.1 can check for a cancel request inside tolerance refits
-_TOLERANCE_STOP = "should_stop" in inspect.signature(bspline_varpro.fit_to_tolerance).parameters
+def accepts_preview(callback: Callable | None) -> bool:
+    """True if ``callback`` takes a ``preview`` keyword with live curves."""
+    return _accepts(callback, "preview")
+
+
+_TOLERANCE_PARAMETERS = inspect.signature(bspline_varpro.fit_to_tolerance).parameters
+# bspline-varpro 2.1 can check for a cancel request inside tolerance refits,
+# 2.2 reports every solver step of them
+_TOLERANCE_STOP = "should_stop" in _TOLERANCE_PARAMETERS
+_TOLERANCE_STEPS = "step_callback" in _TOLERANCE_PARAMETERS
 
 
 def _continuity(spline_config: SplineConfig) -> str | list[str]:
@@ -118,8 +125,10 @@ class GNVarProOptimizer(AlgebraicOptimizer):
                 points. Called on every residual evaluation (fixed mode) or
                 after every refit (tolerance mode, error = max deviation).
                 If it accepts a ``preview`` keyword, it also receives
-                ``(section_control_points, section_knots, degree)``.
-                Return True to stop early.
+                ``(section_control_points, section_knots, degree)``; if it
+                accepts a ``step`` keyword, tolerance mode also calls it on
+                every residual evaluation inside the refits with
+                ``step=True`` (error = RMS error). Return True to stop early.
             should_stop: Optional check for a cancel request; tolerance mode
                 calls it on every residual evaluation, also inside refits,
                 where ``callback`` is only reached between refits.
@@ -137,13 +146,15 @@ class GNVarProOptimizer(AlgebraicOptimizer):
 
         with_preview = accepts_preview(callback)
 
-        def on_evaluation(control_points: list[np.ndarray], rms_error: float) -> bool:
+        def on_evaluation(control_points: list[np.ndarray], rms_error: float,
+                          knots: list[np.ndarray] | None = None) -> bool:
             increment_evaluation()
             if callback is None:
                 return False
             if with_preview:
+                # Knots move with free placement and growth (library 2.2 passes them)
                 return bool(callback(_flat(control_points), rms_error,
-                                     preview=(control_points, None, spline_config.degree)))
+                                     preview=(control_points, knots, spline_config.degree)))
             return bool(callback(_flat(control_points), rms_error))
 
         max_iters = (opt_config.max_iterations if opt_config.max_iterations > 0
@@ -173,12 +184,20 @@ class GNVarProOptimizer(AlgebraicOptimizer):
         from ..engine import increment_evaluation
 
         with_preview = accepts_preview(callback)
+        with_steps = _TOLERANCE_STEPS and _accepts(callback, "step")
         refits = 0
+
+        def on_step(control_points: list[np.ndarray], rms_error: float,
+                    knots: list[np.ndarray]) -> bool:
+            increment_evaluation()
+            preview = (control_points, knots, spline_config.degree) if with_preview else None
+            return bool(callback(_flat(control_points), rms_error, preview=preview, step=True))
 
         def on_refit(result: bspline_varpro.FitResult, deviation: float) -> bool:
             nonlocal refits
             refits += 1
-            increment_evaluation()
+            if not with_steps:
+                increment_evaluation()
             if callback is None:
                 return False
             if with_preview:
@@ -201,6 +220,7 @@ class GNVarProOptimizer(AlgebraicOptimizer):
                                     else spline_config.num_control_points),
             callback=on_refit,
             **({"should_stop": should_stop} if _TOLERANCE_STOP and should_stop else {}),
+            **({"step_callback": on_step} if with_steps else {}),
         )
         return self._raw(result, result.max_deviation, max(refits, 1))
 

@@ -17,7 +17,7 @@ import threading
 from collections.abc import Callable
 from typing import TypeVar
 
-from PyQt6.QtCore import QEventLoop, QTimer
+from PyQt6.QtCore import QEventLoop, QObject, QTimer, pyqtSignal, pyqtSlot
 
 T = TypeVar("T")
 
@@ -26,6 +26,34 @@ TICK_MS = 50
 
 # GIL switch interval (s) while work runs; Python's default is 0.005
 SWITCH_INTERVAL = 0.0005
+
+
+class _Ticker(QObject):
+    """Lives on the GUI thread; a request from the worker runs the tick there."""
+
+    requested = pyqtSignal()
+
+    def __init__(self, tick: Callable[[], None]):
+        super().__init__()
+        self._tick = tick
+        self.active = True
+        self.requested.connect(self._run)
+
+    @pyqtSlot()
+    def _run(self):
+        if self.active:
+            self._tick()
+
+
+_ticker: _Ticker | None = None
+
+
+def request_tick() -> None:
+    """Run ``on_tick`` of the running background work as soon as the GUI
+    thread is free, instead of at the next timer tick (callable from any thread)."""
+    ticker = _ticker
+    if ticker is not None:
+        ticker.requested.emit()
 
 
 def run_in_background(work: Callable[[], T], on_tick: Callable[[], None] | None = None) -> T:
@@ -56,6 +84,9 @@ def run_in_background(work: Callable[[], T], on_tick: Callable[[], None] | None 
             loop.quit()
 
     timer.timeout.connect(tick)
+    global _ticker
+    ticker = _Ticker(tick)
+    _ticker = ticker
     # Painting calls into Python many times (pyqtgraph items), and each call
     # waits for the worker to hand over the GIL; a short switch interval
     # keeps those waits small so repaints stay fast
@@ -70,6 +101,8 @@ def run_in_background(work: Callable[[], T], on_tick: Callable[[], None] | None 
         thread.join()
     finally:
         sys.setswitchinterval(switch_interval)
+        ticker.active = False
+        _ticker = None
     if on_tick is not None:
         on_tick()
 

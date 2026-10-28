@@ -1,0 +1,96 @@
+"""Live preview: Detailed draws every optimizer step, sweeps show every fit."""
+import os
+
+import numpy as np
+import pytest
+from bspline_varpro.airfoil import NACA4
+
+from spline_fitter.geometry import create_airfoil_data
+
+
+@pytest.fixture
+def window(monkeypatch):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt6.QtWidgets import QApplication
+
+    from spline_fitter.gui import fitting
+    from spline_fitter.gui.ui import SplineFitterWindow
+    app = QApplication.instance() or QApplication([])
+    w = SplineFitterWindow()
+    monkeypatch.setattr(fitting.OptimizerErrorLogger, "save", lambda *a, **k: None)
+    monkeypatch.setattr(w, "_play_completion_chime", lambda: None)
+    w.show()
+    pts = np.round(NACA4("2412").points(81), 6)
+    w._airfoil = create_airfoil_data([tuple(p) for p in pts], filename="n", name="n",
+                                     precision=6, num_sections=2)
+    w._check_knots.setChecked(True)
+    w._spin_ctrl.setValue(10)
+    yield w
+    w.deleteLater()
+    app.processEvents()
+
+
+@pytest.fixture
+def counted(monkeypatch):
+    """Counts optimizer callbacks and live drawings."""
+    from spline_fitter.gui import live
+    counts = {"steps": 0, "drawn": 0, "step_flags": 0}
+    callback, draw = live.LiveProgress.callback, live.LiveProgress._draw
+
+    def counting_callback(self, x, error, preview=None, step=False):
+        counts["steps"] += 1
+        counts["step_flags"] += step
+        return callback(self, x, error, preview=preview, step=step)
+
+    def counting_draw(self):
+        counts["drawn"] += 1
+        draw(self)
+
+    monkeypatch.setattr(live.LiveProgress, "callback", counting_callback)
+    monkeypatch.setattr(live.LiveProgress, "_draw", counting_draw)
+    return counts
+
+
+def test_detailed_draws_every_step(window, counted):
+    window._combo_live.setCurrentIndex(2)
+    window._fitting_controller.on_fit()
+    assert window._fit_result is not None
+    assert counted["steps"] > 5
+    assert counted["drawn"] == counted["steps"]
+
+
+def test_detailed_draws_every_step_of_a_tolerance_search(window, counted):
+    window._combo_live.setCurrentIndex(2)
+    window._seg_goal.setCurrentIndex(window._seg_goal.findData(True))
+    window._check_auto_tolerance.setChecked(False)
+    window._spin_tolerance.setValue(1e-4)
+    window._fitting_controller.on_fit()
+    assert window._fit_result is not None
+    # Steps inside the refits are reported, not only the refits
+    assert counted["step_flags"] > 10
+    refits = counted["steps"] - counted["step_flags"]
+    assert counted["drawn"] == counted["step_flags"] > refits
+    # The loss curve has a point per step
+    assert len(window._plot_manager._loss_y) == counted["step_flags"]
+
+
+def test_minimal_draws_only_the_result(window, counted):
+    window._combo_live.setCurrentIndex(0)
+    window._fitting_controller.on_fit()
+    assert counted["steps"] > 5 and counted["drawn"] == 0
+
+
+def test_sweep_shows_every_fit_and_its_comparison_point(window, counted, monkeypatch):
+    window._combo_live.setCurrentIndex(2)
+    sizes = []
+    plots = window._plot_manager
+    set_data = plots.set_comparison_data
+    monkeypatch.setattr(plots, "set_comparison_data",
+                        lambda x, y: (sizes.append(len(x)), set_data(x, y)))
+    window._sweep_ctrl._btn_sweep.click()
+    window._sweep_ctrl._spin_max.setValue(12)
+    window._fitting_controller.on_fit()
+    assert len(window._fitting_controller._sweep_results) == 3
+    assert counted["drawn"] == counted["steps"] > 0
+    # Cleared at the start, one more point after each fit, then the final view
+    assert sizes == [0, 1, 2, 3, 3]
