@@ -16,7 +16,10 @@ This module provides:
 
 from __future__ import annotations
 
+import math
+
 from PyQt6.QtCore import QEvent, QPoint, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QValidator
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QDialog,
@@ -35,7 +38,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .theme import Scheme, Size, glyph_size, icon, set_theme
+from .theme import Scheme, Size, glyph_size, icon, set_theme, text_browser
 
 # =============================================================================
 # Constants
@@ -260,6 +263,69 @@ class SegmentedControl(QWidget):
 
 
 # =============================================================================
+# Scientific SpinBox
+# =============================================================================
+
+class ScientificSpinBox(QDoubleSpinBox):
+    """A spin box for values spanning decades (tolerances, weights).
+
+    Shows the value in its shortest form ("1e-05", "0.001") instead of a
+    fixed number of decimals, accepts e-notation, and steps along 1-2-5.
+    """
+
+    SIGNIFICANT = 6
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        super().setDecimals(15)
+
+    def setDecimals(self, decimals: int) -> None:
+        """Ignored: the value shows its own significant digits."""
+
+    def textFromValue(self, value: float) -> str:
+        return f"{value:.{self.SIGNIFICANT}g}".replace(".", self.locale().decimalPoint())
+
+    def _parse(self, text: str) -> float:
+        """The value of a text with the locale's decimal point; ValueError if none."""
+        return float(text.replace(self.locale().decimalPoint(), "."))
+
+    def valueFromText(self, text: str) -> float:
+        try:
+            return self._parse(text)
+        except ValueError:
+            return self.value()
+
+    def validate(self, text: str, pos: int):
+        try:
+            value = self._parse(text)
+        except ValueError:
+            # Part of a number still being typed, such as "1e-"
+            ok = all(c in "0123456789eE+-" + self.locale().decimalPoint() for c in text)
+            return (QValidator.State.Intermediate if ok else QValidator.State.Invalid), text, pos
+        if self.minimum() <= value <= self.maximum():
+            return QValidator.State.Acceptable, text, pos
+        return QValidator.State.Intermediate, text, pos
+
+    def stepBy(self, steps: int) -> None:
+        value = self.value()
+        for _ in range(abs(steps)):
+            value = self._next(value, up=steps > 0)
+        self.setValue(min(max(value, self.minimum()), self.maximum()))
+
+    def _next(self, value: float, up: bool) -> float:
+        """The neighbouring value in the 1-2-5 sequence."""
+        if value <= 0:
+            return self.singleStep() if up else 0.0
+        exponent = math.floor(math.log10(value))
+        ladder = [m * 10.0 ** e for e in (exponent - 1, exponent, exponent + 1)
+                  for m in (1.0, 2.0, 5.0)]
+        if up:
+            return min(v for v in ladder if v > value * (1 + 1e-9))
+        lower = [v for v in ladder if v < value * (1 - 1e-9)]
+        return max(lower) if lower and max(lower) >= self.minimum() else self.minimum()
+
+
+# =============================================================================
 # Sweepable SpinBox Widget
 # =============================================================================
 
@@ -384,7 +450,7 @@ class SweepableDoubleSpinBox(QWidget):
         self._btn_sweep.clicked.connect(self._on_toggle_sweep)
         lay.addWidget(self._btn_sweep)
 
-        self._spin_max = QDoubleSpinBox()
+        self._spin_max = type(self._spin)()
         self._spin_max.setRange(self._spin.minimum(), self._spin.maximum())
         self._spin_max.setDecimals(self._spin.decimals())
         self._spin_max.setSingleStep(self._spin.singleStep())
@@ -452,6 +518,44 @@ class SweepableDoubleSpinBox(QWidget):
 # Theme Dialog
 # =============================================================================
 
+def dialog_form(dialog: QDialog) -> QFormLayout:
+    """The form of a settings dialog, with the dialog padding."""
+    form = QFormLayout(dialog)
+    form.setContentsMargins(Size.PAD_LARGE, Size.PAD_LARGE, Size.PAD_LARGE, Size.PAD_LARGE)
+    form.setHorizontalSpacing(Size.GROUP)
+    form.setVerticalSpacing(Size.GAP)
+    form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+    return form
+
+
+def add_form_row(form: QFormLayout, text: str, field) -> QLabel:
+    """Add a row with the fixed-width form label and return the label."""
+    label = QLabel(text)
+    label.setObjectName("FormLabel")
+    label.setFixedWidth(Size.LABEL_WIDTH)
+    form.addRow(label, field)
+    return label
+
+
+def show_document(parent: QWidget, title: str, html: str, width: int, height: int) -> None:
+    """Show rich text (a report) in a dialog with a Close button."""
+    dialog = QDialog(parent)
+    dialog.setWindowTitle(title)
+    dialog.resize(width, height)
+    layout = QVBoxLayout(dialog)
+    layout.setContentsMargins(0, 0, 0, Size.PAD_LARGE)
+    layout.setSpacing(Size.PAD_LARGE)
+    browser = text_browser()
+    browser.setOpenExternalLinks(True)
+    browser.setHtml(html)
+    layout.addWidget(browser)
+    buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+    buttons.rejected.connect(dialog.accept)
+    buttons.setContentsMargins(Size.PAD_LARGE, 0, Size.PAD_LARGE, 0)
+    layout.addWidget(buttons)
+    dialog.exec()
+
+
 class ThemeDialog(QDialog):
     """Light or dark mode (or the system's) and the temperature of the greys,
     applied while they change and saved by theme.set_theme."""
@@ -462,9 +566,7 @@ class ThemeDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Theme")
-        form = QFormLayout(self)
-        form.setContentsMargins(Size.PAD_LARGE, Size.PAD_LARGE, Size.PAD_LARGE, Size.PAD_LARGE)
-        form.setSpacing(Size.GAP)
+        form = dialog_form(self)
 
         self._mode = SegmentedControl()
         for mode in Scheme.MODES:
@@ -472,7 +574,7 @@ class ThemeDialog(QDialog):
         self._mode.setItemToolTip(0, "Follow the light or dark setting of the system")
         self._mode.setCurrentIndex(self._mode.findData(Scheme.MODE))
         self._mode.currentIndexChanged.connect(lambda _: set_theme(mode=self._mode.currentData()))
-        self._add_row(form, "Mode", self._mode)
+        add_form_row(form, "Mode", self._mode)
 
         self._slider = QSlider(Qt.Orientation.Horizontal)
         self._slider.setObjectName("TemperatureSlider")
@@ -491,7 +593,7 @@ class ThemeDialog(QDialog):
         lay.addWidget(cool)
         lay.addWidget(self._slider, stretch=1)
         lay.addWidget(warm)
-        self._add_row(form, "Temperature", row)
+        add_form_row(form, "Temperature", row)
 
         self._btn_neutral = QPushButton("Neutral")
         self._btn_neutral.setToolTip("Untinted greys (the default)")
@@ -505,13 +607,6 @@ class ThemeDialog(QDialog):
         self._apply_timer = QTimer(self, singleShot=True, interval=60)
         self._apply_timer.timeout.connect(self._apply_temperature)
         self._slider.valueChanged.connect(self._on_slider)
-
-    @staticmethod
-    def _add_row(form: QFormLayout, text: str, field) -> None:
-        label = QLabel(text)
-        label.setObjectName("FormLabel")
-        label.setFixedWidth(Size.LABEL_WIDTH)
-        form.addRow(label, field)
 
     def _on_slider(self, value: int):
         if value and abs(value) <= self.SNAP:

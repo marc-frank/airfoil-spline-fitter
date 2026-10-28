@@ -52,7 +52,7 @@ def counted(monkeypatch):
 
 
 def test_detailed_draws_every_step(window, counted):
-    window._combo_live.setCurrentIndex(2)
+    window._seg_live.setCurrentIndex(2)
     window._fitting_controller.on_fit()
     assert window._fit_result is not None
     assert counted["steps"] > 5
@@ -60,7 +60,7 @@ def test_detailed_draws_every_step(window, counted):
 
 
 def test_detailed_draws_every_step_of_a_tolerance_search(window, counted):
-    window._combo_live.setCurrentIndex(2)
+    window._seg_live.setCurrentIndex(2)
     window._seg_goal.setCurrentIndex(window._seg_goal.findData(True))
     window._check_auto_tolerance.setChecked(False)
     window._spin_tolerance.setValue(1e-4)
@@ -75,7 +75,7 @@ def test_detailed_draws_every_step_of_a_tolerance_search(window, counted):
 
 
 def test_minimal_draws_only_the_result(window, counted):
-    window._combo_live.setCurrentIndex(0)
+    window._seg_live.setCurrentIndex(0)
     window._fitting_controller.on_fit()
     assert counted["steps"] > 5 and counted["drawn"] == 0
 
@@ -89,21 +89,37 @@ def test_live_setting_can_change_while_fitting(window, counted, monkeypatch):
     enabled = []
 
     def switch_after_three(self):
-        enabled.append(window._combo_live.isEnabled())
+        enabled.append(window._seg_live.isEnabled())
         if counted["drawn"] >= 3:
-            window._combo_live.setCurrentIndex(0)
+            window._seg_live.setCurrentIndex(0)
         on_tick(self)
 
     monkeypatch.setattr(live.LiveProgress, "on_tick", switch_after_three)
-    window._combo_live.setCurrentIndex(2)
+    window._seg_live.setCurrentIndex(2)
     window._fitting_controller.on_fit()
     assert window._fit_result is not None
     assert enabled and all(enabled)
     assert counted["drawn"] == 3 < counted["steps"]
 
 
+def test_sweep_toggles_are_locked_while_fitting(window, monkeypatch):
+    from spline_fitter.gui import live
+    on_tick = live.LiveProgress.on_tick
+    toggles = (window._sweep_degree._btn_sweep, window._sweep_ctrl._btn_sweep)
+    states = []
+
+    def record(self):
+        states.append([t.isEnabled() for t in toggles])
+        on_tick(self)
+
+    monkeypatch.setattr(live.LiveProgress, "on_tick", record)
+    window._fitting_controller.on_fit()
+    assert states and not any(any(s) for s in states)
+    assert all(t.isEnabled() for t in toggles)
+
+
 def test_sweep_shows_every_fit_and_its_comparison_point(window, counted, monkeypatch):
-    window._combo_live.setCurrentIndex(2)
+    window._seg_live.setCurrentIndex(2)
     sizes = []
     plots = window._plot_manager
     set_data = plots.set_comparison_data
@@ -122,7 +138,7 @@ def test_sweep_shows_every_fit_and_its_comparison_point(window, counted, monkeyp
 def test_second_sweep_shows_the_whole_project_range(window, monkeypatch):
     """The comparison plot of a sweep keeps the runs of earlier sweeps of the
     same configuration, but not runs whose other settings differ."""
-    window._combo_live.setCurrentIndex(0)
+    window._seg_live.setCurrentIndex(0)
     window._sweep_ctrl._btn_sweep.click()
     window._sweep_ctrl._spin_max.setValue(11)
     window._fitting_controller.on_fit()
@@ -147,10 +163,10 @@ def test_batch_shows_every_file_live(window, counted, tmp_path):
         pts = np.round(NACA4(code).points(81), 6)
         lines = [f"NACA {code}"] + [f"{x:.6f} {y:.6f}" for x, y in pts]
         (src / f"naca{code}.dat").write_text("\n".join(lines) + "\n")
-    window._combo_live.setCurrentIndex(2)
+    window._seg_live.setCurrentIndex(2)
     batch = window._batch_controller
     batch._batch_src_dir, batch._batch_dst_dir = str(src), str(dst)
     batch._on_batch_convert()
     assert len(list(dst.glob("*.spline.dat"))) == 2
     assert counted["drawn"] == counted["steps"] > 0
-    assert window.statusBar().currentMessage().startswith("Batch complete! 2 files")
+    assert window.statusBar().currentMessage().startswith("Batch complete: 2 files")

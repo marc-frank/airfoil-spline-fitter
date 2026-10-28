@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QGridLayout,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -40,6 +41,7 @@ from .theme import Size, glyph_size, icon, label_plot, style_plot
 from .widgets import (
     CollapsibleSection,
     DropDownPanel,
+    ScientificSpinBox,
     SegmentedControl,
     SidebarSection,
     SweepableDoubleSpinBox,
@@ -237,28 +239,28 @@ class WindowLayoutMixin:
 
         # File menu
         file_menu = menubar.addMenu("&File")
-        self._action_open = file_menu.addAction("&Open Airfoil...")
+        self._action_open = file_menu.addAction("&Open airfoil...")
         self._action_open.setShortcut("Ctrl+O")
 
         file_menu.addSeparator()
-        self._action_save_dat = file_menu.addAction("Save Fitted (.dat)...")
+        self._action_save_dat = file_menu.addAction("Save fitted airfoil (.dat)...")
         self._action_save_dat.setEnabled(False)
-        self._action_save_spline = file_menu.addAction("Save Spline (.spline.dat)...")
+        self._action_save_spline = file_menu.addAction("Save spline (.spline.dat)...")
         self._action_save_spline.setEnabled(False)
-        self._action_export_cad = file_menu.addAction("Export CAD (STEP/IGES/DXF)...")
+        self._action_export_cad = file_menu.addAction("Export CAD (STEP, IGES, DXF)...")
         self._action_export_cad.setShortcut("Ctrl+E")
         self._action_export_cad.setEnabled(False)
 
         file_menu.addSeparator()
-        self._action_open_project = file_menu.addAction("Open &Project...")
-        self._action_save_project = file_menu.addAction("&Save Project")
+        self._action_open_project = file_menu.addAction("Open &project...")
+        self._action_save_project = file_menu.addAction("&Save project")
         self._action_save_project.setShortcut("Ctrl+S")
         self._action_save_project.setEnabled(False)
-        self._action_save_project_as = file_menu.addAction("Save Project &As...")
+        self._action_save_project_as = file_menu.addAction("Save project &as...")
         self._action_save_project_as.setEnabled(False)
 
         file_menu.addSeparator()
-        self._action_batch = file_menu.addAction("&Batch Convert...")
+        self._action_batch = file_menu.addAction("&Batch convert...")
 
         file_menu.addSeparator()
         exit_action = file_menu.addAction("E&xit")
@@ -267,13 +269,13 @@ class WindowLayoutMixin:
 
         # View menu
         view_menu = menubar.addMenu("&View")
-        self._action_fit_report = view_menu.addAction("&Fit Report...")
+        self._action_fit_report = view_menu.addAction("&Fit report...")
         self._action_fit_report.setShortcut("Ctrl+R")
         self._action_fit_report.setEnabled(False)
-        self._action_view_report = view_menu.addAction("&Benchmark Report...")
+        self._action_view_report = view_menu.addAction("&Benchmark report...")
         view_menu.addSeparator()
         # Shows and hides the explorer; its own button can only hide it
-        self._action_toggle_explorer = view_menu.addAction("Project &Explorer")
+        self._action_toggle_explorer = view_menu.addAction("Project &explorer")
         self._action_toggle_explorer.setCheckable(True)
         self._action_toggle_explorer.setChecked(True)
         self._action_toggle_explorer.setShortcut("Ctrl+Shift+E")
@@ -304,7 +306,7 @@ class WindowLayoutMixin:
         text.addWidget(self._lbl_path)
         row.addLayout(text, stretch=1)
 
-        self._btn_open = QPushButton("Open\u2026")
+        self._btn_open = QPushButton("Open...")
         self._btn_open.setToolTip("Open an airfoil coordinate file (Ctrl+O)")
         row.addWidget(self._btn_open, alignment=Qt.AlignmentFlag.AlignVCenter)
 
@@ -379,19 +381,21 @@ class WindowLayoutMixin:
         live_label = QLabel("Live preview")
         live_label.setObjectName("FormLabel")
         toolbar.addWidget(live_label)
-        self._combo_live = QComboBox()
-        self._combo_live.addItems(["Minimal", "Moderate", "Detailed"])
-        self._combo_live.setCurrentIndex(1)
+        self._seg_live = SegmentedControl()
+        for mode in ("Minimal", "Moderate", "Detailed"):
+            self._seg_live.addItem(mode)
+        self._seg_live.setCurrentIndex(1)
         # Read by the fit's worker thread, so kept as a plain int; it can
         # change while fitting
-        self._live_mode = self._combo_live.currentIndex()
-        self._combo_live.currentIndexChanged.connect(lambda i: setattr(self, "_live_mode", i))
-        self._combo_live.setToolTip(
-            "How often the plots update while fitting.\n"
-            "Minimal: only at the end. Moderate: once a second.\n"
-            "Detailed: every iteration (slower)."
-        )
-        toolbar.addWidget(self._combo_live)
+        self._live_mode = self._seg_live.currentIndex()
+        self._seg_live.currentIndexChanged.connect(lambda i: setattr(self, "_live_mode", i))
+        for i, tip in enumerate((
+            "Update the plots only when the fit is done.",
+            "Update the plots once a second while fitting.",
+            "Update the plots at every iteration (slower).",
+        )):
+            self._seg_live.setItemToolTip(i, tip)
+        toolbar.addWidget(self._seg_live)
 
         return toolbar
 
@@ -411,24 +415,19 @@ class WindowLayoutMixin:
         x_label = QLabel("X axis")
         x_label.setObjectName("FormLabel")
         toolbar.addWidget(x_label)
-        self._combo_loss_x = QComboBox()
-        self._combo_loss_x.addItem("Iterations", userData="iters")
-        self._combo_loss_x.addItem("Time (s)", userData="time")
-        self._combo_loss_x.setCurrentIndex(0)
-        self._combo_loss_x.setFixedWidth(96)
-        toolbar.addWidget(self._combo_loss_x)
+        self._seg_loss_x = SegmentedControl()
+        self._seg_loss_x.addItem("Iterations", userData="iters")
+        self._seg_loss_x.addItem("Time", userData="time")
+        toolbar.addWidget(self._seg_loss_x)
 
         scale_label = QLabel("Log scale")
         scale_label.setObjectName("FormLabel")
         toolbar.addWidget(scale_label)
-        self._combo_log_scale = QComboBox()
-        self._combo_log_scale.addItem("Y only", userData="y")
-        self._combo_log_scale.addItem("Both", userData="both")
-        self._combo_log_scale.addItem("None", userData="none")
-        self._combo_log_scale.addItem("X only", userData="x")
-        self._combo_log_scale.setCurrentIndex(0)
-        self._combo_log_scale.setFixedWidth(84)
-        toolbar.addWidget(self._combo_log_scale)
+        self._seg_log_scale = SegmentedControl()
+        for text, axes in (("None", "none"), ("X", "x"), ("Y", "y"), ("Both", "both")):
+            self._seg_log_scale.addItem(text, userData=axes)
+        self._seg_log_scale.setCurrentIndex(self._seg_log_scale.findData("y"))
+        toolbar.addWidget(self._seg_log_scale)
         return toolbar
 
     # -- Project Explorer --------------------------------------------------
@@ -489,6 +488,8 @@ class WindowLayoutMixin:
         self._project_tree.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
         self._project_tree.setRootIsDecorated(True)
         self._project_tree.setAnimated(True)
+        self._project_tree.header().setStretchLastSection(False)
+        self._project_tree.header().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         layout.addWidget(self._project_tree, stretch=1)
 
         # Run details label
@@ -552,9 +553,8 @@ class WindowLayoutMixin:
         )
         self._lbl_goal = _add_row(form, "Goal", self._seg_goal)
 
-        self._spin_tolerance = QDoubleSpinBox()
+        self._spin_tolerance = ScientificSpinBox()
         self._spin_tolerance.setRange(1e-9, 1.0)
-        self._spin_tolerance.setDecimals(9)
         self._spin_tolerance.setSingleStep(1e-6)
         self._spin_tolerance.setValue(1e-5)
         self._spin_tolerance.setToolTip("Maximum orthogonal distance of any data point to the curve.")
@@ -599,11 +599,21 @@ class WindowLayoutMixin:
         self._lbl_grow = _add_row(form, "Grow points", self._check_grow)
 
         # Error metric
-        self._combo_err = QComboBox()
-        for metric in ErrorMetric:
-            self._combo_err.addItem(metric.display_name, userData=metric)
-        self._combo_err.setCurrentIndex(0)
-        self._lbl_err = _add_row(form, "Error metric", self._combo_err)
+        self._seg_err = SegmentedControl()
+        for metric, text, tip in (
+            (ErrorMetric.PARAMETRIC, "Pointwise",
+             "Average distance from each data point to the curve point at its parameter.\n"
+             "Fast."),
+            (ErrorMetric.ORTHOGONAL, "Orthogonal",
+             "Average distance from each data point to the nearest curve point.\n"
+             "Accurate but slower."),
+            (ErrorMetric.ORTHOGONAL_LOCAL, "Local",
+             "Orthogonal distance, searching only near each point's parameter.\n"
+             "A balance of the two."),
+        ):
+            self._seg_err.addItem(text, userData=metric)
+            self._seg_err.setItemToolTip(self._seg_err.count() - 1, tip)
+        self._lbl_err = _add_row(form, "Error metric", self._seg_err)
 
         section.add_layout(form)
         return section
@@ -643,8 +653,8 @@ class WindowLayoutMixin:
         self._spin_sections.setRange(1, 10)
         self._spin_sections.setValue(2)
         self._spin_sections.setToolTip(
-            "Number of spline segments.\n"
-            "2 = upper/lower split at leading edge (default)"
+            "Number of sections, each its own spline, joined at junctions.\n"
+            "2 (default) splits upper and lower surface at the leading edge."
         )
         _add_row(form, "Sections", self._spin_sections)
 
@@ -703,20 +713,21 @@ class WindowLayoutMixin:
         self._spin_subsample = QSpinBox()
         self._spin_subsample.setRange(20, 100000)
         self._spin_subsample.setValue(200)
-        self._spin_subsample.setSuffix(" points/section")
+        self._spin_subsample.setSuffix(" points")
         self._spin_subsample.setEnabled(False)
-        self._spin_subsample.setToolTip("Sections with more points than this are subsampled.")
+        self._spin_subsample.setToolTip(
+            "Points per section. Sections with more points than this are subsampled.")
         self._subsample_row = _hbox(self._check_subsample, self._spin_subsample, stretch_first=False)
         self._subsample_row.layout().setStretch(1, 1)
         self._lbl_subsample = _add_row(form, "Subsample", self._subsample_row)
 
-        # Bending energy weight (GN-VarPro fixed count, sweepable)
-        self._spin_smoothing_weight = QDoubleSpinBox()
+        # Bending energy weight (VarPro LM fixed count, sweepable)
+        self._spin_smoothing_weight = ScientificSpinBox()
         self._spin_smoothing_weight.setRange(0.0, 1e12)
-        self._spin_smoothing_weight.setDecimals(12)
         self._spin_smoothing_weight.setSingleStep(0.001)
         self._spin_smoothing_weight.setValue(0.001)
-        self._spin_smoothing_weight.setToolTip("Bending energy weight for GN-VarPro (0=off, 1e-3=default).")
+        self._spin_smoothing_weight.setToolTip(
+            "Bending energy weight for VarPro LM (0 turns it off; default 0.001).")
         self._sweep_smoothing_weight = SweepableDoubleSpinBox(
             self._spin_smoothing_weight, group=self._sweep_group, default_steps=10,
         )
@@ -733,7 +744,8 @@ class WindowLayoutMixin:
         self._spin_seed.setRange(-1, 2**31 - 1)
         self._spin_seed.setValue(-1)
         self._spin_seed.setSpecialValueText("Random")
-        self._spin_seed.setToolTip("Random seed (Random = system random, \u22650 = deterministic).")
+        self._spin_seed.setToolTip(
+            "Random seed. Random: a new seed for every fit;\n0 or more: the same result every time.")
         self._lbl_seed = _add_row(form, "Seed", self._spin_seed)
 
         # Search bounds and junction
@@ -825,18 +837,20 @@ class WindowLayoutMixin:
 
         self._spin_w_short = _ws()
         self._spin_w_short.setToolTip("Penalize control points that are too close together")
-        _add_row(wf, "Min spacing", self._spin_w_short)
+        _add_row(wf, "Bunching", self._spin_w_short)
 
         self._spin_w_tangent = _ws()
         self._spin_w_tangent.setToolTip("Penalize unusual edge lengths at curve endpoints")
         _add_row(wf, "End handles", self._spin_w_tangent)
 
         self._spin_w_curv = _ws()
-        self._spin_w_curv.setToolTip("Minimize bending energy: \u222B\u03BA\u00B2 ds")
+        self._spin_w_curv.setToolTip(
+            "Penalize bending energy: the integral of \u03BA\u00B2 along the curve")
         _add_row(wf, "Bending", self._spin_w_curv)
 
         self._spin_w_grad = _ws()
-        self._spin_w_grad.setToolTip("Minimize wiggle energy: \u222B(d\u03BA/ds)\u00B2 ds")
+        self._spin_w_grad.setToolTip(
+            "Penalize wiggles: the integral of (d\u03BA/ds)\u00B2 along the curve")
         _add_row(wf, "Wiggle", self._spin_w_grad)
 
         layout.addWidget(self._fairness_container)
@@ -907,7 +921,7 @@ class WindowLayoutMixin:
         stats = QGridLayout()
         stats.setHorizontalSpacing(Size.GROUP)
         stats.setVerticalSpacing(0)
-        self._lbl_result_caption_dev = QLabel("Max dev")
+        self._lbl_result_caption_dev = QLabel("Max deviation")
         self._lbl_result_dev = QLabel()
         self._lbl_result_ctrl = QLabel()
         self._lbl_result_time = QLabel()

@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 from PyQt6.QtCore import QDir, Qt
 from PyQt6.QtWidgets import QFileDialog, QTreeWidgetItem
 
+from ..formatting import format_duration, number
 from ..optimization.models import (
     FairnessWeights,
     FitResult,
@@ -28,6 +29,7 @@ from ..optimization.models import (
     SplineConfig,
 )
 from ..project_io import create_optimization_run, create_project, load_project, save_project
+from .theme import readout_table
 
 if TYPE_CHECKING:
     from .ui import SplineFitterWindow
@@ -68,7 +70,7 @@ class ProjectManager:
         self._project = None
         self._project_path = None
         self._project_modified = False
-        self._window._lbl_project.setText("No project")
+        self._show_project_label()
         self._window._set_project_save_enabled(False)
 
     # ------------------------------------------------------------------
@@ -79,9 +81,9 @@ class ProjectManager:
         """Open a project file."""
         file_path, _ = QFileDialog.getOpenFileName(
             self._window,
-            "Open Project",
+            "Open project",
             QDir.homePath(),
-            "Spline Project (*.asfproj);;All Files (*)",
+            "Spline project (*.asfproj);;All files (*)",
         )
 
         if not file_path:
@@ -102,12 +104,7 @@ class ProjectManager:
             self._window._show_file_info(project.airfoil, file_path)
             self._window._spin_sections.setValue(project.airfoil.num_sections)
 
-            # Update project info label
-            n_runs = len(project.optimization_runs)
-            self._window._lbl_project.setText(
-                f"Project: {os.path.basename(file_path)}\n"
-                f"{n_runs} optimization run(s)"
-            )
+            self._show_project_label()
 
             # Enable save buttons
             self._window._set_project_save_enabled(True)
@@ -141,13 +138,14 @@ class ProjectManager:
                 # Update plots
                 self._window._plot_manager.plot_fitted_spline(self._window._fit_result)
                 self._window._plot_manager.set_loss_curve_data(
-                    self._window._combo_loss_x.currentData()
+                    self._window._seg_loss_x.currentData()
                 )
                 self._window._set_save_enabled(True)
 
+                n_runs = len(project.optimization_runs)
                 self._window.statusBar().showMessage(
-                    f"Loaded project with {n_runs} run(s). "
-                    f"Showing: {last_run.optimization_config.optimizer.display_name}"
+                    f"Loaded project with {n_runs} run{'s' if n_runs != 1 else ''}, "
+                    f"showing {last_run.optimization_config.optimizer.display_name}"
                 )
             else:
                 self._window.statusBar().showMessage(
@@ -170,11 +168,7 @@ class ProjectManager:
         try:
             save_project(self._project, self._project_path)
             self._project_modified = False
-            n_runs = len(self._project.optimization_runs)
-            self._window._lbl_project.setText(
-                f"Project: {os.path.basename(self._project_path)}\n"
-                f"{n_runs} optimization run(s)"
-            )
+            self._show_project_label()
             self._window.statusBar().showMessage(f"Saved: {self._project_path}")
         except Exception as e:
             self._window.statusBar().showMessage(f"Save failed: {e}")
@@ -199,9 +193,9 @@ class ProjectManager:
 
         save_path, _ = QFileDialog.getSaveFileName(
             self._window,
-            "Save Project As",
+            "Save project as",
             default_path,
-            "Spline Project (*.asfproj)",
+            "Spline project (*.asfproj)",
         )
 
         if not save_path:
@@ -213,11 +207,7 @@ class ProjectManager:
             self._project_path = save_path
             self._project_modified = False
 
-            n_runs = len(self._project.optimization_runs)
-            self._window._lbl_project.setText(
-                f"Project: {os.path.basename(save_path)}\n"
-                f"{n_runs} optimization run(s)"
-            )
+            self._show_project_label()
 
             # Enable save button now that we have a path
             self._window._set_project_save_enabled(True)
@@ -272,19 +262,22 @@ class ProjectManager:
             self._project.optimization_runs.append(run)
 
         self._project_modified = True
-
-        # Update project info label
-        n_runs = len(self._project.optimization_runs)
-        proj_name = (
-            os.path.basename(self._project_path) if self._project_path else "Unsaved"
-        )
-        self._window._lbl_project.setText(
-            f"Project: {proj_name}*\n"
-            f"{n_runs} optimization run(s)"
-        )
+        self._show_project_label()
 
         # Refresh the project tree
         self._populate_tree()
+
+    def _show_project_label(self):
+        """Name the project and count its runs; * marks unsaved changes."""
+        if self._project is None:
+            self._window._lbl_project.setText("No project")
+            return
+        name = os.path.basename(self._project_path) if self._project_path else "Unsaved project"
+        n_runs = len(self._project.optimization_runs)
+        self._window._lbl_project.setText(
+            f"{name}{'*' if self._project_modified else ''}\n"
+            f"{n_runs} optimization run{'s' if n_runs != 1 else ''}"
+        )
 
     def _configs_match(
         self,
@@ -408,30 +401,24 @@ class ProjectManager:
                         for run in runs_sorted:
                             n_ctrl = run.spline_config.num_control_points
                             error = run.result.final_error
-                            # Show smoothing weight for GN-VarPro runs
-                            sw_suffix = ""
-                            sw_tip = ""
+                            # Tolerance runs show their tolerance, VarPro runs their smoothing
+                            setting = ""
                             tol = run.optimization_config.tolerance
                             if tol is not None:
                                 n_ctrl = run.result.num_control_points
-                                sw_suffix = f", tol={tol:.1e}"
-                                sw_tip = f", Tolerance: {tol:.3e}"
+                                setting = f"tolerance {number(tol, '.1e')}"
                             elif run.optimization_config.optimizer == OptimizerType.GN_VARPRO:
                                 sw = run.optimization_config.smoothing_weight
-                                sw_suffix = f", sw={sw:.5g}"
-                                sw_tip = f", Smoothing: {sw:.5g}"
+                                setting = f"smoothing {number(sw, '.5g')}"
                             run_item = QTreeWidgetItem(
-                                [f"{n_ctrl} control points ({error:.2e}{sw_suffix})"]
-                            )
+                                [f"{n_ctrl} control points, {number(error, '.2e')}"])
                             run_item.setData(
                                 0, Qt.ItemDataRole.UserRole, ("run", run)
                             )
-                            run_item.setToolTip(
-                                0,
-                                f"Time: {run.result.elapsed_seconds:.2f}s, "
-                                f"Evals: {run.result.num_evaluations}"
-                                f"{sw_tip}",
-                            )
+                            details = [f"Error {number(error, '.3e')}", setting,
+                                       f"{run.result.num_evaluations} evaluations",
+                                       format_duration(run.result.elapsed_seconds)]
+                            run_item.setToolTip(0, ", ".join(d for d in details if d))
                             cont_item.addChild(run_item)
 
                         sections_item.addChild(cont_item)
@@ -534,26 +521,21 @@ class ProjectManager:
 
         continuity = ", ".join(cfg.junction_specs()) or cfg.continuity.name
         ctrl = res.num_control_points if opt.tolerance else cfg.num_control_points
-        tolerance = f"Tolerance: {opt.tolerance:.3e}<br>" if opt.tolerance else ""
-        deviation = ""
+        rows = [("Degree", str(cfg.degree)), ("Control points", str(ctrl)),
+                ("Continuity", continuity)]
+        if opt.tolerance:
+            rows.append(("Tolerance", f"{number(opt.tolerance, '.3e')}"))
+        if opt.optimizer.uses_error_metric:
+            rows.append(("Error metric", opt.metric.display_name))
+        rows.append(("Error", f"{number(res.final_error, '.3e')}"))
         if res.report:
-            deviation = (f"Max deviation: {res.report['max_deviation']:.3e}<br>"
-                         f"RMS deviation: {res.report['rms_deviation']:.3e}<br>")
-        details = (
-            f"<b>{opt.optimizer.display_name}</b><br>"
-            f"Degree: {cfg.degree}, Control points: {ctrl}<br>"
-            f"Continuity: {continuity}<br>"
-            f"{tolerance}"
-            f"Metric: {opt.metric.display_name}<br>"
-            f"<br>"
-            f"<b>Result:</b><br>"
-            f"Error: {res.final_error:.4e}<br>"
-            f"{deviation}"
-            f"Iterations: {res.num_iterations}<br>"
-            f"Evaluations: {res.num_evaluations}<br>"
-            f"Time: {res.elapsed_seconds:.2f}s<br>"
-            f"Converged: {'\u2713' if res.converged else '\u2717'}"
-        )
+            rows += [("Max deviation", f"{number(res.report['max_deviation'], '.3e')}"),
+                     ("RMS deviation", f"{number(res.report['rms_deviation'], '.3e')}")]
+        rows += [("Iterations", str(res.num_iterations)),
+                 ("Evaluations", str(res.num_evaluations)),
+                 ("Time", format_duration(res.elapsed_seconds)),
+                 ("Converged", "yes" if res.converged else "no")]
+        details = readout_table(rows, title=opt.optimizer.display_name)
         self._window._lbl_run_details.setText(details)
 
     def _load_run_to_plots(self, run: OptimizationRun):
@@ -571,7 +553,7 @@ class ProjectManager:
         # Update plots
         self._window._plot_manager.plot_fitted_spline(self._window._fit_result)
         self._window._plot_manager.set_loss_curve_data(
-            self._window._combo_loss_x.currentData()
+            self._window._seg_loss_x.currentData()
         )
         self._window._refresh_curvature_comb()
 
@@ -645,7 +627,7 @@ class ProjectManager:
         deg_values = {r.spline_config.degree for r in runs}
 
         if len(sw_values) > 1 and len(cp_values) == 1 and len(deg_values) == 1:
-            label = "Smoothing Weight"
+            label = "Smoothing weight"
             sorted_runs = sorted(
                 runs, key=lambda r: r.optimization_config.smoothing_weight
             )
@@ -655,7 +637,7 @@ class ProjectManager:
             sorted_runs = sorted(runs, key=lambda r: r.spline_config.degree)
             x = [r.spline_config.degree for r in sorted_runs]
         else:
-            label = "Control Points"
+            label = "Control points"
             sorted_runs = sorted(runs, key=cp)
             x = [cp(r) for r in sorted_runs]
 
@@ -674,9 +656,9 @@ class ProjectManager:
         if self._project is None:
             return [], []
         fixed = {
-            "Control Points": lambda c, o: c.num_control_points,
+            "Control points": lambda c, o: c.num_control_points,
             "Degree": lambda c, o: c.degree,
-            "Smoothing Weight": lambda c, o: o.smoothing_weight,
+            "Smoothing weight": lambda c, o: o.smoothing_weight,
         }
         by_value: dict = {}
         for run in self._project.optimization_runs:
@@ -704,7 +686,7 @@ class ProjectManager:
     @staticmethod
     def _get_run_axis_value(run: OptimizationRun, label: str) -> float:
         """Return the x-axis value for a run given the detected axis label."""
-        if label == "Smoothing Weight":
+        if label == "Smoothing weight":
             return run.optimization_config.smoothing_weight
         elif label == "Degree":
             return run.spline_config.degree
@@ -733,14 +715,6 @@ class ProjectManager:
         # Refresh tree
         self._populate_tree()
 
-        # Update project label
-        n_runs = len(self._project.optimization_runs)
-        proj_name = (
-            os.path.basename(self._project_path) if self._project_path else "Unsaved"
-        )
-        self._window._lbl_project.setText(
-            f"Project: {proj_name}*\n"
-            f"{n_runs} optimization run(s)"
-        )
+        self._show_project_label()
 
-        self._window.statusBar().showMessage(f"Deleted {count} run(s)")
+        self._window.statusBar().showMessage(f"Deleted {count} run{'s' if count != 1 else ''}")

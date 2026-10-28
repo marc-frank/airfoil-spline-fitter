@@ -17,19 +17,15 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QDoubleSpinBox,
     QFileDialog,
-    QFormLayout,
     QInputDialog,
-    QPushButton,
-    QVBoxLayout,
 )
 
 from ..analysis import fit_report, format_report_html, scipy_curves
 from ..geometry import create_airfoil_data
 from ..io import export_airfoil_data, export_spline_data, parse_airfoil_data
 from .background import run_in_background
-from .theme import text_browser
+from .widgets import ScientificSpinBox, SegmentedControl, add_form_row, dialog_form, show_document
 
 
 class FileActionsMixin:
@@ -48,9 +44,9 @@ class FileActionsMixin:
         """Handle open file button click."""
         path, _ = QFileDialog.getOpenFileName(
             self,
-            "Open Airfoil .dat",
+            "Open airfoil",
             QDir.homePath(),
-            "Airfoil Data (*.dat)",
+            "Airfoil data (*.dat)",
         )
         if path:
             self._load_airfoil(path)
@@ -72,23 +68,7 @@ class FileActionsMixin:
             # Convert markdown to HTML
             html = self._markdown_to_html(markdown_text)
 
-            # Create and show dialog
-            dialog = QDialog(self)
-            dialog.setWindowTitle("Optimizer Benchmark Report")
-            dialog.resize(900, 700)
-
-            layout = QVBoxLayout(dialog)
-
-            browser = text_browser()
-            browser.setOpenExternalLinks(True)
-            browser.setHtml(html)
-            layout.addWidget(browser)
-
-            close_btn = QPushButton("Close")
-            close_btn.clicked.connect(dialog.accept)
-            layout.addWidget(close_btn)
-
-            dialog.exec()
+            show_document(self, "Optimizer benchmark report", html, 900, 700)
 
         except Exception as e:
             self.statusBar().showMessage(f"Failed to open report: {e}")
@@ -211,7 +191,7 @@ class FileActionsMixin:
             filename_name, content_name, coords, max_precision = parse_airfoil_data(path)
 
             if not coords:
-                self.statusBar().showMessage("Failed to parse airfoil data - no coordinates found")
+                self.statusBar().showMessage("No coordinates found in the file")
                 self._play_error_chime()
                 return
 
@@ -261,8 +241,8 @@ class FileActionsMixin:
 
             default_n = max(20, (self._airfoil.num_points + 1) // 2)
             n_per_side, ok = QInputDialog.getInt(
-                self, "Save Fitted Airfoil",
-                "Points per side (cosine spacing, clustered at LE and TE):",
+                self, "Save fitted airfoil",
+                "Points per side, spaced closer toward the leading and trailing edge",
                 default_n, 3, 100000,
             )
             if not ok:
@@ -277,9 +257,9 @@ class FileActionsMixin:
 
             save_path, _ = QFileDialog.getSaveFileName(
                 self,
-                "Save Fitted Airfoil",
+                "Save fitted airfoil",
                 default_path,
-                "Airfoil Data (*.dat)",
+                "Airfoil data (*.dat)",
             )
 
             if not save_path:
@@ -317,9 +297,9 @@ class FileActionsMixin:
 
             save_path, _ = QFileDialog.getSaveFileName(
                 self,
-                "Save Spline Control Points",
+                "Save spline control points",
                 default_path,
-                "Spline Data (*.spline.dat)",
+                "Spline data (*.spline.dat)",
             )
 
             if not save_path:
@@ -355,36 +335,37 @@ class FileActionsMixin:
 
         dialog = QDialog(self)
         dialog.setWindowTitle("Export CAD")
-        form = QFormLayout(dialog)
+        form = dialog_form(dialog)
         combo_format = QComboBox()
         combo_format.addItem("STEP AP214 (*.step)", userData=".step")
         combo_format.addItem("IGES 5.3 (*.igs)", userData=".igs")
         combo_format.addItem("DXF R2000 (*.dxf)", userData=".dxf")
         combo_format.setCurrentIndex(self._settings.value("cad_format", 0, type=int))
-        form.addRow("Format", combo_format)
-        combo_units = QComboBox()
+        add_form_row(form, "Format", combo_format)
+        seg_units = SegmentedControl()
         for units in ("mm", "m", "inch"):
-            combo_units.addItem(units, userData=units)
-        combo_units.setCurrentIndex(max(0, combo_units.findData(self._settings.value("cad_units", "mm"))))
-        form.addRow("Units", combo_units)
-        spin_scale = QDoubleSpinBox()
+            seg_units.addItem(units, userData=units)
+        units = self._settings.value("cad_units", "mm")
+        seg_units.setCurrentIndex(max(0, seg_units.findData(units)))
+        add_form_row(form, "Units", seg_units)
+        spin_scale = ScientificSpinBox()
         spin_scale.setRange(1e-6, 1e9)
-        spin_scale.setDecimals(6)
         spin_scale.setValue(self._settings.value("cad_scale", 1.0, type=float))
-        spin_scale.setToolTip("Coordinates are multiplied by this factor (e.g. the chord length).")
-        form.addRow("Scale (chord)", spin_scale)
+        spin_scale.setToolTip(
+            "Coordinates are multiplied by this factor, for example the chord length.")
+        add_form_row(form, "Scale", spin_scale)
         check_merge = QCheckBox("Merge sections into one curve")
         check_merge.setChecked(self._settings.value("cad_merge", False, type=bool))
         check_merge.setToolTip(
             "Write the whole chain as a single B-spline (junctions become knots).\n"
             "Otherwise every section is its own curve."
         )
-        form.addRow("", check_merge)
-        check_te = QCheckBox("Close blunt trailing edge with a line")
+        add_form_row(form, "Sections", check_merge)
+        check_te = QCheckBox("Close a blunt trailing edge with a line")
         check_te.setChecked(self._settings.value("cad_close_te", True, type=bool))
-        form.addRow("", check_te)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
-                                   | QDialogButtonBox.StandardButton.Cancel)
+        add_form_row(form, "Trailing edge", check_te)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
+        buttons.addButton("Export...", QDialogButtonBox.ButtonRole.AcceptRole).setDefault(True)
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
         form.addRow(buttons)
@@ -394,7 +375,7 @@ class FileActionsMixin:
 
         suffix = combo_format.currentData()
         self._settings.setValue("cad_format", combo_format.currentIndex())
-        self._settings.setValue("cad_units", combo_units.currentData())
+        self._settings.setValue("cad_units", seg_units.currentData())
         self._settings.setValue("cad_scale", spin_scale.value())
         self._settings.setValue("cad_merge", check_merge.isChecked())
         self._settings.setValue("cad_close_te", check_te.isChecked())
@@ -408,7 +389,7 @@ class FileActionsMixin:
             self.statusBar().showMessage("Export cancelled.")
             return
         try:
-            path = self.export_cad(save_path, units=combo_units.currentData(),
+            path = self.export_cad(save_path, units=seg_units.currentData(),
                                    scale=spin_scale.value(), merge=check_merge.isChecked(),
                                    close_trailing_edge=check_te.isChecked())
             self.statusBar().showMessage(f"Exported: {path}")
@@ -445,18 +426,8 @@ class FileActionsMixin:
                 report = run_in_background(lambda: fit_report(
                     airfoil.sections, fit_result, precision=airfoil.precision))
                 fit_result.report = report
-            dialog = QDialog(self)
-            dialog.setWindowTitle("Fit Report")
-            dialog.resize(560, 520)
-            layout = QVBoxLayout(dialog)
-            browser = text_browser()
             title = self._airfoil.name or self._airfoil.filename or "Fit report"
-            browser.setHtml(format_report_html(report, title))
-            layout.addWidget(browser)
-            close_btn = QPushButton("Close")
-            close_btn.clicked.connect(dialog.accept)
-            layout.addWidget(close_btn)
-            dialog.exec()
+            show_document(self, "Fit report", format_report_html(report, title), 560, 520)
         except Exception as e:
             self.statusBar().showMessage(f"Report failed: {e}")
             self._play_error_chime()

@@ -9,11 +9,12 @@ from PyQt6.QtCore import QDir
 from PyQt6.QtWidgets import (
     QApplication,
     QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QVBoxLayout,
+    QWidget,
 )
 
 from ..analysis import default_tolerance
@@ -29,6 +30,8 @@ from ..optimization import (
 )
 from .background import run_in_background
 from .live import LiveProgress
+from .theme import Size
+from .widgets import add_form_row, dialog_form
 
 if TYPE_CHECKING:
     from .ui import SplineFitterWindow
@@ -45,53 +48,47 @@ class BatchController:
     def on_batch_dialog(self):
         """Open the batch-conversion dialog (File -> Batch Convert)."""
         dialog = QDialog(self._window)
-        dialog.setWindowTitle("Batch Convert")
-        dialog.setMinimumWidth(500)
-        lay = QVBoxLayout(dialog)
-        lay.addWidget(QLabel("Convert all .dat files in source to .spline.dat"))
-        lay.addSpacing(8)
+        dialog.setWindowTitle("Batch convert")
+        dialog.setMinimumWidth(480)
+        form = dialog_form(dialog)
+        note = QLabel("Fit every .dat file in the source folder with the current settings\n"
+                      "and save each as .spline.dat in the target folder.")
+        note.setObjectName("Muted")
+        form.addRow(note)
 
-        btn_src = QPushButton("Choose Source Directory...")
-        lay.addWidget(btn_src)
-        lbl_src = QLabel(self._batch_src_dir or "Not set")
-        lbl_src.setWordWrap(True)
-        lay.addWidget(lbl_src)
+        def folder_row(text: str, attr: str):
+            """A folder path and the button that chooses it."""
+            path = QLabel(getattr(self, attr) or "Not chosen")
+            path.setObjectName("Muted")
+            path.setWordWrap(True)
+            button = QPushButton("Choose...")
 
-        def _on_src():
-            p = QFileDialog.getExistingDirectory(dialog, "Source directory", QDir.homePath())
-            if p:
-                self._batch_src_dir = p
-                lbl_src.setText(p)
-        btn_src.clicked.connect(_on_src)
+            def choose():
+                p = QFileDialog.getExistingDirectory(dialog, f"{text} folder", QDir.homePath())
+                if p:
+                    setattr(self, attr, p)
+                    path.setText(p)
+            button.clicked.connect(choose)
+            row = QWidget()
+            lay = QHBoxLayout(row)
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay.setSpacing(Size.GAP)
+            lay.addWidget(path, stretch=1)
+            lay.addWidget(button)
+            add_form_row(form, text, row)
 
-        lay.addSpacing(4)
-        btn_dst = QPushButton("Choose Target Directory...")
-        lay.addWidget(btn_dst)
-        lbl_dst = QLabel(self._batch_dst_dir or "Not set")
-        lbl_dst.setWordWrap(True)
-        lay.addWidget(lbl_dst)
+        folder_row("Source", "_batch_src_dir")
+        folder_row("Target", "_batch_dst_dir")
 
-        def _on_dst():
-            p = QFileDialog.getExistingDirectory(dialog, "Target directory", QDir.homePath())
-            if p:
-                self._batch_dst_dir = p
-                lbl_dst.setText(p)
-        btn_dst.clicked.connect(_on_dst)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.addButton("Convert", QDialogButtonBox.ButtonRole.AcceptRole).setDefault(True)
 
-        lay.addSpacing(12)
-        btn_row = QHBoxLayout()
-        btn_convert = QPushButton("Convert")
-        btn_convert.setDefault(True)
         def _do_convert():
             dialog.accept()
             self._on_batch_convert()
-        btn_convert.clicked.connect(_do_convert)
-        btn_row.addWidget(btn_convert)
-        btn_close = QPushButton("Close")
-        btn_close.clicked.connect(dialog.reject)
-        btn_row.addWidget(btn_close)
-        btn_row.addStretch()
-        lay.addLayout(btn_row)
+        buttons.accepted.connect(_do_convert)
+        buttons.rejected.connect(dialog.reject)
+        form.addRow(buttons)
 
         dialog.exec()
 
@@ -99,10 +96,10 @@ class BatchController:
         """Run batch conversion."""
         # Validate directories
         if not self._batch_src_dir or not os.path.isdir(self._batch_src_dir):
-            self._window.statusBar().showMessage("Set a valid source directory.")
+            self._window.statusBar().showMessage("Choose a source folder first.")
             return
         if not self._batch_dst_dir or not os.path.isdir(self._batch_dst_dir):
-            self._window.statusBar().showMessage("Set a valid target directory.")
+            self._window.statusBar().showMessage("Choose a target folder first.")
             return
 
         # Gather .dat files
@@ -112,7 +109,7 @@ class BatchController:
         ]
 
         if not files:
-            self._window.statusBar().showMessage("No .dat files found in source.")
+            self._window.statusBar().showMessage("No .dat files in the source folder.")
             return
 
         # Get configuration
@@ -248,8 +245,8 @@ class BatchController:
                 batch_elapsed = time.perf_counter() - batch_start
                 eval_count = get_evaluation_count()
                 self._window.statusBar().showMessage(
-                    f"[{idx}/{len(files)}] Done: {fname} | {eval_count} evals, "
-                    f"err \u02dc {format_error(result.fun)}, t={format_duration(batch_elapsed)}"
+                    f"[{idx}/{len(files)}] Done: {fname} | {eval_count} evaluations, "
+                    f"error {format_error(result.fun)} | {format_duration(batch_elapsed)}"
                 )
                 QApplication.processEvents()
 
@@ -264,7 +261,7 @@ class BatchController:
         if self._window._cancel_requested:
             msg = f"Batch cancelled after {format_duration(elapsed)}. Completed {done}/{len(files)}, failed {failed}."
         else:
-            msg = f"Batch complete! {done} files in {format_duration(elapsed)} ({failed} failed)"
+            msg = f"Batch complete: {done} files in {format_duration(elapsed)} ({failed} failed)"
 
         # Back to the window's own airfoil and fit
         w = self._window

@@ -33,7 +33,7 @@ def window(monkeypatch):
                                      precision=6, num_sections=2)
     w._check_comb.setChecked(True)
     w._check_knots.setChecked(True)
-    w._combo_live.setCurrentIndex(2)
+    w._seg_live.setCurrentIndex(2)
     yield w
     w.deleteLater()
     app.processEvents()

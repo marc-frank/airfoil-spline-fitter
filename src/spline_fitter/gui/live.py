@@ -103,14 +103,15 @@ class LiveProgress:
             return True
 
         elapsed = time.perf_counter() - self._start
-        status = (f"{self._prefix}Fitting... t={format_duration(elapsed)} | "
-                  f"Iter {len(self._logger.errors)} | Evals {get_evaluation_count()} | ")
+        status = (f"{self._prefix}Fitting... {format_duration(elapsed)} | "
+                  f"Iteration {len(self._logger.errors)} | "
+                  f"Evaluations {get_evaluation_count()} | ")
         if self._steps:
-            status += f"RMS ˜ {format_error(error)}"
+            status += f"RMS error {format_error(error)}"
             if self._deviation is not None:
-                status += f" | Max dev of last refit ˜ {format_error(self._deviation)}"
+                status += f" | Max deviation of last refit {format_error(self._deviation)}"
         else:
-            status += f"Best ˜ {format_error(min(self._logger.errors))}"
+            status += f"Best error {format_error(min(self._logger.errors))}"
         self._latest.update(x=np.array(x, copy=True), preview=preview, new=True, status=status)
 
         if self.mode == DETAILED:
@@ -184,4 +185,4 @@ class LiveProgress:
             list(self._logger.errors),
         )
         if w._plot_manager.has_loss_data:
-            w._plot_manager.set_loss_curve_data(w._combo_loss_x.currentData())
+            w._plot_manager.set_loss_curve_data(w._seg_loss_x.currentData())

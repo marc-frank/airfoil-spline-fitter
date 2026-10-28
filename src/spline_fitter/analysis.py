@@ -18,6 +18,7 @@ from bspline_varpro import airfoil as bv_airfoil
 from bspline_varpro import diagnostics
 from scipy.interpolate import BSpline
 
+from .formatting import number
 from .optimization.models import FitResult
 
 
@@ -92,31 +93,32 @@ def default_tolerance(coordinates: Sequence[Sequence[float]], precision: int | N
 
 def summary_line(report: dict) -> str:
     """One-line summary for the status bar."""
-    text = (f"max dev {report['max_deviation']:.2e}, rms {report['rms_deviation']:.2e}, "
+    text = (f"max deviation {number(report['max_deviation'], '.2e')}, "
+            f"RMS {number(report['rms_deviation'], '.2e')}, "
             f"{report['control_points']} control points")
     if report.get("tolerance"):
-        text += f" (tol {report['tolerance']:.2e})"
+        text += f" (tolerance {number(report['tolerance'], '.2e')})"
     return text
 
 
 def format_report_html(report: dict, title: str = "Fit report") -> str:
     """The report as an HTML page for a text browser."""
     def row(label: str, value: str) -> str:
-        return f"<tr><td style='padding:2px 12px 2px 0'>{html.escape(label)}</td><td>{value}</td></tr>"
+        return f"<tr><td>{html.escape(label)}</td><td class='num'>{value}</td></tr>"
 
     rows = [
-        row("Max orthogonal deviation", f"{report['max_deviation']:.3e}"),
-        row("RMS orthogonal deviation", f"{report['rms_deviation']:.3e}"),
+        row("Max orthogonal deviation", f"{number(report['max_deviation'], '.3e')}"),
+        row("RMS orthogonal deviation", f"{number(report['rms_deviation'], '.3e')}"),
         row("Max deviation per section",
-            ", ".join(f"{d:.2e}" for d in report["section_max_deviation"])),
+            ", ".join(f"{number(d, '.2e')}" for d in report["section_max_deviation"])),
     ]
     if report.get("tolerance"):
         met = report["max_deviation"] <= report["tolerance"] * (1 + 1e-9)
         verdict = "<span class='ok'>met</span>" if met else "<b class='warn'>not met</b>"
-        rows.append(row("Tolerance", f"{report['tolerance']:.3e} ({verdict})"))
+        rows.append(row("Tolerance", f"{number(report['tolerance'], '.3e')} ({verdict})"))
     floor = report.get("precision_floor")
     if floor:
-        note = f"{floor:.2e}"
+        note = f"{number(floor, '.2e')}"
         if report.get("tolerance") and report["tolerance"] < floor:
             note += " <b class='warn'>(tolerance is below the data rounding)</b>"
         rows.append(row("Rounding error of the data", note))
@@ -128,19 +130,22 @@ def format_report_html(report: dict, title: str = "Fit report") -> str:
     ]
     if "max_curvature" in report:
         rows += [
-            row("Max curvature", f"{report['max_curvature']:.4g}"),
+            row("Max curvature", f"{number(report['max_curvature'], '.4g')}"),
             row("Curvature extrema (wiggles)", str(report["curvature_extrema"])),
-            row("Roughness \u222b(d\u03ba/ds)\u00b2 ds", f"{report['roughness']:.4g}"),
+            row("Roughness \u222b(d\u03ba/ds)\u00b2 ds", f"{number(report['roughness'], '.4g')}"),
         ]
         if report.get("leading_edge_radius"):
-            rows.append(row("Leading-edge radius", f"{report['leading_edge_radius']:.6g}"))
+            rows.append(row("Leading-edge radius", number(report["leading_edge_radius"], ".6g")))
     body = "<table>" + "".join(rows) + "</table>"
     if report.get("junctions"):
-        body += ("<h4>Junctions</h4><table><tr><th align='left'>#</th><th align='left'>gap</th>"
-                 "<th align='left'>tangent angle</th><th align='left'>\u0394\u03ba</th>"
+        body += ("<h4>Junctions</h4><table><tr><th align='left'>Junction</th>"
+                 "<th align='left'>Gap</th>"
+                 "<th align='left'>Tangent angle</th><th align='left'>\u0394\u03ba</th>"
                  "<th align='left'>\u0394 d\u03ba/ds</th></tr>")
         for i, j in enumerate(report["junctions"], start=1):
-            body += (f"<tr><td>{i}</td><td>{j['gap']:.1e}</td><td>{j['tangent_angle_deg']:.2e}\u00b0</td>"
-                     f"<td>{j['curvature_jump']:.2e}</td><td>{j['curvature_slope_jump']:.2e}</td></tr>")
+            body += (f"<tr><td class='num'>{i}</td><td class='num'>{number(j['gap'], '.1e')}</td>"
+                     f"<td class='num'>{number(j['tangent_angle_deg'], '.2e')}\u00b0</td>"
+                     f"<td class='num'>{number(j['curvature_jump'], '.2e')}</td>"
+                     f"<td class='num'>{number(j['curvature_slope_jump'], '.2e')}</td></tr>")
         body += "</table>"
     return f"<html><body><h3>{html.escape(title)}</h3>{body}</body></html>"

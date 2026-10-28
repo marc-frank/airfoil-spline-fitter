@@ -148,14 +148,24 @@ curve is a deviation worth seeing. Every new plot item takes a `Z` value.
 - **UI text**: the system face at `Type.BASE_PT` (9 pt).
 - **Numbers**: monospace (`Type.MONO`: Cascadia Mono, Consolas, ...).
   Spin boxes and result readouts (`#Readout`, `Type.READOUT_PX`) use it, so
-  values line up and digits do not jump while a fit updates.
+  values line up and digits do not jump while a fit updates; label and value
+  lists use `theme.readout_table()`, reports the `num` class. Every number
+  shown (fields, readouts, messages, reports, plot ticks) takes the decimal
+  point of the system locale and has no group separators: `apply_theme()`
+  sets the locale, and text is formatted with `formatting.number()`, never a
+  bare f-string format. Files and logs keep a dot. Small or large values are
+  written in e-notation (`1.23e-05`, `formatting.format_error`). Values
+  spanning decades (tolerances, weights) use `ScientificSpinBox`, not a dozen
+  fixed decimals.
 - **Captions**: uppercase, `Type.CAPTION_PX`, weight 600, letter-spaced,
   `TEXT_3` (`#SectionCaption`). One caption names each region: DATA,
   METHOD, CURVE, ADVANCED, PROJECT, CONVERGENCE, ...
 - **Wording**: sentence case everywhere ("Fit spline", "Optimization
   runs"); words are spelled out ("Control points", not "Ctrl pts");
   labels have **no trailing colons**; menu items that open a dialog
-  end with an ellipsis ("Export CAD...").
+  end with an ellipsis ("Export CAD..."). This holds for menus, dialog and
+  file-dialog titles, buttons and status messages too; only the product
+  name, "Airfoil Spline Fitter", keeps its capitals.
 - **Glyphs**: no emoji. Icons are the stroked glyphs from `theme.icon()`
   (`chevron_down`, `chevron_up`, `chevron_right`, `chevron_left`,
   `check`, `range`), drawn in `TEXT_2` at `Size.GLYPH`. Text symbols are limited to
@@ -217,7 +227,9 @@ never call `setStyleSheet` on it.
 | Numeric range sweep | `SweepableSpinBox` / `SweepableDoubleSpinBox` |
 | Plot | `pg.PlotWidget` + `style_plot(plot)` + `label_plot(plot, side, text)` |
 | Plot pens and brushes | `theme.pen(Ink.X, width, dashed, alpha)`, `theme.brush(Ink.X, alpha)` |
-| Rich text dialog | `theme.text_browser()`; mark status with `class='ok'`, `'warn'`, `'error'` |
+| Numbers spanning decades | `ScientificSpinBox` (`widgets.py`) |
+| Settings dialog | `dialog_form(dialog)` (dialog padding) + `add_form_row(form, "Label", field)`, buttons in a `QDialogButtonBox` |
+| Rich text dialog | `show_document(parent, title, html, w, h)` around `theme.text_browser()`; mark status with `class='ok'`, `'warn'`, `'error'`, numbers with `class='num'` |
 | Slider | `QSlider`; the temperature slider is `TemperatureSlider` (cool-to-warm groove) |
 | Theme setting | `ThemeDialog` (`widgets.py`), from View > Theme... |
 
@@ -243,7 +255,10 @@ comparison below) | project explorer.
    method that `PlotManager.restyle()` reapplies.
 5. Orange? Re-read section 2.
 6. Labels: sentence case, no colons, captions uppercase.
-7. Run `pytest tests/test_design_language.py`.
+7. Run `pytest tests/test_design_language.py`. Besides colors and heights it
+   checks the wording of every label, item, menu entry, tooltip and status
+   message (sentence case, colons, abbreviations, symbols) and that short
+   choices are segmented controls.
 
 ## 7. Assets
 

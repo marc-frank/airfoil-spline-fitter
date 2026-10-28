@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ..analysis import default_tolerance
-from ..formatting import format_duration, format_error
+from ..formatting import format_duration, format_error, number
 from ..geometry import create_airfoil_data
 from ..optimization.models import (
     AirfoilData,
@@ -139,7 +139,7 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
                     sweep_box.stop_sweep()
         self._sweep_ctrl.setEnabled(editable and uses_count)
         self._sweep_ctrl.set_sweep_allowed(not tolerance_mode)
-        show(uses_metric, self._lbl_err, self._combo_err)
+        show(uses_metric, self._lbl_err, self._seg_err)
 
         # Curve. Continuity applies at junctions, which one section lacks;
         # geometric continuity is VarPro only
@@ -249,8 +249,8 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._combo_cont_kind.currentIndexChanged.connect(self._update_continuity_labels)
 
         # Display options
-        self._combo_loss_x.currentIndexChanged.connect(self._update_loss_plot_axis)
-        self._combo_log_scale.currentIndexChanged.connect(self._update_loss_plot_log_scale)
+        self._seg_loss_x.currentIndexChanged.connect(self._update_loss_plot_axis)
+        self._seg_log_scale.currentIndexChanged.connect(self._update_loss_plot_log_scale)
         self._check_comb.toggled.connect(self._update_curvature_comb)
         self._check_knots.toggled.connect(self._update_knots)
         self._combo_comb_qty.currentIndexChanged.connect(self._refresh_curvature_comb)
@@ -351,7 +351,7 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
 
         return OptimizationConfig(
             optimizer=opt_type,
-            metric=self._combo_err.currentData(),
+            metric=self._seg_err.currentData(),
             # 0: VarPro's own limit, a safety stop it does not reach in practice
             max_iterations=0 if opt_type == OptimizerType.GN_VARPRO else self._spin_maxiter.value(),
             seed=self._spin_seed.value(),
@@ -454,7 +454,7 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
 
     def _update_loss_plot_axis(self):
         """Update loss plot X-axis based on combo selection."""
-        mode = self._combo_loss_x.currentData()
+        mode = self._seg_loss_x.currentData()
         if mode == "iters":
             self._plot_manager.set_loss_x_label("Iterations")
         else:  # time
@@ -463,7 +463,7 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
 
     def _update_loss_plot_log_scale(self):
         """Update loss plot log scale based on combo selection."""
-        scale = self._combo_log_scale.currentData()
+        scale = self._seg_log_scale.currentData()
         log_x = scale in ("both", "x")
         log_y = scale in ("both", "y")
         self._plot_manager.set_loss_log_scale(log_x, log_y)
@@ -491,8 +491,8 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         if not show:
             return
         if result.report:
-            self._lbl_result_caption_dev.setText("Max dev")
-            self._lbl_result_dev.setText(f"{result.report['max_deviation']:.2e}")
+            self._lbl_result_caption_dev.setText("Max deviation")
+            self._lbl_result_dev.setText(f"{number(result.report['max_deviation'], '.2e')}")
         else:
             self._lbl_result_caption_dev.setText("Error")
             self._lbl_result_dev.setText(format_error(result.final_error))
@@ -538,7 +538,7 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._action_batch.setEnabled(not fitting)
 
         # Toggle controls
-        self._spin_degree.setEnabled(not fitting)
+        self._sweep_degree.setEnabled(not fitting)
         self._spin_ctrl.setEnabled(not fitting)
         self._spin_sections.setEnabled(not fitting)
         self._combo_cont.setEnabled(not fitting)
@@ -549,7 +549,7 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._combo_knot_placement.setEnabled(not fitting)
         self._seg_parameterization.setEnabled(not fitting)
         self._check_grow.setEnabled(not fitting)
-        self._combo_err.setEnabled(not fitting)
+        self._seg_err.setEnabled(not fitting)
         self._advanced_section.content_widget().setEnabled(not fitting)
         self._on_optimizer_changed(self._combo_opt.currentIndex())
 

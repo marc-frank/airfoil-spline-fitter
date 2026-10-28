@@ -288,9 +288,9 @@ class ErrorMetric(Enum):
     def display_name(self) -> str:
         """Return a human-readable name for the metric."""
         names = {
-            ErrorMetric.PARAMETRIC: "Avg pointwise",
-            ErrorMetric.ORTHOGONAL: "Avg orthogonal",
-            ErrorMetric.ORTHOGONAL_LOCAL: "Avg orthogonal (local)",
+            ErrorMetric.PARAMETRIC: "Average pointwise",
+            ErrorMetric.ORTHOGONAL: "Average orthogonal",
+            ErrorMetric.ORTHOGONAL_LOCAL: "Average orthogonal (local)",
         }
         return names.get(self, self.value)
 
@@ -417,7 +417,7 @@ class OptimizationConfig:
         relative_tolerance: Relative improvement threshold for early stopping
         optimize_le_position: If True, LE point (x, y) becomes optimization variables
         smoothing_factor: Smoothing parameter for algebraic methods (0 = interpolation)
-        smoothing_weight: Bending energy smoothing weight for GN-VarPro (0 = disabled).
+        smoothing_weight: Bending energy smoothing weight for VarPro LM (0 = disabled).
             Weight of the integrated squared parameter second derivative.
             The same penalty is included in the inner solve and outer objective.
         custom_parameters: Optional per-section parameter values for data points.

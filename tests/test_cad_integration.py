@@ -207,7 +207,7 @@ def test_project_round_trip_keeps_knots_and_settings(tmp_path, tolerance_fit):
     assert run.result.report["max_deviation"] == result.report["max_deviation"]
     from spline_fitter.gui.project import ProjectManager
     x, y, label = ProjectManager._detect_sweep_axis([run])
-    assert label == "Control Points" and x == [result.num_control_points] and y == [raw.fun]
+    assert label == "Control points" and x == [result.num_control_points] and y == [raw.fun]
 
 
 def _window(monkeypatch):
@@ -256,7 +256,7 @@ def test_gui_tolerance_mode_fit_report_and_cad_export(monkeypatch, tmp_path):
     _varpro_tolerance(window)
     assert window._tolerance_mode_selected() and window._check_auto_tolerance.isChecked()
     assert not window._sweep_ctrl.isEnabled()
-    window._combo_live.setCurrentIndex(2)
+    window._seg_live.setCurrentIndex(2)
     window._check_knots.setChecked(True)
     window._fitting_controller.on_fit()
     result = window._fit_result
@@ -316,7 +316,7 @@ def test_gui_dialogs_save_export_and_report(monkeypatch, tmp_path):
     assert "B_SPLINE_CURVE_WITH_KNOTS" in (tmp_path / "a.step").read_text()
 
     window._on_fit_report()
-    assert shown[-1] == "Fit Report" and window._fit_result.report is not None
+    assert shown[-1] == "Fit report" and window._fit_result.report is not None
     window.deleteLater()
     app.processEvents()
 

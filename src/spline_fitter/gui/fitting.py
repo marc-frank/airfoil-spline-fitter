@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 from PyQt6.QtWidgets import QApplication
 
 from ..analysis import fit_report, summary_line
-from ..formatting import format_duration, format_error
+from ..formatting import format_duration, format_error, number
 from ..geometry import compute_optimization_bounds
 from ..optimization import (
     OptimizerErrorLogger,
@@ -83,7 +83,7 @@ class FittingController:
         n_ctrl = config.num_control_points
         degree = config.degree
         mode = ", ".join(config.junction_specs()) or config.continuity.name
-        size = (f"tolerance {opt_config.tolerance:.2e}" if opt_config.tolerance
+        size = (f"tolerance {number(opt_config.tolerance, '.2e')}" if opt_config.tolerance
                 else f"{n_ctrl} control points")
         w.statusBar().showMessage(
             f"Preparing {size}, degree {degree}, {mode} continuity..."
@@ -176,18 +176,18 @@ class FittingController:
 
             if w._cancel_requested:
                 msg = (
-                    f"Cancelled: {iterations} iters, {eval_count} evals "
-                    f"in {format_duration(elapsed)} | Best ˜ {format_error(result.fun)}"
+                    f"Cancelled: {iterations} iterations, {eval_count} evaluations "
+                    f"in {format_duration(elapsed)} | Best error {format_error(result.fun)}"
                 )
             elif live.early_stopped:
                 msg = (
-                    f"Converged ({opt_name}): {iterations} iters, {eval_count} evals "
-                    f"in {format_duration(elapsed)} | Error ˜ {format_error(result.fun)}"
+                    f"Converged ({opt_name}): {iterations} iterations, {eval_count} evaluations "
+                    f"in {format_duration(elapsed)} | Error {format_error(result.fun)}"
                 )
             else:
                 msg = (
-                    f"Completed ({opt_name}): {iterations} iters, {eval_count} evals "
-                    f"in {format_duration(elapsed)} | Error ˜ {format_error(result.fun)}"
+                    f"Completed ({opt_name}): {iterations} iterations, {eval_count} evaluations "
+                    f"in {format_duration(elapsed)} | Error {format_error(result.fun)}"
                 )
 
             if w._fit_result is not None and w._fit_result.report:
@@ -210,8 +210,8 @@ class FittingController:
     def _reset_loss_plot(self):
         """Empty the loss plot with the selected axis and scale."""
         w = self._window
-        x_label = "Iterations" if w._combo_loss_x.currentData() == "iters" else "Time (s)"
-        scale = w._combo_log_scale.currentData()
+        x_label = "Iterations" if w._seg_loss_x.currentData() == "iters" else "Time (s)"
+        scale = w._seg_log_scale.currentData()
         w._plot_manager.reset_loss_plot(x_label, scale in ("both", "x"), scale in ("both", "y"))
 
     def _fit_result(self, result, config: SplineConfig, opt_config: OptimizationConfig,
@@ -303,12 +303,12 @@ class FittingController:
         # Determine which parameter is being swept
         is_opt_config_sweep = False
         if sweep_box is w._sweep_ctrl:
-            param_name = "Control Points"
+            param_name = "Control points"
             actual_min = config.continuity.minimum_control_points(config.degree)
             if min_val < actual_min:
                 min_val = actual_min
                 w.statusBar().showMessage(
-                    f"Adjusted min to {actual_min} "
+                    f"Raised the start of the sweep to {actual_min} "
                     f"(required for degree {config.degree}, {config.continuity.name})"
                 )
                 QApplication.processEvents()
@@ -323,7 +323,7 @@ class FittingController:
             def make_config(v):
                 return dc_replace(config, degree=v), opt_config
         elif sweep_box is w._sweep_smoothing_weight:
-            param_name = "Smoothing Weight"
+            param_name = "Smoothing weight"
             is_opt_config_sweep = True
             n_steps = sweep_box.sweep_steps
             if n_steps < 2:
@@ -367,7 +367,7 @@ class FittingController:
                 break
 
             sweep_config, sweep_opt_config = make_config(val)
-            val_str = f"{val:.5g}" if is_opt_config_sweep else str(val)
+            val_str = f"{number(val, '.5g')}" if is_opt_config_sweep else str(val)
 
             bounds = compute_optimization_bounds(
                 w._airfoil, sweep_config,
@@ -431,14 +431,14 @@ class FittingController:
             if self._sweep_results and self._sweep_results[-1][0] == val:
                 last_error = self._sweep_results[-1][1].final_error
                 w.statusBar().showMessage(
-                    f"Sweep: {idx + 1}/{total_fits} ({progress:.0f}%) | "
-                    f"{param_name}={val_str}, err={format_error(last_error)} | "
-                    f"t={format_duration(elapsed)}"
+                    f"Sweep: {idx + 1}/{total_fits} ({number(progress, '.0f')}%) | "
+                    f"{param_name} {val_str}, error {format_error(last_error)} | "
+                    f"{format_duration(elapsed)}"
                 )
             else:
                 w.statusBar().showMessage(
-                    f"Sweep: {idx + 1}/{total_fits} ({progress:.0f}%) | "
-                    f"{param_name}={val_str} | t={format_duration(elapsed)}"
+                    f"Sweep: {idx + 1}/{total_fits} ({number(progress, '.0f')}%) | "
+                    f"{param_name} {val_str} | {format_duration(elapsed)}"
                 )
             QApplication.processEvents()
 
@@ -454,15 +454,15 @@ class FittingController:
             w._refresh_curvature_comb()
             w._set_save_enabled(True)
 
-            best_val_str = f"{best_val:.5g}" if is_opt_config_sweep else str(best_val)
+            best_val_str = f"{number(best_val, '.5g')}" if is_opt_config_sweep else str(best_val)
             msg = (
                 f"Sweep complete: {len(self._sweep_results)} fits "
                 f"in {format_duration(elapsed)} | "
-                f"Best: {param_name}={best_val_str}, "
-                f"error ˜ {format_error(best_result.final_error)}"
+                f"Best: {param_name} {best_val_str}, "
+                f"error {format_error(best_result.final_error)}"
             )
         else:
-            msg = "Sweep failed - no successful fits"
+            msg = "Sweep failed: no fit succeeded"
 
         w.statusBar().showMessage(msg)
 

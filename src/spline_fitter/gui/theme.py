@@ -26,12 +26,13 @@ This module provides:
 
 from __future__ import annotations
 
+import html
 import math
 import os
 import tempfile
 
 import pyqtgraph as pg
-from PyQt6.QtCore import QObject, QPointF, QRect, QSettings, QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QLocale, QObject, QPointF, QRect, QSettings, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QColor,
     QFont,
@@ -44,6 +45,8 @@ from PyQt6.QtGui import (
     QPixmap,
 )
 from PyQt6.QtWidgets import QApplication, QTextBrowser
+
+from ..formatting import decimal_point, set_decimal_point
 
 ASSETS = os.path.join(os.path.dirname(__file__), "assets")
 
@@ -551,6 +554,12 @@ def apply_theme(app: QApplication | None = None) -> None:
     Scheme.MODE = mode if mode in Scheme.MODES else "system"
     Scheme.TEMPERATURE = max(-100, min(100, settings.value("theme/temperature", 0, type=int)))
     app.setStyle("Fusion")
+    # Numbers take the decimal point of the system locale, in fields,
+    # readouts, messages and plots alike; no group separators
+    locale = QLocale.system()
+    locale.setNumberOptions(QLocale.NumberOption.OmitGroupSeparator)
+    QLocale.setDefault(locale)
+    set_decimal_point(locale.decimalPoint())
     font = app.font()
     font.setPointSize(Type.BASE_PT)
     app.setFont(font)
@@ -612,9 +621,38 @@ def mono_font(point_size: float | None = None) -> QFont:
 # Plots
 # =============================================================================
 
+class _DecadeAxis(pg.AxisItem):
+    """An axis whose log scale labels only the decades (10^-6, 10^-5, ...),
+    so the labels of the 2..9 ticks do not pile up below each decade.
+    Without a decade in view, the other ticks keep their labels."""
+
+    def updateAutoSIPrefix(self):
+        # pyqtgraph rescales a labeled axis even with the prefix turned off
+        if self.autoSIPrefix:
+            super().updateAutoSIPrefix()
+            return
+        self.autoSIPrefixScale = 1.0
+        self.labelUnitPrefix = ""
+        self._updateLabel()
+
+    def tickStrings(self, values, scale, spacing):
+        strings = super().tickStrings(values, scale, spacing)
+        return [s.replace(".", decimal_point()) for s in strings]
+
+    def logTickStrings(self, values, scale, spacing):
+        strings = super().logTickStrings(values, scale, spacing)
+        low, high = sorted(self.range)
+        if math.floor(high) < math.ceil(low):  # no decade in view
+            return strings
+        return [s if abs(v - round(v)) < 1e-9 else ""
+                for v, s in zip(values, strings, strict=True)]
+
+
 def style_plot(plot: pg.PlotWidget) -> None:
     """Drafting-film styling for a plot: grid, axes and labels."""
     item = plot.getPlotItem()
+    if not isinstance(item.getAxis("left"), _DecadeAxis):
+        item.setAxisItems({side: _DecadeAxis(side) for side in ("left", "bottom")})
     axis_pen = pg.mkPen(color=Ink.GRID, width=1)
     tick_font = QFont()
     tick_font.setPointSizeF(Type.BASE_PT - 1)
@@ -623,6 +661,8 @@ def style_plot(plot: pg.PlotWidget) -> None:
         axis.setPen(axis_pen)
         axis.setTextPen(pg.mkPen(color=Palette.TEXT_2))
         axis.setTickFont(tick_font)
+        # Values in the ticks, not a power of ten on the label
+        axis.enableAutoSIPrefix(False)
         axis.label.setDefaultTextColor(QColor(Palette.TEXT_2))
         if axis.labelText:  # restyling: recolor the label
             axis.setLabel(axis.labelText, axis.labelUnits, axis.labelUnitPrefix,
@@ -666,6 +706,7 @@ h1, h2, h3, h4 {{ color: {Palette.TEXT}; font-weight: 600; }}
 td, th {{ padding: 3px 12px 3px 0; }}
 th {{ color: {Palette.TEXT_3}; font-weight: 600; text-align: left; border-bottom: 1px solid {Palette.RULE}; }}
 pre, code {{ font-family: {Type.MONO}; background-color: {Palette.FIELD}; }}
+.num {{ font-family: {Type.MONO}; }}
 a {{ color: {Palette.TEXT_2}; }}
 b {{ color: {Palette.TEXT}; }}
 .muted {{ color: {Palette.TEXT_3}; }}
@@ -673,6 +714,19 @@ b {{ color: {Palette.TEXT}; }}
 .warn {{ color: {Palette.WARN}; }}
 .error {{ color: {Palette.ERROR}; }}
 """
+
+
+def readout_table(rows: list[tuple[str, str]], title: str = "") -> str:
+    """Label and value rows as rich text for a QLabel. The values are
+    monospaced so they line up; labels keep the label's own color."""
+    cells = "".join(
+        f"<tr><td style='padding: 1px {Size.GROUP}px 1px 0'>{html.escape(label)}</td>"
+        f"<td style='font-family: {Type.MONO}; color: {Palette.TEXT}'>"
+        f"{html.escape(value)}</td></tr>"
+        for label, value in rows
+    )
+    heading = f"<p style='color: {Palette.TEXT}'>{html.escape(title)}</p>" if title else ""
+    return f"{heading}<table cellspacing='0' cellpadding='0'>{cells}</table>"
 
 
 def text_browser() -> QTextBrowser:

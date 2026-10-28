@@ -6,20 +6,40 @@ Display formatting functions for numbers, durations, and errors.
 
 This module provides consistent, human-readable formatting for
 the GUI status bar, log files, and console output.
+
+Numbers shown to the user take the decimal point of the system locale,
+which the GUI sets with ``set_decimal_point``; files keep a dot.
 """
 
 from __future__ import annotations
 
 import math
 
+_decimal_point = "."
+
+
+def set_decimal_point(char: str) -> None:
+    """Use this decimal point for every number formatted for display."""
+    global _decimal_point
+    _decimal_point = char or "."
+
+
+def decimal_point() -> str:
+    """The decimal point of numbers formatted for display."""
+    return _decimal_point
+
+
+def number(value: float, spec: str = "g") -> str:
+    """``format(value, spec)`` with the display decimal point."""
+    return format(value, spec).replace(".", _decimal_point)
+
 
 def format_error(value: float) -> str:
     """
     Format an error value for display.
     
-    Small and large values are shown in scientific notation as
-    "mantissa × 10^exp" for readability. Values in the normal
-    range use fixed-point notation.
+    Small and large values are shown in e-notation, like the readouts
+    and reports. Values in the normal range use fixed-point notation.
     
     Args:
         value: The error value to format
@@ -29,11 +49,11 @@ def format_error(value: float) -> str:
         
     Examples:
         >>> format_error(0.0000123)
-        '1.230×10^-5'
+        '1.230e-05'
         >>> format_error(0.00456)
         '0.004560'
         >>> format_error(12345.6)
-        '1.235×10^4'
+        '1.235e+04'
     """
     try:
         val = float(value)
@@ -47,11 +67,9 @@ def format_error(value: float) -> str:
 
     # Use scientific notation for very small or very large values
     if 0 < abs_val < 1e-3 or abs_val >= 1e4:
-        exponent = int(math.floor(math.log10(abs_val)))
-        mantissa = val / (10 ** exponent)
-        return f"{mantissa:.3f}×10^{exponent}"
+        return number(val, ".3e")
 
-    return f"{val:.6f}"
+    return number(val, ".6f")
 
 
 def format_duration(seconds: float) -> str:
@@ -86,7 +104,7 @@ def format_duration(seconds: float) -> str:
         return f"{seconds * 1e3:.0f} ms"
 
     if seconds < 60.0:
-        return f"{seconds:.2f} s"
+        return f"{number(seconds, '.2f')} s"
 
     minutes, secs = divmod(seconds, 60.0)
 
@@ -127,7 +145,7 @@ def format_percentage(value: float, precision: int = 1) -> str:
     Returns:
         Formatted percentage string
     """
-    return f"{value * 100:.{precision}f}%"
+    return f"{number(value * 100, f'.{precision}f')}%"
 
 
 def sanitize_filename(name: str) -> str:

@@ -197,3 +197,169 @@ def test_theme_setting_restyles_the_running_app(tmp_path, monkeypatch):
         theme.set_theme(*before)
         w.deleteLater()
         app.processEvents()
+
+
+# -- Wording (section 3) --------------------------------------------------------
+
+# Names that keep their capitals inside a sentence-case label
+PROPER_NOUNS = {"Powell", "Nelder-Mead"}
+# The product name, a title in its own right
+PRODUCT = "Airfoil Spline Fitter"
+# Shortened words and stand-ins for spelled-out words
+ABBREVIATIONS = re.compile(
+    r"\b(?:Avg|avg|Min|dev|pts|iters?|Iter|evals?|Evals|err|tol|sw|LE|TE|Ctrl pts)\b"
+    r"|\b[a-z]+/[a-z]+\b(?!\))")
+# Symbols beyond the arrow and the Greek letters of math
+SYMBOLS = re.compile("[˜✓✗≥≤∫…≈]")
+
+
+def _not_sentence_case(text: str) -> list[str]:
+    """Words after the first that are capitalized without being an acronym or a name."""
+    words = re.findall(r"[A-Za-z][A-Za-z0-9+\-]*", text.replace("&", ""))
+    return [w for w in words[1:]
+            if w[0].isupper() and w[1:].islower() and w not in PROPER_NOUNS]
+
+
+def _wording_problems(kind: str, text: str) -> list[str]:
+    text = text.replace("&", "").replace(PRODUCT, "Product")
+    problems = []
+    if text.rstrip().endswith(":"):
+        problems.append("trailing colon")
+    if m := ABBREVIATIONS.search(text):
+        problems.append(f"abbreviation {m.group()!r}")
+    if m := SYMBOLS.search(text):
+        problems.append(f"symbol {m.group()!r}")
+    if kind != "tooltip" and (words := _not_sentence_case(text)):
+        problems.append(f"not sentence case: {words}")
+    return [f"{kind} {text!r}: {p}" for p in problems]
+
+
+def test_window_wording():
+    """Every label, button, item, menu entry and tooltip of the window."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt6.QtWidgets import (
+        QAbstractButton,
+        QApplication,
+        QComboBox,
+        QDoubleSpinBox,
+        QLabel,
+        QLineEdit,
+        QSpinBox,
+        QWidget,
+    )
+
+    from spline_fitter.gui.ui import SplineFitterWindow
+
+    app = QApplication.instance() or QApplication([])
+    w = SplineFitterWindow()
+    texts: list[tuple[str, str]] = [("title", w.windowTitle())]
+    try:
+        for widget in w.findChildren(QWidget):
+            if isinstance(widget, QLabel) and widget.objectName() == "SectionCaption":
+                assert widget.text().isupper(), f"caption {widget.text()!r} is not uppercase"
+            elif isinstance(widget, QLabel) and not widget.text().startswith("<"):
+                texts.append(("label", widget.text()))
+            elif isinstance(widget, QAbstractButton) and widget.objectName() != "SectionHeader":
+                texts.append(("button", widget.text()))
+            elif isinstance(widget, QComboBox):
+                for i in range(widget.count()):
+                    if widget.model().item(i).isEnabled():
+                        texts.append(("item", widget.itemText(i)))
+                    else:  # a caption grouping the items
+                        assert widget.itemText(i).isupper() or not widget.itemText(i)
+            elif isinstance(widget, QLineEdit):
+                texts.append(("placeholder", widget.placeholderText()))
+            elif isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+                texts.append(("suffix", widget.suffix().strip()))
+            if widget.toolTip():
+                texts.append(("tooltip", widget.toolTip()))
+
+        def walk(menu):
+            for action in menu.actions():
+                texts.append(("menu", action.text()))
+                if action.menu():
+                    walk(action.menu())
+        walk(w.menuBar())
+
+        problems = [p for kind, text in texts if text for p in _wording_problems(kind, text)]
+        assert not problems, "Wording (docs/design-language.md, section 3):\n" + "\n".join(problems)
+    finally:
+        w.deleteLater()
+        app.processEvents()
+
+
+def test_short_choices_are_segmented_controls():
+    """Two to four short options are a SegmentedControl, not a combo box."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt6.QtWidgets import QApplication, QComboBox
+
+    from spline_fitter.gui.ui import SplineFitterWindow
+
+    app = QApplication.instance() or QApplication([])
+    w = SplineFitterWindow()
+    try:
+        short = [
+            [c.itemText(i) for i in range(c.count())] for c in w.findChildren(QComboBox)
+            if 2 <= c.count() <= 4 and all(len(c.itemText(i)) <= 12 for i in range(c.count()))
+        ]
+        assert not short, f"use a SegmentedControl for {short}"
+    finally:
+        w.deleteLater()
+        app.processEvents()
+
+
+# Calls whose string argument is shown as a label, button, title or menu entry
+_LABEL_CALLS = re.compile(
+    r"\b(?:setWindowTitle|addAction|addMenu|QLabel|QPushButton|QCheckBox|QToolButton|"
+    r"_add_row\(\w+,|add_form_row\(\w+,|setText|addItem|getOpenFileName\(\s*[\w.]+,|"
+    r"getSaveFileName\(\s*[\w.]+,|getExistingDirectory\(\s*\w+,)\(?\s*f?\"([^\"]+)\"")
+_MESSAGES = re.compile(r"\bshowMessage\(\s*f?\"([^\"]+)\"")
+_TOOLTIPS = re.compile(r"\b(?:setToolTip|setItemToolTip)\([^\"]*?f?\"([^\"]+)\"")
+
+
+@pytest.mark.parametrize(
+    "path", sorted(p for p in GUI.glob("*.py") if p.name != "theme.py"), ids=lambda p: p.name
+)
+def test_source_wording(path):
+    """Labels in dialogs the window tests cannot open, and status messages."""
+    source = path.read_text(encoding="utf-8")
+    problems = []
+    for m in _LABEL_CALLS.finditer(source):
+        problems += _wording_problems("label", m.group(1))
+    for m in _MESSAGES.finditer(source):
+        problems += _wording_problems("tooltip", m.group(1))  # sentences: no case check
+    for m in _TOOLTIPS.finditer(source):
+        problems += _wording_problems("tooltip", m.group(1))
+    for n, code in _code_lines(path).items():
+        if m := SYMBOLS.search(code):
+            problems.append(f"line {n}: symbol {m.group()!r}")
+    assert not problems, f"Wording in {path.name}:\n" + "\n".join(sorted(set(problems)))
+
+
+def test_decimals_follow_the_locale():
+    """Shown numbers take the locale's decimal point; files keep a dot."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt6.QtCore import QLocale
+    from PyQt6.QtWidgets import QApplication
+
+    from spline_fitter import formatting
+    from spline_fitter.gui import theme
+    from spline_fitter.gui.widgets import ScientificSpinBox
+
+    app = QApplication.instance() or QApplication([])  # noqa: F841
+    before = formatting.decimal_point()
+    try:
+        formatting.set_decimal_point(",")
+        assert formatting.format_error(1.234e-5) == "1,234e-05"
+        assert formatting.format_duration(12.34) == "12,34 s"
+        assert formatting.number(0.5, ".2f") == "0,50"
+        assert theme._DecadeAxis("bottom").tickStrings([0.5, 1.0], 1, 0.5) == ["0,5", "1,0"]
+
+        spin = ScientificSpinBox()
+        spin.setLocale(QLocale(QLocale.Language.German, QLocale.Country.Germany))
+        spin.setRange(0, 1)
+        spin.setValue(0.001)
+        assert spin.text() == "0,001"
+        assert spin.valueFromText("2,5e-05") == 2.5e-05
+    finally:
+        formatting.set_decimal_point(before)
