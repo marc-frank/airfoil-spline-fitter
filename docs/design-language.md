@@ -203,6 +203,23 @@ Use the named gaps, not numbers:
 - Sidebar form labels are `Size.LABEL_WIDTH` wide so fields line up across
   sections; add rows with `_add_row()` in `layout.py`.
 
+### Motion (`theme.Motion`, `motion.py`)
+
+The wheel glides rather than jumps, like a batten easing into place: each
+notch starts a short ease-out, and notches during a glide extend it.
+
+| Token | ms | For |
+|---|---|---|
+| `SCROLL_MS` | 160 | A wheel notch in any list, table, panel or document |
+| `ZOOM_MS` | 180 | A wheel notch zooming a plot, about the cursor |
+
+- Scrolling is app-wide: `install_smooth_scrolling()` (called by the main
+  window) filters wheel events, and item views scroll by pixel. Nothing to
+  do for a new list or panel.
+- The wheel with a modifier, touchpads that send pixel deltas, and dragging
+  a scroll bar keep Qt's own handling.
+- Nothing else animates: data, fits and theme changes appear at once.
+
 ---
 
 ## 5. Components
@@ -225,7 +242,7 @@ never call `setStyleSheet` on it.
 | Choice of 2-4 short options | `SegmentedControl` (not a combo box) in the sidebar and dialogs; the plot toolbars keep compact combo boxes |
 | Choice of many | `QComboBox` |
 | Numeric range sweep | `SweepableSpinBox` / `SweepableDoubleSpinBox` |
-| Plot | `pg.PlotWidget` + `style_plot(plot)` + `label_plot(plot, side, text)` |
+| Plot | `pg.PlotWidget(viewBox=SmoothViewBox())` + `style_plot(plot)` + `label_plot(plot, side, text)` |
 | Plot pens and brushes | `theme.pen(Ink.X, width, dashed, alpha)`, `theme.brush(Ink.X, alpha)` |
 | Numbers spanning decades | `ScientificSpinBox` (`widgets.py`) |
 | Settings dialog | `dialog_form(dialog)` (dialog padding) + `add_form_row(form, "Label", field)`, buttons in a `QDialogButtonBox` |

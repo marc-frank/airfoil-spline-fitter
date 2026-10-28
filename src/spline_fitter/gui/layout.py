@@ -37,6 +37,7 @@ from ..optimization.models import (
     OptimizerType,
 )
 from .explorer import COLUMNS, RunTable
+from .motion import SmoothViewBox
 from .theme import Size, glyph_size, icon, label_plot, style_plot
 from .widgets import (
     CollapsibleSection,
@@ -171,7 +172,7 @@ class WindowLayoutMixin:
 
         # Main plot (airfoil visualization) with its display toolbar
         center_layout.addLayout(self._build_plot_toolbar())
-        self._plot = pg.PlotWidget(parent=center_panel)
+        self._plot = pg.PlotWidget(parent=center_panel, viewBox=SmoothViewBox())
         style_plot(self._plot)
         self._plot.getPlotItem().setAspectLocked(True, ratio=1)
         label_plot(self._plot, "bottom", "x")
@@ -191,7 +192,7 @@ class WindowLayoutMixin:
         loss_layout.setSpacing(Size.GAP)
         loss_layout.addLayout(self._build_loss_toolbar())
 
-        self._loss_plot = pg.PlotWidget(parent=loss_container)
+        self._loss_plot = pg.PlotWidget(parent=loss_container, viewBox=SmoothViewBox())
         style_plot(self._loss_plot)
         label_plot(self._loss_plot, "bottom", "Evaluations")
         label_plot(self._loss_plot, "left", "Error")
@@ -206,7 +207,7 @@ class WindowLayoutMixin:
         comparison_layout.setContentsMargins(0, 0, 0, 0)
         comparison_layout.setSpacing(Size.GAP)
         comparison_layout.addLayout(self._build_comparison_toolbar())
-        self._comparison_plot = pg.PlotWidget(parent=comparison_container)
+        self._comparison_plot = pg.PlotWidget(parent=comparison_container, viewBox=SmoothViewBox())
         style_plot(self._comparison_plot)
         label_plot(self._comparison_plot, "bottom", "Control points")
         label_plot(self._comparison_plot, "left", "Error")

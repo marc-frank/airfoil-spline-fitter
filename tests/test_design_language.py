@@ -58,7 +58,7 @@ def test_documented_tokens_exist():
 
     doc = (ROOT / "docs" / "design-language.md").read_text(encoding="utf-8")
     defined = {name for name in vars(theme) if name.isupper()}
-    for cls in (theme.Palette, theme.Ink, theme.Z, theme.Size, theme.Type, theme.Scheme):
+    for cls in (theme.Palette, theme.Ink, theme.Z, theme.Size, theme.Type, theme.Scheme, theme.Motion):
         defined |= {name for name in vars(cls) if name.isupper()}
     missing = {t for t in re.findall(r"`(?:[A-Za-z]+\.)?([A-Z][A-Z_]{2,})`", doc)} - defined
     assert not missing, f"documented but not in theme.py: {sorted(missing)}"

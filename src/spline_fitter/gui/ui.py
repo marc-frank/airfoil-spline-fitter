@@ -34,6 +34,7 @@ from .batch import BatchController
 from .file_actions import FileActionsMixin
 from .fitting import FittingController
 from .layout import WindowLayoutMixin
+from .motion import install_smooth_scrolling
 from .plotting import PlotManager
 from .project import ProjectManager
 from .theme import apply_theme, style_plot, theme_changed
@@ -58,6 +59,8 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
     def __init__(self):
         # The Loft theme (theme.py) styles every widget and plot built below
         apply_theme()
+        # Wheel scrolling glides in every list, table, panel and document
+        install_smooth_scrolling()
         super().__init__()
         self.setWindowTitle("Airfoil Spline Fitter")
 

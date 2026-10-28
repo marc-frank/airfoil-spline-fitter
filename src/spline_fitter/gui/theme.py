@@ -21,6 +21,7 @@ This module provides:
       temperature setting, applied live
     - Z: drawing order of plot items
     - Size / Type: spacing, heights and fonts
+    - Motion: durations of the wheel scroll and zoom animations
     - apply_theme / style_plot / icon / pen helpers
 """
 
@@ -244,6 +245,13 @@ class Type:
     BASE_PT = 9
     CAPTION_PX = 10
     READOUT_PX = 15
+
+
+class Motion:
+    """Durations of the animations that ease wheel scrolling and zooming (motion.py)."""
+
+    SCROLL_MS = 160           # a wheel step in any scrolling list, table, panel or document
+    ZOOM_MS = 180             # a wheel step zooming a plot
 
 
 # =============================================================================
