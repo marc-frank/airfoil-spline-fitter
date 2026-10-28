@@ -36,7 +36,7 @@ from ..optimization.models import (
     ErrorMetric,
     OptimizerType,
 )
-from .theme import Size, label_plot, style_plot
+from .theme import Size, glyph_size, icon, label_plot, style_plot
 from .widgets import (
     CollapsibleSection,
     DropDownPanel,
@@ -186,7 +186,7 @@ class WindowLayoutMixin:
         comparison_layout.setSpacing(Size.GAP)
         comparison_caption = QLabel("ERROR BY CONTROL POINTS")
         comparison_caption.setObjectName("SectionCaption")
-        comparison_caption.setFixedHeight(self._combo_loss_x.sizeHint().height())
+        comparison_caption.setFixedHeight(Size.CONTROL_HEIGHT)
         comparison_layout.addWidget(comparison_caption)
         self._comparison_plot = pg.PlotWidget(parent=comparison_container)
         style_plot(self._comparison_plot)
@@ -354,7 +354,8 @@ class WindowLayoutMixin:
         # while the settings are open
         self._btn_comb_settings = QToolButton()
         self._btn_comb_settings.setObjectName("ArrowButton")
-        self._btn_comb_settings.setArrowType(Qt.ArrowType.DownArrow)
+        self._btn_comb_settings.setIcon(icon("chevron_down"))
+        self._btn_comb_settings.setIconSize(glyph_size())
         self._btn_comb_settings.setToolTip("Curvature comb settings")
         self._comb_panel = DropDownPanel(self._btn_comb_settings, comb_settings, self)
         comb_row = QHBoxLayout()
@@ -439,8 +440,11 @@ class WindowLayoutMixin:
         caption.setObjectName("SectionCaption")
         header.addWidget(caption)
         header.addStretch()
-        self._btn_toggle_explorer = QPushButton("\u2715")
+        # A sideways chevron: the explorer folds away to the right
+        self._btn_toggle_explorer = QPushButton()
         self._btn_toggle_explorer.setObjectName("IconButton")
+        self._btn_toggle_explorer.setIcon(icon("chevron_right"))
+        self._btn_toggle_explorer.setIconSize(glyph_size())
         self._btn_toggle_explorer.setToolTip(
             "Hide the explorer (show it again with Explorer above the plot)")
         header.addWidget(self._btn_toggle_explorer)

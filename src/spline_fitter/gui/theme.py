@@ -9,23 +9,25 @@ checks that).
 
 Loft is named after the lofting floor, where aircraft and ship lines were
 drawn full size with flexible splines held by lead weights ("ducks"). The
-window is the floor at night: dark graphite chrome around a blueprint
-canvas, construction lines in pencil grey, and one ink color, the orange
-of the app icon, for the curve and the one action that makes it.
+window is the floor in graphite: warm neutral greys (the Claude Code
+greys), construction lines in pencil, and one ink color, the orange of the
+app icon, for the curve and the one action that makes it.
 
 This module provides:
     - Palette: UI color tokens
     - Ink: plot color tokens, by what is drawn
     - Z: drawing order of plot items
-    - apply_theme / style_plot / app_icon / pen helpers
+    - Size / Type: spacing, heights and fonts
+    - apply_theme / style_plot / icon / pen helpers
 """
 
 from __future__ import annotations
 
 import os
+import tempfile
 
 import pyqtgraph as pg
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtGui import QColor, QFont, QIcon, QPalette
 from PyQt6.QtWidgets import QApplication, QTextBrowser
 
@@ -37,21 +39,22 @@ ASSETS = os.path.join(os.path.dirname(__file__), "assets")
 # =============================================================================
 
 class Palette:
-    """UI colors. Surfaces step up in lightness the closer they are to the hand."""
+    """UI colors: warm neutral greys. Surfaces step up in lightness the
+    closer they are to the hand."""
 
     # Surfaces, darkest (furthest back) first
-    CANVAS = "#0B131A"        # plot area: the blueprint
-    WINDOW = "#11171E"        # window, toolbars, status bar
-    PANEL = "#151C24"         # sidebar and explorer
-    FIELD = "#1B242E"         # inputs, secondary buttons
-    FIELD_HOVER = "#222D39"
-    RULE = "#283440"          # hairlines and borders
-    RULE_STRONG = "#3A4856"   # borders of hovered fields
+    CANVAS = "#191918"        # plot area: the drafting film
+    WINDOW = "#1F1E1D"        # window, toolbars, run bar, status bar
+    PANEL = "#262624"         # sidebar and explorer
+    FIELD = "#30302E"         # inputs, secondary buttons
+    FIELD_HOVER = "#393936"
+    RULE = "#3E3D3A"          # hairlines and borders
+    RULE_STRONG = "#52514C"   # borders of hovered fields, popups
 
     # Text
-    TEXT = "#E3E9EF"          # chalk: values and labels
-    TEXT_2 = "#9AA7B4"        # secondary: field labels, axis text
-    TEXT_3 = "#667585"        # muted: captions, hints, disabled
+    TEXT = "#FAF9F5"          # values and labels
+    TEXT_2 = "#C2C0B6"        # secondary: field labels, axis text, glyphs
+    TEXT_3 = "#9C9A92"        # muted: captions, hints, disabled
 
     # Ink: the icon's orange, for the fitted curve and the primary action only
     INK = "#FF6E10"
@@ -60,9 +63,9 @@ class Palette:
     INK_DEEP = "#AD4200"      # the icon's shadowed underside
     ON_INK = "#1A0C02"        # text on ink
 
-    # Selection: checked toggles, selected rows, focus
-    SELECT = "#21496A"
-    SELECT_LINE = "#4C9BD0"
+    # Selection: checked toggles, selected rows, focus. Grey, never ink
+    SELECT = "#4A4945"
+    SELECT_LINE = "#85837B"
 
     # Status
     OK = "#4FBF85"
@@ -83,7 +86,7 @@ class Ink:
     DATA = rgb(Palette.TEXT)
     CURVE = rgb(Palette.INK)
     # Construction: the control polygon, pencil grey and dashed
-    CONSTRUCTION = rgb("#7D8C9B")
+    CONSTRUCTION = rgb("#8E8C84")
     # Knots: the ducks that hold the batten
     KNOTS = rgb("#F2C94C")
     # Curvature comb, by surface as on a pressure plot: suction side cool,
@@ -92,11 +95,11 @@ class Ink:
     COMB_LOWER = rgb("#E5689A")
     COMB_TEETH_ALPHA = 90      # teeth are faint; the envelope through the tips is the reading
     # Convergence and comparison traces; the current run is marked in ink
-    TRACE = rgb("#8FB3CF")
+    TRACE = rgb(Palette.TEXT_2)
     MARKER = rgb(Palette.INK)
-    # Blueprint grid
-    GRID = rgb(Palette.SELECT_LINE)
-    GRID_ALPHA = 0.13
+    # Grid and axes
+    GRID = rgb(Palette.TEXT_2)
+    GRID_ALPHA = 0.10
 
 
 class Z:
@@ -111,13 +114,15 @@ class Z:
 
 
 class Size:
-    """Spacing, radii and fixed widths. Use the named gaps, not numbers."""
+    """Spacing, heights, radii and fixed widths. Use the named values, not numbers."""
 
     TIGHT = 4                 # parts of one composite field (spin box + sweep toggle)
     GAP = 6                   # form rows; fields side by side; toolbar items
     GROUP = 8                 # between groups: label above content, button rows
     PAD = 12                  # panel and section padding
     PAD_LARGE = 16            # dialogs and documents
+    CONTROL_HEIGHT = 26       # every input and button, the primary one included
+    GLYPH = 10                # chevrons and other icon glyphs
     RADIUS = 3
     LABEL_WIDTH = 92          # label column of every sidebar form
     CURVE_WIDTH = 2
@@ -140,11 +145,59 @@ class Type:
 
 
 # =============================================================================
+# Glyphs
+# =============================================================================
+
+# Stroked paths on a 12 x 12 grid: the only icons the interface draws
+_GLYPHS = {
+    "chevron_down": "M2.5 4.5 L6 8 L9.5 4.5",
+    "chevron_up": "M2.5 7.5 L6 4 L9.5 7.5",
+    "chevron_right": "M4.5 2.5 L8 6 L4.5 9.5",
+    "chevron_left": "M7.5 2.5 L4 6 L7.5 9.5",
+    "check": "M2.5 6.2 L5 8.6 L9.5 3.6",
+}
+
+
+def _glyph(name: str, color: str = Palette.TEXT_2, pad: int = 0) -> str:
+    """Path of an SVG file of a glyph in a token color (written on first use).
+
+    ``pad`` adds empty margin on the 12-unit grid, for places that stretch the
+    image to fill a box (tree branches), so the glyph keeps its size.
+    """
+    folder = os.path.join(tempfile.gettempdir(), "spline_fitter_glyphs")
+    path = os.path.join(folder, f"{name}_{color.lstrip('#').lower()}_{pad}.svg")
+    if not os.path.exists(path):
+        os.makedirs(folder, exist_ok=True)
+        box = f"{-pad} {-pad} {12 + 2 * pad} {12 + 2 * pad}"
+        svg = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{box}">'
+               f'<path d="{_GLYPHS[name]}" fill="none" stroke="{color}" stroke-width="1.4" '
+               'stroke-linecap="round" stroke-linejoin="round"/></svg>')
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(svg)
+    return path.replace("\\", "/")
+
+
+def icon(name: str, color: str = Palette.TEXT_2) -> QIcon:
+    """A glyph as an icon: chevron_down/up/right/left or check."""
+    return QIcon(_glyph(name, color))
+
+
+def glyph_size() -> QSize:
+    """The icon size for glyph icons on buttons."""
+    return QSize(Size.GLYPH, Size.GLYPH)
+
+
+# =============================================================================
 # Application style
 # =============================================================================
 
 def _qss() -> str:
     P, S = Palette, Size
+    # Inputs and buttons have a 1 px border and no vertical padding, so their
+    # outer height is exactly CONTROL_HEIGHT
+    h = S.CONTROL_HEIGHT - 2
+    fixed = f"min-height: {h}px; max-height: {h}px;"
+    down, up = _glyph("chevron_down"), _glyph("chevron_up")
     return f"""
 QWidget {{ color: {P.TEXT}; }}
 QMainWindow, QDialog {{ background: {P.WINDOW}; }}
@@ -177,9 +230,9 @@ QScrollBar::handle:hover {{ background: {P.TEXT_3}; }}
 QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
 QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 
-/* Buttons: secondary by default */
+/* Buttons: secondary by default, all CONTROL_HEIGHT tall */
 QPushButton, QToolButton {{ background: {P.FIELD}; border: 1px solid {P.RULE};
-    border-radius: {S.RADIUS}px; padding: 4px 10px; }}
+    border-radius: {S.RADIUS}px; padding: 0 10px; {fixed} }}
 QPushButton:hover, QToolButton:hover {{ background: {P.FIELD_HOVER}; border-color: {P.RULE_STRONG}; }}
 QPushButton:pressed, QToolButton:pressed {{ background: {P.RULE}; }}
 QPushButton:checked, QToolButton:checked {{ background: {P.SELECT}; border-color: {P.SELECT_LINE}; }}
@@ -187,26 +240,24 @@ QPushButton:disabled, QToolButton:disabled {{ color: {P.TEXT_3}; background: {P.
     border-color: {P.RULE}; }}
 QPushButton:focus, QToolButton:focus {{ outline: none; }}
 QPushButton:default {{ border-color: {P.SELECT_LINE}; }}
-QToolButton[popupMode="1"] {{ padding-right: 18px; }}
-QToolButton#ArrowButton {{ padding: 4px 3px; border-top-left-radius: 0; border-bottom-left-radius: 0;
+QToolButton#ArrowButton {{ padding: 0 5px; border-top-left-radius: 0; border-bottom-left-radius: 0;
     margin-left: -1px; }}
 QToolButton#SplitToggle {{ border-top-right-radius: 0; border-bottom-right-radius: 0; }}
 
 /* The primary action: ink, once per view */
-QPushButton#PrimaryButton {{ background: {P.INK}; color: {P.ON_INK}; border: none;
-    padding: 8px; font-weight: 600; }}
-QPushButton#PrimaryButton:hover {{ background: {P.INK_HOVER}; }}
-QPushButton#PrimaryButton:pressed {{ background: {P.INK_PRESSED}; }}
-QPushButton#PrimaryButton:disabled {{ background: {P.RULE}; color: {P.TEXT_3}; }}
+QPushButton#PrimaryButton {{ background: {P.INK}; color: {P.ON_INK}; border-color: {P.INK};
+    font-weight: 600; }}
+QPushButton#PrimaryButton:hover {{ background: {P.INK_HOVER}; border-color: {P.INK_HOVER}; }}
+QPushButton#PrimaryButton:pressed {{ background: {P.INK_PRESSED}; border-color: {P.INK_PRESSED}; }}
+QPushButton#PrimaryButton:disabled {{ background: {P.RULE}; border-color: {P.RULE}; color: {P.TEXT_3}; }}
 
 /* Icon-only buttons */
-QPushButton#IconButton {{ background: transparent; border: none; color: {P.TEXT_3};
-    padding: 2px 6px; }}
-QPushButton#IconButton:hover {{ color: {P.TEXT}; background: {P.FIELD_HOVER}; }}
+QPushButton#IconButton {{ background: transparent; border-color: transparent; padding: 0 6px; }}
+QPushButton#IconButton:hover {{ background: {P.FIELD_HOVER}; }}
 
 /* Fields */
 QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {{ background: {P.FIELD}; border: 1px solid {P.RULE};
-    border-radius: {S.RADIUS}px; padding: 3px 6px; selection-background-color: {P.SELECT}; }}
+    border-radius: {S.RADIUS}px; padding: 0 6px; {fixed} selection-background-color: {P.SELECT}; }}
 QLineEdit:hover, QSpinBox:hover, QDoubleSpinBox:hover, QComboBox:hover {{ border-color: {P.RULE_STRONG}; }}
 QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {{ border-color: {P.SELECT_LINE}; }}
 QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled {{
@@ -216,12 +267,12 @@ QSpinBox::up-button, QDoubleSpinBox::up-button, QSpinBox::down-button, QDoubleSp
     width: 16px; border: none; background: transparent; }}
 QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
 QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {{ background: {P.FIELD_HOVER}; }}
-QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{ image: url({_asset_url("chevron_up.svg")}); width: 8px; height: 8px; }}
-QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{ image: url({_asset_url("chevron_down.svg")}); width: 8px; height: 8px; }}
+QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{ image: url({up}); width: 9px; height: 9px; }}
+QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{ image: url({down}); width: 9px; height: 9px; }}
 QSpinBox::up-arrow:disabled, QDoubleSpinBox::up-arrow:disabled,
 QSpinBox::down-arrow:disabled, QDoubleSpinBox::down-arrow:disabled {{ image: none; }}
-QComboBox::drop-down {{ border: none; width: 18px; }}
-QComboBox::down-arrow {{ image: url({_asset_url("chevron_down.svg")}); width: 8px; height: 8px; }}
+QComboBox::drop-down {{ border: none; width: 20px; }}
+QComboBox::down-arrow {{ image: url({down}); width: {S.GLYPH}px; height: {S.GLYPH}px; }}
 QComboBox QAbstractItemView {{ background: {P.FIELD}; border: 1px solid {P.RULE_STRONG};
     selection-background-color: {P.SELECT}; outline: none; }}
 QCheckBox {{ spacing: 6px; }}
@@ -230,15 +281,18 @@ QCheckBox::indicator {{ width: 14px; height: 14px; border: 1px solid {P.RULE_STR
     border-radius: 2px; background: {P.FIELD}; }}
 QCheckBox::indicator:hover {{ border-color: {P.SELECT_LINE}; }}
 QCheckBox::indicator:checked {{ background: {P.SELECT}; border-color: {P.SELECT_LINE};
-    image: url({_asset_url("check.svg")}); }}
+    image: url({_glyph("check", P.TEXT)}); }}
 QCheckBox::indicator:disabled {{ background: {P.PANEL}; border-color: {P.RULE}; }}
 
-/* Lists and text */
+/* Lists and text; tree branches open and close with chevrons */
 QTreeView, QListView, QTextBrowser {{ background: {P.PANEL}; border: 1px solid {P.RULE};
     border-radius: {S.RADIUS}px; outline: none; }}
 QTreeView::item {{ padding: 2px 0; }}
 QTreeView::item:hover {{ background: {P.FIELD}; }}
 QTreeView::item:selected {{ background: {P.SELECT}; color: {P.TEXT}; }}
+QTreeView::branch {{ background: transparent; }}
+QTreeView::branch:has-children:closed {{ image: url({_glyph("chevron_right", pad=6)}); }}
+QTreeView::branch:has-children:open {{ image: url({_glyph("chevron_down", pad=6)}); }}
 QHeaderView::section {{ background: {P.PANEL}; color: {P.TEXT_3}; border: none;
     border-bottom: 1px solid {P.RULE}; padding: 4px 6px; }}
 
@@ -250,20 +304,20 @@ PlotWidget, QGraphicsView {{ border: 1px solid {P.RULE}; border-radius: {S.RADIU
 #SidebarSection {{ border-bottom: 1px solid {P.RULE}; }}
 #SectionCaption, #SectionHeader {{ color: {P.TEXT_3}; font-size: {Type.CAPTION_PX}px;
     font-weight: 600; letter-spacing: 1px; }}
-#SectionHeader {{ text-align: left; border: none; padding: 0; background: transparent; }}
-#SectionHeader:hover {{ color: {P.TEXT}; background: transparent; }}
-#SectionBadge {{ color: {P.SELECT_LINE}; font-size: {Type.CAPTION_PX}px; }}
+QPushButton#SectionHeader {{ text-align: left; border: none; padding: 0; background: transparent;
+    min-height: 0; max-height: 16777215px; }}
+QPushButton#SectionHeader:hover {{ color: {P.TEXT}; background: transparent; }}
+#SectionBadge {{ color: {P.TEXT_2}; font-size: {Type.CAPTION_PX}px; }}
 #FileName {{ font-weight: 600; }}
 #Muted {{ color: {P.TEXT_3}; font-size: {Type.CAPTION_PX + 1}px; }}
 #Readout {{ font-family: {Type.MONO}; font-size: {Type.READOUT_PX}px; color: {P.TEXT}; }}
 #RunBar {{ background: {P.WINDOW}; border-top: 1px solid {P.RULE}; }}
-#Toolbar QLabel {{ color: {P.TEXT_2}; }}
 #DropDownPanel {{ background: {P.FIELD}; border: 1px solid {P.RULE_STRONG};
     border-radius: {S.RADIUS}px; }}
 #FormLabel {{ color: {P.TEXT_2}; }}
 
 /* Segmented control: joined buttons, one checked */
-QPushButton#Segment {{ border-radius: 0; margin-left: -1px; padding: 4px 6px; }}
+QPushButton#Segment {{ border-radius: 0; margin-left: -1px; padding: 0 6px; }}
 QPushButton#Segment[position="first"] {{ border-top-left-radius: {S.RADIUS}px;
     border-bottom-left-radius: {S.RADIUS}px; margin-left: 0; }}
 QPushButton#Segment[position="last"] {{ border-top-right-radius: {S.RADIUS}px;
@@ -272,10 +326,6 @@ QPushButton#Segment:checked {{ color: {P.TEXT}; }}
 QPushButton#SweepToggle {{ padding: 0; font-size: 13px; color: {P.TEXT_2}; }}
 QPushButton#SweepToggle:checked {{ color: {P.TEXT}; }}
 """
-
-
-def _asset_url(name: str) -> str:
-    return os.path.join(ASSETS, name).replace("\\", "/")
 
 
 def _palette() -> QPalette:
@@ -295,7 +345,7 @@ def _palette() -> QPalette:
         QPalette.ColorRole.ToolTipBase: P.FIELD,
         QPalette.ColorRole.ToolTipText: P.TEXT,
         QPalette.ColorRole.PlaceholderText: P.TEXT_3,
-        QPalette.ColorRole.Link: P.SELECT_LINE,
+        QPalette.ColorRole.Link: P.TEXT_2,
         QPalette.ColorRole.Mid: P.RULE,
         QPalette.ColorRole.Midlight: P.RULE,
         QPalette.ColorRole.Dark: P.WINDOW,
@@ -327,12 +377,12 @@ def apply_theme(app: QApplication | None = None) -> None:
 
 def app_icon() -> QIcon:
     """The application icon: the orange airfoil."""
-    icon = QIcon()
+    icon_ = QIcon()
     for name in ("app_icon.ico", "app_icon.png"):
         path = os.path.join(ASSETS, name)
         if os.path.exists(path):
-            icon.addFile(path)
-    return icon
+            icon_.addFile(path)
+    return icon_
 
 
 def mono_font(point_size: float | None = None) -> QFont:
@@ -350,7 +400,7 @@ def mono_font(point_size: float | None = None) -> QFont:
 # =============================================================================
 
 def style_plot(plot: pg.PlotWidget) -> None:
-    """Blueprint styling for a plot: grid, axes and labels."""
+    """Drafting-film styling for a plot: grid, axes and labels."""
     item = plot.getPlotItem()
     axis_pen = pg.mkPen(color=Ink.GRID, width=1)
     tick_font = QFont()
@@ -398,7 +448,7 @@ h1, h2, h3, h4 {{ color: {Palette.TEXT}; font-weight: 600; }}
 td, th {{ padding: 3px 12px 3px 0; }}
 th {{ color: {Palette.TEXT_3}; font-weight: 600; text-align: left; border-bottom: 1px solid {Palette.RULE}; }}
 pre, code {{ font-family: {Type.MONO}; background-color: {Palette.FIELD}; }}
-a {{ color: {Palette.SELECT_LINE}; }}
+a {{ color: {Palette.TEXT_2}; }}
 b {{ color: {Palette.TEXT}; }}
 .muted {{ color: {Palette.TEXT_3}; }}
 .ok {{ color: {Palette.OK}; }}

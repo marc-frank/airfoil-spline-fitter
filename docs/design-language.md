@@ -7,10 +7,9 @@ through the measured stations and held in place by lead weights called
 exactly what this application does, so the interface borrows the floor's
 look and vocabulary.
 
-> The window is the lofting floor at night: dark graphite chrome around a
-> blueprint canvas, construction lines in pencil grey, and one ink
-> (the orange of the app icon) for the curve and for the one action that
-> makes it.
+> The window is the lofting floor in graphite: warm neutral greys (the
+> Claude Code greys), construction lines in pencil, and one ink (the orange
+> of the app icon) for the curve and for the one action that makes it.
 
 Everything below is implemented in
 [`src/spline_fitter/gui/theme.py`](../src/spline_fitter/gui/theme.py).
@@ -45,26 +44,28 @@ fails if another GUI module sets its own.
 
 ### UI tokens (`theme.Palette`)
 
-Surfaces get lighter the closer they are to the hand.
+All chrome is **warm neutral grey**, taken from the Claude Code dark
+theme; there is no blue or other tint. Surfaces get lighter the closer
+they are to the hand.
 
 | Token | Hex | Use |
 |---|---|---|
-| `CANVAS` | `#0B131A` | Plot area: the blueprint |
-| `WINDOW` | `#11171E` | Window, toolbars, run bar, status bar |
-| `PANEL` | `#151C24` | Sidebar, project explorer, disabled fields |
-| `FIELD` | `#1B242E` | Inputs, secondary buttons, menus, drop-down panels |
-| `FIELD_HOVER` | `#222D39` | Hovered field or button |
-| `RULE` | `#283440` | Hairlines and borders |
-| `RULE_STRONG` | `#3A4856` | Borders of hovered fields, popups |
-| `TEXT` | `#E3E9EF` | Chalk: values, primary text |
-| `TEXT_2` | `#9AA7B4` | Field labels, axis text, status bar |
-| `TEXT_3` | `#667585` | Captions, hints, disabled text |
+| `CANVAS` | `#191918` | Plot area: the drafting film |
+| `WINDOW` | `#1F1E1D` | Window, toolbars, run bar, status bar |
+| `PANEL` | `#262624` | Sidebar, project explorer, disabled fields |
+| `FIELD` | `#30302E` | Inputs, secondary buttons, menus, drop-down panels |
+| `FIELD_HOVER` | `#393936` | Hovered field or button |
+| `RULE` | `#3E3D3A` | Hairlines and borders |
+| `RULE_STRONG` | `#52514C` | Borders of hovered fields, popups |
+| `TEXT` | `#FAF9F5` | Values, primary text |
+| `TEXT_2` | `#C2C0B6` | Field labels, axis text, status bar, glyphs, badges |
+| `TEXT_3` | `#9C9A92` | Captions, hints, disabled text |
 | `INK` | `#FF6E10` | The icon's orange: fitted curve, primary button |
 | `INK_HOVER` / `INK_PRESSED` | `#FF8636` / `#E05E08` | Primary button states |
 | `INK_DEEP` | `#AD4200` | The icon's shadowed underside (reserved) |
 | `ON_INK` | `#1A0C02` | Text on ink |
-| `SELECT` | `#21496A` | Checked toggles, selected rows, menu highlight |
-| `SELECT_LINE` | `#4C9BD0` | Focus and checked borders, links, badges, plot grid |
+| `SELECT` | `#4A4945` | Checked toggles, selected rows, menu highlight |
+| `SELECT_LINE` | `#85837B` | Focus and checked borders |
 | `OK` / `WARN` / `ERROR` | `#4FBF85` / `#F2B84B` / `#F0605D` | Status only |
 
 **Rules**
@@ -72,8 +73,10 @@ Surfaces get lighter the closer they are to the hand.
 - **Ink is scarce.** Allowed uses: the fitted curve, the primary button,
   the marker for the current run in a trace. A new feature that wants
   orange needs a reason as strong as those.
-- **Selection is blue, not orange.** Checked toggles, segmented controls,
-  selected tree rows and focus rings use `SELECT` / `SELECT_LINE`.
+- **Selection is a lighter grey, not a color.** Checked toggles, segmented
+  controls, selected tree rows and focus rings use `SELECT` /
+  `SELECT_LINE`. The chrome carries no hue at all; color is kept for the
+  plots, the primary action and status.
 - **Status colors are for status.** Use `OK`/`WARN`/`ERROR` only to say
   that something is fine, doubtful or failed, never to decorate.
 - **Disabled is `TEXT_3` on `PANEL`.** Disabled things are not hidden or
@@ -91,9 +94,9 @@ Named by what they draw, never by hue.
 | `KNOTS` | sulfur diamonds with a canvas outline | Knots (the ducks that hold the batten) |
 | `COMB_UPPER` | sky blue | Comb on the suction side (upper surface, even sections) |
 | `COMB_LOWER` | rose | Comb on the pressure side (lower surface, odd sections) |
-| `TRACE` | steel blue dots or line | Convergence and comparison traces |
+| `TRACE` | light grey dots or line | Convergence and comparison traces |
 | `MARKER` | ink dot with a canvas ring | The current run in a trace |
-| `GRID` | `SELECT_LINE` at `GRID_ALPHA` | Blueprint grid and axes |
+| `GRID` | `TEXT_2` at `GRID_ALPHA` | Grid and axes |
 
 The comb follows the pressure-plot convention (suction cool, pressure
 warm). Its teeth are faint (`COMB_TEETH_ALPHA`) because the envelope
@@ -119,9 +122,14 @@ curve is a deviation worth seeing. Every new plot item takes a `Z` value.
 - **Wording**: sentence case everywhere ("Fit spline", "Optimization
   runs"); labels have **no trailing colons**; menu items that open a dialog
   end with an ellipsis ("Export CAD...").
-- **Glyphs**: no emoji. Use the few monochrome symbols already in use
-  (↔ sweep, → range, ✕ close, ▾/▸ disclosure)
-  or Greek letters for math (κ, dκ/ds).
+- **Glyphs**: no emoji. Icons are the stroked glyphs from `theme.icon()`
+  (`chevron_down`, `chevron_up`, `chevron_right`, `chevron_left`,
+  `check`), drawn in `TEXT_2` at `Size.GLYPH`. Text symbols are limited to
+  ↔ (sweep) and → (range), plus Greek letters for math (κ, dκ/ds).
+- **Chevrons mean disclosure**: pointing right = closed, down = open
+  (collapsible sections, tree branches, the comb settings drop-down).
+  Sideways chevrons fold a side panel away: the explorer's hide button
+  points right, toward the edge it folds into.
 
 ---
 
@@ -137,6 +145,12 @@ Use the named gaps, not numbers:
 | `PAD` | 12 | Padding inside panels and sidebar sections |
 | `PAD_LARGE` | 16 | Dialogs and documents |
 
+- **Every input and button is `Size.CONTROL_HEIGHT` (26 px) tall**: line
+  edits, spin boxes, combo boxes, push and tool buttons, segments, the sweep
+  toggle and the primary button. The stylesheet fixes the height (1 px
+  border, no vertical padding), so do not set heights or vertical padding on
+  a control; a square icon button is `CONTROL_HEIGHT` on both sides. The
+  only exception is the caption-style header of a collapsible section.
 - Corner radius `Size.RADIUS` (3 px): crisp, drafted, not pill-shaped.
 - Sidebar form labels are `Size.LABEL_WIDTH` wide so fields line up across
   sections; add rows with `_add_row()` in `layout.py`.
@@ -157,7 +171,7 @@ never call `setStyleSheet` on it.
 | Number readout | object name `Readout` |
 | Primary button | object name `PrimaryButton`. **One per view** (it is "Fit spline" in the main window) |
 | Secondary button | plain `QPushButton` / `QToolButton` |
-| Icon-only button | object name `IconButton` |
+| Icon-only button | object name `IconButton` with a `theme.icon()` glyph |
 | Toggle | checkable `QToolButton`; checked state is `SELECT` |
 | Toggle with settings | `SplitToggle` button + `ArrowButton` opening a `DropDownPanel` |
 | Choice of 2-4 short options | `SegmentedControl` (not a combo box) |
@@ -188,6 +202,7 @@ comparison below) | project explorer.
 
 ## 7. Assets
 
-`src/spline_fitter/gui/assets/`: the app icon (`app_icon.png`, `.ico`),
-from which the ink colors are sampled, and the chevron and check glyphs
-used by the stylesheet (stroked in `TEXT_2` / `TEXT`).
+`src/spline_fitter/gui/assets/` holds the app icon (`app_icon.png`,
+`.ico`), from which the ink colors are sampled. Glyphs are not stored as
+files: `theme.py` writes them as SVGs from their path data in the token
+colors, so changing a color token also recolors every chevron.

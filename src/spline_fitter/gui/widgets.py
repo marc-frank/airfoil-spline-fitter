@@ -30,7 +30,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .theme import Size
+from .theme import Size, glyph_size, icon
 
 # =============================================================================
 # Constants
@@ -98,19 +98,20 @@ class CollapsibleSection(SidebarSection):
         header = QWidget()
         lay = QHBoxLayout(header)
         lay.setContentsMargins(0, 0, 0, 0)
-        self._toggle_btn = QPushButton(self._header_text())
+        self._toggle_btn = QPushButton(" " + self._title.upper())
         self._toggle_btn.setObjectName("SectionHeader")
+        self._toggle_btn.setIconSize(glyph_size())
         self._toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._toggle_btn.clicked.connect(self._on_toggle)
+        self._update_chevron()
         lay.addWidget(self._toggle_btn, stretch=1)
         self._badge = QLabel()
         self._badge.setObjectName("SectionBadge")
         lay.addWidget(self._badge)
         return header
 
-    def _header_text(self) -> str:
-        arrow = "\u25BE" if self._expanded else "\u25B8"
-        return f"{arrow}  {self._title.upper()}"
+    def _update_chevron(self):
+        self._toggle_btn.setIcon(icon("chevron_down" if self._expanded else "chevron_right"))
 
     def _on_toggle(self):
         self.set_expanded(not self._expanded)
@@ -119,7 +120,7 @@ class CollapsibleSection(SidebarSection):
         """Programmatically expand or collapse."""
         self._expanded = expanded
         self._content.setVisible(expanded)
-        self._toggle_btn.setText(self._header_text())
+        self._update_chevron()
 
     def set_badge(self, text: str, tooltip: str = ""):
         """Show a short note at the right of the header (empty hides it)."""
@@ -281,7 +282,7 @@ class SweepableSpinBox(QWidget):
 
         self._btn_sweep = QPushButton("\u2194")
         self._btn_sweep.setObjectName("SweepToggle")
-        self._btn_sweep.setFixedSize(26, 24)
+        self._btn_sweep.setFixedSize(Size.CONTROL_HEIGHT, Size.CONTROL_HEIGHT)
         self._btn_sweep.setToolTip("Toggle parameter sweep range")
         self._btn_sweep.setCheckable(True)
         self._btn_sweep.clicked.connect(self._on_toggle_sweep)
@@ -374,7 +375,7 @@ class SweepableDoubleSpinBox(QWidget):
 
         self._btn_sweep = QPushButton("\u2194")
         self._btn_sweep.setObjectName("SweepToggle")
-        self._btn_sweep.setFixedSize(26, 24)
+        self._btn_sweep.setFixedSize(Size.CONTROL_HEIGHT, Size.CONTROL_HEIGHT)
         self._btn_sweep.setToolTip("Toggle parameter sweep range")
         self._btn_sweep.setCheckable(True)
         self._btn_sweep.clicked.connect(self._on_toggle_sweep)

@@ -82,3 +82,39 @@ def test_theme_styles_the_window():
     finally:
         w.deleteLater()
         app.processEvents()
+
+
+def test_inputs_and_buttons_share_one_height():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt6.QtWidgets import (
+        QAbstractButton,
+        QAbstractSpinBox,
+        QApplication,
+        QCheckBox,
+        QComboBox,
+        QLineEdit,
+    )
+
+    from spline_fitter.gui.theme import Size
+    from spline_fitter.gui.ui import SplineFitterWindow
+
+    app = QApplication.instance() or QApplication([])
+    w = SplineFitterWindow()
+    try:
+        w.resize(1500, 900)
+        w.show()
+        w._advanced_section.set_expanded(True)
+        app.processEvents()
+        controls = [
+            c for c in w.findChildren((QAbstractButton, QAbstractSpinBox, QComboBox, QLineEdit))
+            if c.isVisible() and not isinstance(c, QCheckBox)
+            and c.objectName() != "SectionHeader"
+            and not isinstance(c.parent(), (QAbstractSpinBox, QComboBox))
+        ]
+        assert len(controls) > 20
+        wrong = [(type(c).__name__, c.objectName(), c.height()) for c in controls
+                 if c.height() != Size.CONTROL_HEIGHT]
+        assert not wrong, f"controls not {Size.CONTROL_HEIGHT} px tall: {wrong}"
+    finally:
+        w.deleteLater()
+        app.processEvents()
