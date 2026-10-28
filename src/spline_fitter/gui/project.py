@@ -340,23 +340,9 @@ class ProjectManager:
     # Explorer toggle
     # ------------------------------------------------------------------
 
-    def on_toggle_explorer(self):
-        """Toggle the project explorer panel visibility."""
-        sizes = self._window._main_splitter.sizes()
-        if sizes[2] > 0:
-            # Collapse explorer
-            self._explorer_saved_width = sizes[2]
-            self._window._main_splitter.setSizes([sizes[0], sizes[1] + sizes[2], 0])
-            self._window._btn_toggle_explorer.setText("\u25B6")
-            self._window._btn_toggle_explorer.setToolTip("Expand explorer panel")
-        else:
-            # Expand explorer
-            restore_width = getattr(self, "_explorer_saved_width", 280)
-            self._window._main_splitter.setSizes(
-                [sizes[0], sizes[1] - restore_width, restore_width]
-            )
-            self._window._btn_toggle_explorer.setText("\u25C0")
-            self._window._btn_toggle_explorer.setToolTip("Collapse explorer panel")
+    def on_toggle_explorer(self, visible: bool):
+        """Show or hide the project explorer; the plots take its width."""
+        self._window._explorer_panel.setVisible(visible)
 
     # ------------------------------------------------------------------
     # Project tree

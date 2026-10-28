@@ -188,16 +188,19 @@ class WindowLayoutMixin:
 
         # Right panel: Project Explorer
         explorer_panel = self._build_project_explorer()
+        self._explorer_panel = explorer_panel
 
         # Configure splitter
         self._main_splitter.addWidget(sidebar)
         self._main_splitter.addWidget(center_panel)
         self._main_splitter.addWidget(explorer_panel)
         sidebar.setMinimumWidth(300)
-        explorer_panel.setMinimumWidth(0)
+        # The explorer is hidden with its button or the View menu, never by
+        # dragging the splitter shut, which left no way to bring it back
+        explorer_panel.setMinimumWidth(180)
         self._main_splitter.setCollapsible(0, False)
         self._main_splitter.setCollapsible(1, False)
-        self._main_splitter.setCollapsible(2, True)
+        self._main_splitter.setCollapsible(2, False)
         self._main_splitter.setStretchFactor(0, 0)
         self._main_splitter.setStretchFactor(1, 1)
         self._main_splitter.setStretchFactor(2, 0)
@@ -248,6 +251,12 @@ class WindowLayoutMixin:
         self._action_fit_report.setShortcut("Ctrl+R")
         self._action_fit_report.setEnabled(False)
         self._action_view_report = view_menu.addAction("&Benchmark Report...")
+        view_menu.addSeparator()
+        # Shows and hides the explorer; its own button can only hide it
+        self._action_toggle_explorer = view_menu.addAction("Project &Explorer")
+        self._action_toggle_explorer.setCheckable(True)
+        self._action_toggle_explorer.setChecked(True)
+        self._action_toggle_explorer.setShortcut("Ctrl+Shift+E")
 
         # Help menu
         help_menu = menubar.addMenu("&Help")
@@ -352,6 +361,13 @@ class WindowLayoutMixin:
             "Detailed: every iteration (slower)."
         )
         toolbar.addWidget(self._combo_live)
+
+        # Always visible, so a hidden explorer can be shown again
+        btn_explorer = QToolButton()
+        self._action_toggle_explorer.setIconText("Explorer")
+        self._action_toggle_explorer.setToolTip("Show or hide the project explorer (Ctrl+Shift+E)")
+        btn_explorer.setDefaultAction(self._action_toggle_explorer)
+        toolbar.addWidget(btn_explorer)
         return toolbar
 
     # -- Loss Toolbar ------------------------------------------------------
@@ -396,9 +412,10 @@ class WindowLayoutMixin:
         header = QHBoxLayout()
         header.addWidget(QLabel("<b>Project Explorer</b>"))
         header.addStretch()
-        self._btn_toggle_explorer = QPushButton("\u25C0")
+        self._btn_toggle_explorer = QPushButton("\u2715")
         self._btn_toggle_explorer.setFixedWidth(24)
-        self._btn_toggle_explorer.setToolTip("Collapse explorer panel")
+        self._btn_toggle_explorer.setToolTip(
+            "Hide the explorer (show it again with Explorer above the plot)")
         header.addWidget(self._btn_toggle_explorer)
         layout.addLayout(header)
 

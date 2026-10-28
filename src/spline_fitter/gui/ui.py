@@ -284,7 +284,9 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._spin_bbox.valueChanged.connect(self._save_settings)
 
         # Project explorer
-        self._btn_toggle_explorer.clicked.connect(self._project_manager.on_toggle_explorer)
+        self._action_toggle_explorer.toggled.connect(self._project_manager.on_toggle_explorer)
+        self._btn_toggle_explorer.clicked.connect(
+            lambda: self._action_toggle_explorer.setChecked(False))
         self._project_tree.itemSelectionChanged.connect(self._project_manager.on_tree_selection_changed)
         self._project_tree.itemDoubleClicked.connect(self._project_manager.on_tree_item_double_clicked)
         self._btn_delete_run.clicked.connect(self._project_manager.on_delete_selected_runs)
