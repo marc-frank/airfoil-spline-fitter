@@ -8,6 +8,8 @@ plots with their toolbars, and the run bar.
 
 from __future__ import annotations
 
+import math
+
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
@@ -48,7 +50,9 @@ from .widgets import (
     SweepableSpinBox,
 )
 
-# Default width of the project explorer
+# Default widths of the sidebar (at least: size_sidebar widens it to fit
+# Advanced with the smoothing sweep open) and the project explorer
+SIDEBAR_WIDTH = 330
 EXPLORER_WIDTH = 280
 
 # Most sections the curve can be split into; each needs enough points
@@ -112,6 +116,11 @@ class WindowLayoutMixin:
         self._main_splitter = ResettableSplitter(Qt.Orientation.Horizontal, self)
         # Double-clicking a handle puts the panel beside it back to its default width
         self._main_splitter.handleDoubleClicked.connect(self._reset_panel_width)
+        # Until a handle is dragged, the side panels keep their default widths
+        # as the window settles (it is maximized after it is first shown)
+        self._panels_dragged = False
+        self._main_splitter.splitterMoved.connect(
+            lambda *_: setattr(self, "_panels_dragged", True))
 
         # Sidebar: scrolling sections above a fixed run bar, in workflow
         # order (data -> method -> curve -> advanced -> fit and results)
@@ -228,10 +237,10 @@ class WindowLayoutMixin:
         self._main_splitter.setStretchFactor(0, 0)
         self._main_splitter.setStretchFactor(1, 1)
         self._main_splitter.setStretchFactor(2, 0)
-        # The sidebar's width is set once shown (size_sidebar), when the
-        # styled fields have their real sizes
-        self._sidebar_default_width = 330
-        self._main_splitter.setSizes([self._sidebar_default_width, 730, EXPLORER_WIDTH])
+        # Widened to fit its rows once shown (size_sidebar), when the styled
+        # fields have their real sizes
+        self._sidebar_width = SIDEBAR_WIDTH
+        self._main_splitter.setSizes([SIDEBAR_WIDTH, 730, EXPLORER_WIDTH])
 
         # The splitter, and at the right edge the rail a hidden explorer
         # folds into: a chevron pointing back out shows it again
@@ -245,9 +254,9 @@ class WindowLayoutMixin:
         self.statusBar().showMessage("Ready")
 
     def size_sidebar(self) -> None:
-        """Make the sidebar as wide as its widest row needs: Advanced open
-        and each sweep range shown in turn (the smoothing sweep is the
-        widest), taking the width from the plots."""
+        """Widen the sidebar's default to what its widest row needs: Advanced
+        open and each sweep range shown in turn (the smoothing sweep is the
+        widest), rounded up to 10 px."""
         sections, advanced = self._sidebar_sections, self._advanced_section
         was_expanded = advanced._expanded
         advanced.set_expanded(True)
@@ -259,14 +268,19 @@ class WindowLayoutMixin:
                 box.stop_sweep()
         advanced.set_expanded(was_expanded)
         width = widest + self._sidebar_scroll.verticalScrollBar().sizeHint().width()
-        self._sidebar_default_width = max(self._sidebar_default_width, width)
+        self._sidebar_width = max(SIDEBAR_WIDTH, math.ceil(width / 10) * 10)
+        self.reset_panel_widths()
+
+    def reset_panel_widths(self) -> None:
+        """Sidebar and explorer at their default widths."""
         self._reset_panel_width(1)
+        self._reset_panel_width(2)
 
     def _reset_panel_width(self, handle: int) -> None:
         """Give the panel beside a splitter handle its default width (1: the
         sidebar, 2: the explorer), taking or giving the difference to the plots."""
         sizes = self._main_splitter.sizes()
-        panel, default = ((0, self._sidebar_default_width) if handle == 1
+        panel, default = ((0, self._sidebar_width) if handle == 1
                           else (2, EXPLORER_WIDTH))
         sizes[1] -= default - sizes[panel]
         sizes[panel] = default

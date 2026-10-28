@@ -95,6 +95,11 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
             self._sidebar_sized = True
             self.size_sidebar()
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if not self._panels_dragged:
+            self.reset_panel_widths()
+
     def closeEvent(self, event):
         """Stop a running fit so its worker thread ends with the window."""
         if self._is_fitting:

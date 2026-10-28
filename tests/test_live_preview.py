@@ -215,5 +215,6 @@ def test_double_clicking_a_splitter_handle_restores_the_default_width(window):
         handle = splitter.handle(index)
         QTest.mouseDClick(handle, Qt.MouseButton.LeftButton, pos=handle.rect().center())
     width = splitter.sizes()
-    assert width[0] == window._sidebar_default_width and width[2] == EXPLORER_WIDTH
+    assert width[0] == window._sidebar_width and width[0] % 10 == 0
+    assert width[2] == EXPLORER_WIDTH
     assert sum(width) == sum(sizes)
