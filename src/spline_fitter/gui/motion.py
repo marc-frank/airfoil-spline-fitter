@@ -64,6 +64,9 @@ class _ScrollAnimation(QVariantAnimation):
         self.stop()
         self.setDuration(Motion.SCROLL_MS)  # read now: the user may have changed it
         self.target = target
+        if not self.duration():  # off: jump (Qt signals no value it already had)
+            self._bar.setValue(round(target))
+            return True
         self.setStartValue(current)
         self.setEndValue(target)
         self.start()
@@ -169,7 +172,10 @@ class SmoothViewBox(pg.ViewBox):
             fn.invertQTransform(self.childGroup.transform()).map(ev.pos()))
         self._resetTarget()
         self._zoom.setDuration(Motion.ZOOM_MS)
-        self._zoom.start()
+        if self._zoom.duration():
+            self._zoom.start()
+        else:  # off: zoom at once (Qt signals no value it already had)
+            self._zoom_step(1.0)
         ev.accept()
         self.sigRangeChangedManually.emit(mask)
 

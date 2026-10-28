@@ -154,3 +154,36 @@ def test_durations_are_user_settings(app, tmp_path, monkeypatch):
     assert (Motion.SCROLL_MS, Motion.ZOOM_MS) == (350, 650)
     view.close()
     dialog.deleteLater()
+
+
+def test_off_zooms_and_scrolls_every_notch(app, monkeypatch):
+    """With the glide off, every notch acts, not only the first."""
+    import pyqtgraph as pg
+
+    monkeypatch.setattr(Motion, "SCROLL_MS", 0)
+    monkeypatch.setattr(Motion, "ZOOM_MS", 0)
+    plot = pg.PlotWidget(viewBox=SmoothViewBox())
+    plot.resize(400, 400)
+    plot.show()
+    vb = plot.getViewBox()
+    vb.setRange(xRange=(0, 10), yRange=(0, 10), padding=0)
+    QTest.qWait(10)
+    center = vb.mapFromScene(vb.mapViewToScene(pg.Point(5, 5)))
+    widths = []
+    for _ in range(3):
+        vb.wheelEvent(_FakeWheel(120, center))
+        widths.append(vb.viewRange()[0][1] - vb.viewRange()[0][0])
+    assert widths[0] > widths[1] > widths[2]
+    plot.close()
+
+    view = QListWidget()
+    view.addItems([f"Run {i}" for i in range(500)])
+    view.resize(200, 200)
+    view.show()
+    QTest.qWait(10)
+    bar = view.verticalScrollBar()
+    step = QApplication.wheelScrollLines() * bar.singleStep()
+    for notches, expected in ((-1, step), (1, 0), (-1, step)):
+        _wheel(view.viewport(), notches)
+        assert bar.value() == expected
+    view.close()
