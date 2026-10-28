@@ -122,6 +122,9 @@ class WindowLayoutMixin:
         sections_layout.setContentsMargins(0, 0, 0, 0)
         sections_layout.setSpacing(0)
 
+        # NOTE: every setting added to these sections must be locked while a
+        # fit runs: add it to _set_fitting_ui (ui.py), or put it in Advanced,
+        # whose content is locked as a whole
         sections_layout.addWidget(self._build_file_card())
         sections_layout.addWidget(self._build_method_section())
         sections_layout.addWidget(self._build_curve_section())

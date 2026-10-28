@@ -519,7 +519,11 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         return None
 
     def _set_fitting_ui(self, fitting: bool):
-        """Enable/disable UI elements during fitting."""
+        """Enable/disable UI elements during fitting.
+
+        Every fit setting must be locked here while a fit runs; new sidebar
+        controls belong in the list below (Advanced is locked as a whole).
+        """
         self._is_fitting = fitting
 
         # Toggle buttons / menu actions (Cancel takes the Fit button's place)
@@ -541,6 +545,9 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._combo_live.setEnabled(not fitting)
         self._seg_goal.setEnabled(not fitting)
         self._tolerance_row.setEnabled(not fitting)
+        self._combo_knot_placement.setEnabled(not fitting)
+        self._check_grow.setEnabled(not fitting)
+        self._combo_err.setEnabled(not fitting)
         self._advanced_section.content_widget().setEnabled(not fitting)
         self._on_optimizer_changed(self._combo_opt.currentIndex())
 
