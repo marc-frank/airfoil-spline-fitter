@@ -616,15 +616,6 @@ class WindowLayoutMixin:
         )
         self._lbl_smoothing_weight = _add_row(form, "Smoothing", self._sweep_smoothing_weight)
 
-        # Smoothing factor (algebraic methods)
-        self._spin_smoothing = QDoubleSpinBox()
-        self._spin_smoothing.setRange(0.0, 1.0)
-        self._spin_smoothing.setDecimals(6)
-        self._spin_smoothing.setSingleStep(0.0001)
-        self._spin_smoothing.setValue(0.0)
-        self._spin_smoothing.setToolTip("Smoothing factor for algebraic fitting (0 = exact).")
-        self._lbl_smoothing = _add_row(form, "LSQ smoothing", self._spin_smoothing)
-
         # Iterative optimizers
         self._spin_maxiter = QSpinBox()
         self._spin_maxiter.setRange(10, 1_000_000_000)
@@ -637,7 +628,7 @@ class WindowLayoutMixin:
         self._spin_seed.setValue(-1)
         self._spin_seed.setSpecialValueText("Random")
         self._spin_seed.setToolTip("Random seed (Random = system random, \u22650 = deterministic).")
-        _add_row(form, "Seed", self._spin_seed)
+        self._lbl_seed = _add_row(form, "Seed", self._spin_seed)
 
         # Outer optimizer (parameter optimisation)
         from ..optimization.optimizers import get_optimizer
@@ -675,7 +666,7 @@ class WindowLayoutMixin:
         self._spin_bbox.setSingleStep(0.1)
         self._spin_bbox.setValue(3.0)
         self._spin_bbox.setToolTip("Multiplier for optimization search bounds.")
-        _add_row(form, "Search scale", self._spin_bbox)
+        self._lbl_bbox = _add_row(form, "Search scale", self._spin_bbox)
 
         self._check_optimize_le = QCheckBox("Let it move")
         self._check_optimize_le.setChecked(False)
@@ -694,7 +685,6 @@ class WindowLayoutMixin:
             ("Subsample", self._check_subsample),
             ("Subsample points", self._spin_subsample),
             ("Smoothing", self._spin_smoothing_weight),
-            ("LSQ smoothing", self._spin_smoothing),
             ("Iteration limit", self._spin_maxiter),
             ("Seed", self._spin_seed),
             ("Outer optimizer", self._combo_param_opt_outer),

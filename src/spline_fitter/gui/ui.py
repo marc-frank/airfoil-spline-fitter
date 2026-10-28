@@ -89,53 +89,83 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
     # -- Optimizer Visibility Logic ----------------------------------------
 
     def _on_optimizer_changed(self, index: int):
-        """Show/hide controls that depend on which optimizer is selected."""
+        """Show the settings the selected optimizer reads; disable the ones
+        another setting rules out (goal, growth, section count, outer optimizer)."""
         opt_type = self._combo_opt.currentData()
-        is_algebraic = opt_type.is_algebraic if opt_type else False
-        is_param_opt = opt_type.is_param_optimizer if opt_type else False
-        is_gn_varpro = opt_type == OptimizerType.GN_VARPRO if opt_type else False
-        uses_metric = opt_type.uses_error_metric if opt_type else False
+        if opt_type is None:
+            return
+        is_param_opt = opt_type.is_param_optimizer
+        is_gn_varpro = opt_type == OptimizerType.GN_VARPRO
+        uses_metric = opt_type.uses_error_metric
         tolerance_mode = is_gn_varpro and self._tolerance_mode_selected()
         has_junctions = self._spin_sections.value() > 1
+        editable = not self._is_fitting
 
         def show(visible: bool, *widgets):
             for w in widgets:
                 w.setVisible(visible)
 
-        # Method: a tolerance replaces the control point count, except as the
-        # starting count when the points are not grown from the fewest
+        def enable(enabled: bool, *widgets):
+            for w in widgets:
+                w.setEnabled(enabled)
+
+        # Method. With a tolerance goal the control point count is only the
+        # starting count, and only when the points are not grown
         start_count = tolerance_mode and not self._check_grow.isChecked()
         show(is_gn_varpro, self._lbl_goal, self._seg_goal,
+             self._lbl_tolerance, self._tolerance_row,
              self._lbl_knot_placement, self._combo_knot_placement,
              self._lbl_grow, self._check_grow)
-        show(tolerance_mode, self._lbl_tolerance, self._tolerance_row)
-        show(not tolerance_mode or start_count, self._lbl_ctrl, self._sweep_ctrl)
-        self._lbl_ctrl.setText("Start count" if start_count else "Control pts")
-        self._spin_tolerance.setEnabled(tolerance_mode and not self._check_auto_tolerance.isChecked())
-        self._check_auto_tolerance.setEnabled(tolerance_mode)
+        enable(tolerance_mode, self._lbl_tolerance)
+        self._spin_tolerance.setEnabled(
+            editable and tolerance_mode and not self._check_auto_tolerance.isChecked())
+        self._check_auto_tolerance.setEnabled(editable and tolerance_mode)
+        uses_count = not tolerance_mode or start_count
+        self._lbl_ctrl.setText("Start count" if tolerance_mode else "Control pts")
+        enable(uses_count, self._lbl_ctrl)
         if tolerance_mode:
             for sweep_box in (self._sweep_ctrl, self._sweep_smoothing_weight):
                 if sweep_box.is_sweep_active:
                     sweep_box.stop_sweep()
-        self._sweep_ctrl.setEnabled(not self._is_fitting and (not tolerance_mode or start_count))
+        self._sweep_ctrl.setEnabled(editable and uses_count)
         self._sweep_ctrl.set_sweep_allowed(not tolerance_mode)
         show(uses_metric, self._lbl_err, self._combo_err)
 
-        # Curve: continuity applies at junctions, so not to a single
-        # section; geometric continuity is VarPro only
-        show(has_junctions, self._lbl_cont, self._combo_cont)
-        show(has_junctions and is_gn_varpro, self._lbl_cont_kind, self._combo_cont_kind)
+        # Curve. Continuity applies at junctions, which one section lacks;
+        # geometric continuity is VarPro only
+        show(is_gn_varpro, self._lbl_cont_kind, self._combo_cont_kind)
+        enable(has_junctions, self._lbl_cont, self._lbl_cont_kind)
+        enable(editable and has_junctions, self._combo_cont, self._combo_cont_kind)
         self._update_continuity_labels()
 
-        # Advanced: only the settings the selected optimizer reads
-        show(has_junctions and is_gn_varpro, self._lbl_junctions, self._edit_junctions)
-        show(has_junctions, self._lbl_optimize_le, self._check_optimize_le)
-        show(is_gn_varpro, self._lbl_subsample, self._subsample_row)
-        show(is_gn_varpro and not tolerance_mode,
+        # Advanced
+        show(is_gn_varpro, self._lbl_junctions, self._edit_junctions,
+             self._lbl_subsample, self._subsample_row,
              self._lbl_smoothing_weight, self._sweep_smoothing_weight)
-        self._sweep_smoothing_weight.setEnabled(not self._is_fitting)
-        show(is_algebraic, self._lbl_smoothing, self._spin_smoothing)
-        show(not is_algebraic, self._lbl_maxiter, self._spin_maxiter)
+        enable(has_junctions, self._lbl_junctions, self._edit_junctions)
+        # Tolerance mode uses its own fixed smoothing weight
+        enable(not tolerance_mode, self._lbl_smoothing_weight, self._sweep_smoothing_weight)
+
+        has_iterations = not opt_type.is_algebraic
+        show(has_iterations, self._lbl_maxiter, self._spin_maxiter)
+        # VarPro's tolerance search refits until the tolerance is met
+        enable(not tolerance_mode, self._lbl_maxiter, self._spin_maxiter)
+
+        # Seed: the stochastic global optimizers, directly or as the outer
+        # optimizer of the parameter optimisation
+        outer = self._combo_param_opt_outer.currentData()
+        show(opt_type.is_global or is_param_opt, self._lbl_seed, self._spin_seed)
+        enable(opt_type.is_global or (outer is not None and outer.is_global),
+               self._lbl_seed, self._spin_seed)
+
+        # Search scale: the bounds, which only bounded optimizers receive
+        show(uses_metric and self._optimizer_takes_bounds(opt_type),
+             self._lbl_bbox, self._spin_bbox)
+
+        # Junction position: every method but Direct LSQ can move it
+        show(opt_type != OptimizerType.DIRECT_LSQ, self._lbl_optimize_le, self._check_optimize_le)
+        enable(has_junctions, self._lbl_optimize_le, self._check_optimize_le)
+
         show(is_param_opt, self._lbl_param_opt_outer, self._combo_param_opt_outer)
         show(opt_type == OptimizerType.ORTHOGONAL_LSQ,
              self._lbl_orth_lsq_local_bounds, self._check_orth_lsq_local_bounds)
@@ -143,6 +173,15 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         # and the bending energy of the parameter optimizer
         show(uses_metric or is_param_opt, self._regularization_box)
         self._update_advanced_badge()
+
+    @staticmethod
+    def _optimizer_takes_bounds(opt_type: OptimizerType) -> bool:
+        """Whether the optimizer receives the variable bounds (Search scale)."""
+        from ..optimization.optimizers import get_optimizer
+        try:
+            return get_optimizer(opt_type).supports_bounds
+        except Exception:
+            return False
 
     def _tolerance_mode_selected(self) -> bool:
         """Whether the Goal is a tolerance (VarPro) rather than a fixed count."""
@@ -195,6 +234,9 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
             lambda _: self._on_optimizer_changed(self._combo_opt.currentIndex())
         )
         self._check_grow.toggled.connect(
+            lambda _: self._on_optimizer_changed(self._combo_opt.currentIndex())
+        )
+        self._combo_param_opt_outer.currentIndexChanged.connect(
             lambda _: self._on_optimizer_changed(self._combo_opt.currentIndex())
         )
         self._check_auto_tolerance.toggled.connect(
@@ -289,11 +331,6 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         """Build OptimizationConfig from current UI state."""
         opt_type = self._combo_opt.currentData()
 
-        # Get smoothing factor for algebraic methods
-        smoothing = None
-        if opt_type.is_algebraic:
-            smoothing = self._spin_smoothing.value()
-
         tolerance = None
         if opt_type == OptimizerType.GN_VARPRO and self._tolerance_mode_selected():
             if self._check_auto_tolerance.isChecked() and self._airfoil is not None:
@@ -307,7 +344,6 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
             seed=self._spin_seed.value(),
             optimize_le_position=(self._check_optimize_le.isChecked()
                                   and self._spin_sections.value() > 1),
-            smoothing_factor=smoothing,
             smoothing_weight=self._spin_smoothing_weight.value(),
             tolerance=tolerance,
             max_points_per_section=(self._spin_subsample.value()
