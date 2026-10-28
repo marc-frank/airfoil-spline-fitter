@@ -58,8 +58,6 @@ class LiveProgress:
         self._logger = error_logger
         self._start = start_time
         self._prefix = status_prefix
-        # The setting is locked while fitting
-        self.mode = window._combo_live.currentIndex()
         self._is_direct_cp = opt_config.optimizer.is_iterative_algebraic
 
         # Early stopping (not for VarPro, which converges by itself)
@@ -76,6 +74,11 @@ class LiveProgress:
         self._drawn = threading.Event()
         self._last_plot = start_time
         self._last_status = start_time
+
+    @property
+    def mode(self) -> int:
+        """The live preview setting, which can change while fitting."""
+        return self._w._live_mode
 
     # -- Worker thread -----------------------------------------------------
 
@@ -154,9 +157,12 @@ class LiveProgress:
                 self._draw()
             finally:
                 self._drawn.set()
-        elif now - self._last_status >= STATUS_INTERVAL:
-            self._last_status = now
-            self._w.statusBar().showMessage(self._latest["status"])
+        else:
+            # Release a worker still waiting from Detailed mode
+            self._drawn.set()
+            if now - self._last_status >= STATUS_INTERVAL:
+                self._last_status = now
+                self._w.statusBar().showMessage(self._latest["status"])
 
     def _draw(self):
         w = self._w

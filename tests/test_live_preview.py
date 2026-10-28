@@ -80,6 +80,28 @@ def test_minimal_draws_only_the_result(window, counted):
     assert counted["steps"] > 5 and counted["drawn"] == 0
 
 
+def test_live_setting_can_change_while_fitting(window, counted, monkeypatch):
+    """Switching from Detailed to Minimal mid-fit stops the drawing, and the
+    worker waiting for a Detailed drawing is released."""
+    from spline_fitter.gui import live
+    on_tick = live.LiveProgress.on_tick
+
+    enabled = []
+
+    def switch_after_three(self):
+        enabled.append(window._combo_live.isEnabled())
+        if counted["drawn"] >= 3:
+            window._combo_live.setCurrentIndex(0)
+        on_tick(self)
+
+    monkeypatch.setattr(live.LiveProgress, "on_tick", switch_after_three)
+    window._combo_live.setCurrentIndex(2)
+    window._fitting_controller.on_fit()
+    assert window._fit_result is not None
+    assert enabled and all(enabled)
+    assert counted["drawn"] == 3 < counted["steps"]
+
+
 def test_sweep_shows_every_fit_and_its_comparison_point(window, counted, monkeypatch):
     window._combo_live.setCurrentIndex(2)
     sizes = []

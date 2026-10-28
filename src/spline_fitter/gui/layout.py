@@ -382,6 +382,10 @@ class WindowLayoutMixin:
         self._combo_live = QComboBox()
         self._combo_live.addItems(["Minimal", "Moderate", "Detailed"])
         self._combo_live.setCurrentIndex(1)
+        # Read by the fit's worker thread, so kept as a plain int; it can
+        # change while fitting
+        self._live_mode = self._combo_live.currentIndex()
+        self._combo_live.currentIndexChanged.connect(lambda i: setattr(self, "_live_mode", i))
         self._combo_live.setToolTip(
             "How often the plots update while fitting.\n"
             "Minimal: only at the end. Moderate: once a second.\n"
@@ -512,27 +516,27 @@ class WindowLayoutMixin:
         form = _form()
 
         # Algorithm (decides which other controls apply, so it comes first).
-        # The LSQ-based methods head the list, the default VarPro LM first;
-        # the general-purpose optimizers follow under LOCAL and GLOBAL captions
+        # Grouped under captions: the least-squares methods (the default
+        # VarPro LM first), then the general-purpose local and global optimizers
         self._combo_opt = QComboBox()
         lsq = [OptimizerType.GN_VARPRO, OptimizerType.DIRECT_LSQ]
         rest = [t for t in OptimizerType if t not in lsq]
         groups = (
-            (None, lsq),
+            ("LEAST SQUARES", lsq),
             ("LOCAL", [t for t in rest if not t.is_global]),
             ("GLOBAL", [t for t in rest if t.is_global]),
         )
         for caption, opt_types in groups:
-            if caption is not None:
+            if self._combo_opt.count():
                 self._combo_opt.insertSeparator(self._combo_opt.count())
-                self._combo_opt.addItem(caption)
-                # A caption, not a choice: unselectable and skipped by the keys
-                self._combo_opt.model().item(self._combo_opt.count() - 1).setEnabled(False)
+            self._combo_opt.addItem(caption)
+            # A caption, not a choice: unselectable and skipped by the keys
+            self._combo_opt.model().item(self._combo_opt.count() - 1).setEnabled(False)
             for opt_type in opt_types:
                 self._combo_opt.addItem(opt_type.display_name, userData=opt_type)
                 self._combo_opt.setItemData(
                     self._combo_opt.count() - 1, opt_type.tooltip, Qt.ItemDataRole.ToolTipRole)
-        self._combo_opt.setCurrentIndex(0)
+        self._combo_opt.setCurrentIndex(self._combo_opt.findData(OptimizerType.GN_VARPRO))
         self._combo_opt.currentIndexChanged.connect(self._on_optimizer_changed)
         _add_row(form, "Optimizer", self._combo_opt)
 

@@ -266,7 +266,7 @@ class SegmentedControl(QWidget):
 class SweepableSpinBox(QWidget):
     """A spinbox with an inline sweep-range toggle button.
 
-    When the range button (a dimension line) is toggled, a \u2192 [max] field appears, turning
+    When the range button (a dimension line) is toggled, a [max] field appears, turning
     the single value into a range for parameter sweeps.  Only one
     SweepableSpinBox in a *group* can be active at a time.
     """
@@ -295,10 +295,6 @@ class SweepableSpinBox(QWidget):
         self._btn_sweep.clicked.connect(self._on_toggle_sweep)
         lay.addWidget(self._btn_sweep)
 
-        self._lbl_arrow = QLabel("\u2192")
-        self._lbl_arrow.setVisible(False)
-        lay.addWidget(self._lbl_arrow)
-
         self._spin_max = QSpinBox()
         self._spin_max.setRange(self._spin.minimum(), self._spin.maximum())
         self._spin_max.setSingleStep(self._spin.singleStep())
@@ -313,10 +309,8 @@ class SweepableSpinBox(QWidget):
                 if other is not self and other._sweep_active:
                     other._btn_sweep.setChecked(False)
                     other._sweep_active = False
-                    other._lbl_arrow.setVisible(False)
                     other._spin_max.setVisible(False)
         self._sweep_active = checked
-        self._lbl_arrow.setVisible(checked)
         self._spin_max.setVisible(checked)
         if checked:
             self._spin_max.setMinimum(self._spin.minimum())
@@ -354,7 +348,7 @@ class SweepableSpinBox(QWidget):
 class SweepableDoubleSpinBox(QWidget):
     """A double-spinbox with an inline sweep-range toggle and step count.
 
-    When the range button (a dimension line) is toggled, \u2192 [max] and Steps fields appear,
+    When the range button (a dimension line) is toggled, [max] and Steps fields appear,
     turning the single value into a range for parameter sweeps.  Only one
     sweepable widget in a *group* can be active at a time (works with
     both SweepableSpinBox and SweepableDoubleSpinBox in the same group).
@@ -390,10 +384,6 @@ class SweepableDoubleSpinBox(QWidget):
         self._btn_sweep.clicked.connect(self._on_toggle_sweep)
         lay.addWidget(self._btn_sweep)
 
-        self._lbl_arrow = QLabel("\u2192")
-        self._lbl_arrow.setVisible(False)
-        lay.addWidget(self._lbl_arrow)
-
         self._spin_max = QDoubleSpinBox()
         self._spin_max.setRange(self._spin.minimum(), self._spin.maximum())
         self._spin_max.setDecimals(self._spin.decimals())
@@ -402,7 +392,7 @@ class SweepableDoubleSpinBox(QWidget):
         self._spin_max.setVisible(False)
         lay.addWidget(self._spin_max, stretch=1)
 
-        self._lbl_steps = QLabel("Steps:")
+        self._lbl_steps = QLabel("Steps")
         self._lbl_steps.setVisible(False)
         lay.addWidget(self._lbl_steps)
 
@@ -420,7 +410,6 @@ class SweepableDoubleSpinBox(QWidget):
                 if other is not self and other._sweep_active:
                     other._btn_sweep.setChecked(False)
                     other._sweep_active = False
-                    other._lbl_arrow.setVisible(False)
                     if hasattr(other, '_spin_max'):
                         other._spin_max.setVisible(False)
                     if hasattr(other, '_lbl_steps'):
@@ -428,7 +417,6 @@ class SweepableDoubleSpinBox(QWidget):
                     if hasattr(other, '_spin_steps'):
                         other._spin_steps.setVisible(False)
         self._sweep_active = checked
-        self._lbl_arrow.setVisible(checked)
         self._spin_max.setVisible(checked)
         self._lbl_steps.setVisible(checked)
         self._spin_steps.setVisible(checked)

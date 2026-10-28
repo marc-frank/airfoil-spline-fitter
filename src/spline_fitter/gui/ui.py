@@ -544,7 +544,6 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._combo_cont.setEnabled(not fitting)
         self._combo_cont_kind.setEnabled(not fitting)
         self._combo_opt.setEnabled(not fitting)
-        self._combo_live.setEnabled(not fitting)
         self._seg_goal.setEnabled(not fitting)
         self._tolerance_row.setEnabled(not fitting)
         self._combo_knot_placement.setEnabled(not fitting)
