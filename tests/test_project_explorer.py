@@ -82,17 +82,24 @@ def test_filter_invert_and_sort(window):
     assert _column(window, "Control points") == ["8"]
     table.invert_button.setChecked(False)
 
-    # Every word must match
-    table.filter_column.setCurrentText("Control points")
-    table.filter_edit.setText("> 9 <13")
+    # A column's own filter; every word must match
+    table.filter_edit.clear()
+    table.column_filter("Control points").setText("> 9 <13")
     assert _column(window, "Control points") == ["10", "12"]
 
-    # A comparison in one column only
-    table.filter_edit.setText("<1e-4")
-    table.filter_column.setCurrentText("Error")
+    # Several column filters and the global filter at once
+    table.column_filter("Control points").setText(">9")
+    table.column_filter("Error").setText("<1e-4")
     assert _column(window, "Control points") == ["14", "12"]
+    table.filter_edit.setText("varpro")
+    table.column_filter("Optimizer").setText("lm")
+    assert _column(window, "Control points") == ["14", "12"]
+    table.invert_button.setChecked(True)
+    assert _column(window, "Control points") == ["10", "8"]
+    table.invert_button.setChecked(False)
 
-    table.filter_edit.clear()
+    table.clear_filters()
+    assert _column(window, "Control points") == ["10", "14", "12", "8"]
     table.view.sortByColumn(_index("Error"), Qt.SortOrder.AscendingOrder)
     assert _column(window, "Control points") == ["14", "12", "10", "8"]
 

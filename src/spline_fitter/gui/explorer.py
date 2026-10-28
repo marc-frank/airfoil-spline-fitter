@@ -10,11 +10,12 @@ open project, one row per run:
   fit metrics of the run (error, deviations, fitted control points,
   iterations, evaluations, time, convergence) and its date. A setting
   the run's optimizer does not read stays blank, as the sidebar hides it.
-- **Filter.** One filter field narrows the rows, in all columns or in the
-  one chosen beside it. Every word must match: plain text matches a part
-  of the cell, a number with a comparison (``>1e-5``, ``<=12``, ``=5``,
-  ``!=3``) compares the value. *Invert* shows the rows the filter does not
-  match instead.
+- **Filter.** A global filter field searches all columns, and every column
+  has its own filter field under its header; any number of them filter at
+  the same time, and a run must match them all. Every word must match:
+  plain text matches a part of the cell, a number with a comparison
+  (``>1e-5``, ``<=12``, ``=5``, ``!=3``) compares the value. *Invert*
+  shows the rows the filters do not match instead.
 - **Sorting.** Clicking a header sorts by that column, numbers by value.
 - **Plot.** The error plot at the lower right shows only the rows that pass
   the filter: any column can become its x axis, and any fit metric its y
@@ -37,7 +38,6 @@ from dataclasses import dataclass
 from PyQt6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QAbstractItemView,
-    QComboBox,
     QHBoxLayout,
     QHeaderView,
     QLineEdit,
@@ -320,29 +320,39 @@ def term_matches(term: tuple[str, object], value, text: str) -> bool:
 
 
 class RunFilterModel(QSortFilterProxyModel):
-    """Filters the run table by the filter words, in one column or all of
-    them, optionally inverted; sorts by the raw values."""
+    """Filters the run table, optionally inverted, and sorts by the raw values.
+
+    A run passes when it matches the global filter (each word in some
+    column) and every column filter (each word in that column); Invert
+    shows the runs that do not.
+    """
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._terms: list = []
-        self._column: int | None = None
+        self._column_terms: dict[int, list] = {}
         self._inverted = False
 
-    def set_filter(self, text: str, column: int | None, inverted: bool) -> None:
+    def set_filter(self, text: str, column_texts: dict[int, str], inverted: bool) -> None:
         self._terms = parse_filter(text)
-        self._column = column
+        self._column_terms = {c: terms for c, t in column_texts.items()
+                              if (terms := parse_filter(t))}
         self._inverted = inverted
         self.invalidateFilter()
 
     def filterAcceptsRow(self, source_row: int, source_parent) -> bool:
-        if not self._terms:  # No filter: every run, inverted or not
+        if not self._terms and not self._column_terms:  # No filter: every run
             return True
         model = self.sourceModel()
-        cols = range(len(COLUMNS)) if self._column is None else (self._column,)
-        cells = [(model.value(source_row, c), COLUMNS[c].text(model.value(source_row, c)))
-                 for c in cols]
-        matches = all(any(term_matches(t, v, s) for v, s in cells) for t in self._terms)
+
+        def cell(c: int):
+            value = model.value(source_row, c)
+            return value, COLUMNS[c].text(value)
+
+        cells = [cell(c) for c in range(len(COLUMNS))]
+        matches = (all(any(term_matches(t, v, s) for v, s in cells) for t in self._terms)
+                   and all(term_matches(t, *cells[c])
+                           for c, terms in self._column_terms.items() for t in terms))
         return matches != self._inverted
 
     def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
@@ -360,14 +370,71 @@ class RunFilterModel(QSortFilterProxyModel):
 # View
 # =============================================================================
 
+_FILTER_TIP = (
+    "Every word must match.\n"
+    "Text matches a part of a cell, for example varpro or tolerance.\n"
+    "A number with a comparison compares the value:\n"
+    ">1e-5, <=12, =5 or !=3. =free matches the whole cell."
+)
+
+
+class FilterHeader(QHeaderView):
+    """A column header with a filter field under every section.
+
+    The fields follow their sections as they are resized, moved, hidden
+    or scrolled; ``edited`` is emitted when one of them changes.
+    """
+
+    edited = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(Qt.Orientation.Horizontal, parent)
+        self.editors: list[QLineEdit] = []
+        self.sectionResized.connect(self._place_editors)
+        self.sectionMoved.connect(self._place_editors)
+
+    def set_columns(self, names: list[str]) -> None:
+        for name in names:
+            edit = QLineEdit(self)
+            edit.setClearButtonEnabled(True)
+            edit.setToolTip(f"Filter the {name} column. {_FILTER_TIP}")
+            edit.textChanged.connect(lambda *_: self.edited.emit())
+            self.editors.append(edit)
+        self.updateGeometries()
+
+    def _filter_height(self) -> int:
+        return Size.CONTROL_HEIGHT + Size.TIGHT if self.editors else 0
+
+    def sizeHint(self):
+        size = super().sizeHint()
+        size.setHeight(size.height() + self._filter_height())
+        return size
+
+    def updateGeometries(self):
+        # The section labels above, the filter fields in the margin below
+        self.setViewportMargins(0, 0, 0, self._filter_height())
+        super().updateGeometries()
+        self._place_editors()
+
+    def _place_editors(self, *_):
+        top = self.viewport().geometry().bottom() + 1 + Size.TIGHT // 2
+        for logical, edit in enumerate(self.editors):
+            if self.isSectionHidden(logical):
+                edit.hide()
+                continue
+            edit.setGeometry(self.sectionViewportPosition(logical), top,
+                             self.sectionSize(logical) - 1, Size.CONTROL_HEIGHT)
+            edit.show()
+
 
 class RunTable(QWidget):
-    """The filter row above the sortable run table.
+    """The global filter above the sortable run table, whose header has a
+    filter field per column.
 
     Signals: ``filter_changed`` when other runs pass the filter,
     ``selection_changed`` when the selected runs change, ``run_activated``
     with the run of a double-clicked row, and ``plot_column_requested``
-    with a column index from the header's context menu (as x axis, or as
+    with a column name from the header's context menu (as x axis, or as
     y axis for a fit metric).
     """
 
@@ -382,30 +449,20 @@ class RunTable(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(Size.GAP)
 
-        # Filter row: the words, the column they search, and Invert
+        # Global filter: words found in any column; Invert applies to all filters
         self.filter_edit = QLineEdit()
-        self.filter_edit.setPlaceholderText("Filter")
+        self.filter_edit.setPlaceholderText("Filter all columns")
         self.filter_edit.setClearButtonEnabled(True)
         self.filter_edit.setToolTip(
-            "Show the runs that match every word.\n"
-            "Text matches a part of a cell, for example varpro or tolerance.\n"
-            "A number with a comparison compares the value:\n"
-            ">1e-5, <=12, =5 or !=3. =free matches the whole cell."
-        )
-        self.filter_column = QComboBox()
-        self.filter_column.addItem("All columns", userData=None)
-        for i, c in enumerate(COLUMNS):
-            self.filter_column.addItem(c.name, userData=i)
-        self.filter_column.setToolTip("The column the filter searches")
+            "Show the runs that match in any column, and in every column filter "
+            "under the headers.\n" + _FILTER_TIP)
         self.invert_button = QToolButton()
         self.invert_button.setText("Invert")
         self.invert_button.setCheckable(True)
-        self.invert_button.setToolTip("Show the runs the filter does not match")
-
-        layout.addWidget(self.filter_edit)
+        self.invert_button.setToolTip("Show the runs the filters do not match")
         row = QHBoxLayout()
         row.setSpacing(Size.GAP)
-        row.addWidget(self.filter_column, stretch=1)
+        row.addWidget(self.filter_edit, stretch=1)
         row.addWidget(self.invert_button)
         layout.addLayout(row)
 
@@ -414,7 +471,10 @@ class RunTable(QWidget):
         self.proxy = RunFilterModel(self)
         self.proxy.setSourceModel(self.model)
         self.view = QTableView()
+        self.header = FilterHeader(self.view)
+        self.view.setHorizontalHeader(self.header)
         self.view.setModel(self.proxy)
+        self.header.set_columns(COLUMN_NAMES)
         self.view.setSortingEnabled(True)
         self.view.sortByColumn(0, Qt.SortOrder.AscendingOrder)
         self.view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -425,16 +485,19 @@ class RunTable(QWidget):
         self.view.setWordWrap(False)
         self.view.verticalHeader().setVisible(False)
         self.view.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        header = self.view.horizontalHeader()
-        header.setSectionsMovable(True)
-        header.setHighlightSections(False)
-        header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        header.customContextMenuRequested.connect(self._header_menu)
+        self.header.setSectionsMovable(True)
+        self.header.setSectionsClickable(True)
+        self.header.setHighlightSections(False)
+        # Wide enough for a comparison in the column's filter field
+        self.header.setMinimumSectionSize(64)
+        self.header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.header.customContextMenuRequested.connect(self._header_menu)
+        self.view.horizontalScrollBar().valueChanged.connect(self.header._place_editors)
         layout.addWidget(self.view, stretch=1)
 
         self.filter_edit.textChanged.connect(self._apply_filter)
-        self.filter_column.currentIndexChanged.connect(self._apply_filter)
+        self.header.edited.connect(self._apply_filter)
         self.invert_button.toggled.connect(self._apply_filter)
         self.view.selectionModel().selectionChanged.connect(
             lambda *_: self.selection_changed.emit())
@@ -485,14 +548,28 @@ class RunTable(QWidget):
 
     # -- Filter ---------------------------------------------------------------
 
+    def column_filter(self, name: str) -> QLineEdit:
+        """The filter field of a column."""
+        return self.header.editors[COLUMN_NAMES.index(name)]
+
+    def clear_filters(self) -> None:
+        """Empty the global filter and every column filter."""
+        for edit in (self.filter_edit, *self.header.editors):
+            edit.blockSignals(True)
+            edit.clear()
+            edit.blockSignals(False)
+        self._apply_filter()
+
     def _apply_filter(self, *_):
-        self.proxy.set_filter(self.filter_edit.text(), self.filter_column.currentData(),
-                              self.invert_button.isChecked())
+        self.proxy.set_filter(
+            self.filter_edit.text(),
+            {c: edit.text() for c, edit in enumerate(self.header.editors)},
+            self.invert_button.isChecked())
         self.filter_changed.emit()
 
     def _header_menu(self, pos) -> None:
-        """Plot along the column under the cursor."""
-        section = self.view.horizontalHeader().logicalIndexAt(pos)
+        """Plot along the column under the cursor, or filter it."""
+        section = self.header.logicalIndexAt(pos)
         if section < 0:
             return
         c = COLUMNS[section]
@@ -503,6 +580,6 @@ class RunTable(QWidget):
             menu.addAction("Plot as y axis",
                            lambda: self.plot_column_requested.emit("y", c.name))
         menu.addSeparator()
-        menu.addAction("Filter this column", lambda: self.filter_column.setCurrentIndex(
-            self.filter_column.findData(section)))
-        menu.exec(self.view.horizontalHeader().mapToGlobal(pos))
+        menu.addAction("Filter this column", self.header.editors[section].setFocus)
+        menu.addAction("Clear all filters", self.clear_filters)
+        menu.exec(self.header.mapToGlobal(pos))
