@@ -503,6 +503,8 @@ QTreeView::branch:has-children:open {{ image: url({_glyph("chevron_down", pad=6)
 QHeaderView {{ background: {P.PANEL}; border: none; border-bottom: 1px solid {P.RULE}; }}
 QHeaderView::section {{ background: {P.PANEL}; color: {P.TEXT_3}; border: none;
     padding: 4px 6px; }}
+/* Row names of the pivoted explorer table, ruled off on the right */
+QHeaderView:vertical {{ border-bottom: none; border-right: 1px solid {P.RULE}; }}
 /* Room on the right for the drop-down glyph of a filterable column */
 QHeaderView#FilterHeader::section {{ padding: 4px {2 * S.GLYPH + S.TIGHT + 2 * S.GAP}px 4px 6px; }}
 
