@@ -710,8 +710,11 @@ class FramedPlot(pg.PlotWidget):
 
     pyqtgraph sizes the scene to the whole widget, so the 1 px border of the
     frame would cut the plot item's right and bottom edges off; this sizes it
-    to the viewport inside the border.
+    to the viewport inside the border, inset so that the 3 px outline the
+    Export dialog draws centred on the item's edge shows whole on every side.
     """
+
+    OUTLINE_INSET = 2   # half of the Export dialog's 3 px outline, rounded up
 
     def resizeEvent(self, ev):
         if self.closed:
@@ -720,6 +723,9 @@ class FramedPlot(pg.PlotWidget):
             view = self.viewport().size()
             self.range = QRectF(0, 0, view.width(), view.height())
         pg.GraphicsView.setRange(self, self.range, padding=0, disableAutoPixel=False)
+        if self.autoPixelRange and self.centralWidget is not None:
+            i = self.OUTLINE_INSET
+            self.centralWidget.setGeometry(self.range.adjusted(i, i, -i, -i))
         self.updateMatrix()
 
 
