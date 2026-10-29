@@ -103,7 +103,7 @@ def test_filter_invert_and_sort(window):
 
     table.clear_filters()
     assert _column(window, "Control points") == ["10", "14", "12", "8"]
-    table.view.sortByColumn(_index("Error"), Qt.SortOrder.AscendingOrder)
+    table.sort_by(_index("Error"), Qt.SortOrder.AscendingOrder)
     assert _column(window, "Control points") == ["14", "12", "10", "8"]
 
 
@@ -281,3 +281,55 @@ def test_drop_down_of_the_last_column_stays_in_the_window(window, monkeypatch):
     monkeypatch.setattr(table, "screen", lambda: type(
         "Small", (), {"availableGeometry": lambda self: QRect(0, 0, 400, 300)})())
     assert table.drop_position(0, 300).x() + 300 <= 400
+
+
+def test_pivot_keeps_selection_filters_and_sorting(window):
+    for ctrl, error in ((10, 3e-4), (14, 1e-5), (12, 5e-5)):
+        _add(window, ctrl, error)
+    _add(window, 8, 2e-3, optimizer=OptimizerType.DE)
+    runs = window._project_manager.project.optimization_runs
+    table = window._run_table
+    table.set_column_filter("Optimizer", excluded={"Differential evolution"})
+    table.sort_by(_index("Error"), Qt.SortOrder.AscendingOrder)
+    table.header.moveSection(table.header.visualIndex(_index("Error")), 1)
+    table.select_runs([runs[0], runs[2]])
+
+    table.pivot_button.setChecked(True)
+    view = table.view
+    # One column per run that passes the filter, in sort order; one row per setting
+    assert view.model().columnCount() == 3
+    assert [view.model().index(_index("Run"), c).data() for c in range(3)] == ["2", "3", "1"]
+    assert not view.horizontalHeader().isVisible()
+    assert view.model().index(0, 0).data(Qt.ItemDataRole.TextAlignmentRole) == (
+        Qt.AlignmentFlag.AlignCenter)
+    row = view.model().index(_index("Control points"), 0).row()
+    assert [view.model().index(row, c).data() for c in range(3)] == ["14", "12", "10"]
+    # The settings' header is now the row names, with the same state
+    header = table.header
+    assert header.orientation() == Qt.Orientation.Vertical and view.verticalHeader() is header
+    assert header.filtered == {_index("Optimizer")}
+    assert header.sortIndicatorSection() == _index("Error")
+    assert header.visualIndex(_index("Error")) == 1
+    assert table.selected_runs() == [runs[2], runs[0]]
+
+    # Sorting, filtering and double-clicking work along the rows
+    table.sort_by(_index("Control points"), Qt.SortOrder.DescendingOrder)
+    assert [view.model().index(row, c).data() for c in range(3)] == ["14", "12", "10"]
+    table.set_column_filter("Control points", "<13")
+    assert [view.model().index(row, c).data() for c in range(2)] == ["12", "10"]
+    view.doubleClicked.emit(view.model().index(0, 1))
+    assert window._fit_result is runs[0].result
+    popup = table.open_filter(_index("Degree"))
+    assert popup.values.count() == 1
+    popup.close()
+    # The plot still follows the filter
+    assert list(window._plot_manager._comparison_curve.getData()[0]) == [10, 12]
+
+    # And back
+    table.select_runs([runs[2]])
+    table.pivot_button.setChecked(False)
+    assert view.horizontalHeader() is table.header
+    assert table.header.sortIndicatorSection() == _index("Control points")
+    assert table.header.filtered == {_index("Optimizer"), _index("Control points")}
+    assert _column(window, "Control points") == ["12", "10"]
+    assert table.selected_runs() == [runs[2]]

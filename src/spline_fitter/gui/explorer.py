@@ -28,6 +28,11 @@ open project, one row per run:
   Selected runs are marked on it.
 - **Apply.** Double-clicking a row applies that run's settings to the
   sidebar, so it can be refitted or varied.
+- **Pivot.** *Pivot* swaps rows and columns: one column per run, one row
+  per setting or metric, to compare a few runs side by side. The selected
+  runs stay selected, and the filters, sorting and order of the columns
+  travel with their names to the rows (whose names now hold the drop-downs
+  and sort the runs when clicked).
 
 This module holds the table itself (columns, model, filter, view);
 :class:`~spline_fitter.gui.project.ProjectManager` fills it and connects
@@ -47,6 +52,7 @@ from PyQt6.QtCore import (
     QRect,
     QSortFilterProxyModel,
     Qt,
+    QTransposeProxyModel,
     pyqtSignal,
 )
 from PyQt6.QtGui import QAction, QBrush
@@ -245,6 +251,8 @@ class RunTableModel(QAbstractTableModel):
         super().__init__(parent)
         self._rows: list[_Row] = []
         self._cells: list[list] = []
+        # Pivoted, a column per run: every cell centered under the others
+        self.centered = False
 
     def set_runs(self, runs: list[OptimizationRun]) -> None:
         self.beginResetModel()
@@ -276,6 +284,8 @@ class RunTableModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.FontRole and is_number(value):
             return mono_font()
         if role == Qt.ItemDataRole.TextAlignmentRole:
+            if self.centered:
+                return Qt.AlignmentFlag.AlignCenter
             horizontal = (Qt.AlignmentFlag.AlignRight if is_number(value)
                           else Qt.AlignmentFlag.AlignLeft)
             return horizontal | Qt.AlignmentFlag.AlignVCenter
@@ -403,16 +413,16 @@ _BLANK = "Not used"
 
 
 class FilterHeader(QHeaderView):
-    """A column header with a drop-down glyph at the right of every section,
-    as in a spreadsheet. Clicking the glyph emits ``filter_requested`` with
-    the column instead of sorting; a filtered column shows a funnel. The
-    sorted column has an arrow left of it (in place of the style's sort
-    indicator, which would cover the glyph)."""
+    """A column header (or, pivoted, the row names) with a drop-down glyph at
+    the right of every section, as in a spreadsheet. Clicking the glyph emits
+    ``filter_requested`` with the column instead of sorting; a filtered column
+    shows a funnel. The sorted column has an arrow left of it (in place of the
+    style's sort indicator, which would cover the glyph)."""
 
     filter_requested = pyqtSignal(int)
 
-    def __init__(self, parent=None):
-        super().__init__(Qt.Orientation.Horizontal, parent)
+    def __init__(self, orientation=Qt.Orientation.Horizontal, parent=None):
+        super().__init__(orientation, parent)
         self.setObjectName("FilterHeader")
         self.filtered: set[int] = set()
 
@@ -437,12 +447,14 @@ class FilterHeader(QHeaderView):
         pos = event.position().toPoint()
         logical = self.logicalIndexAt(pos)
         if logical >= 0 and event.button() == Qt.MouseButton.LeftButton:
-            section = QRect(self.sectionViewportPosition(logical), 0,
-                            self.sectionSize(logical), self.height())
+            start, size = self.sectionViewportPosition(logical), self.sectionSize(logical)
+            section = (QRect(start, 0, size, self.height())
+                       if self.orientation() == Qt.Orientation.Horizontal
+                       else QRect(0, start, self.width(), size))
             # The whole height beside the glyph, clear of the resize grip
             target = self._glyph_rect(section)
-            target.setTop(0)
-            target.setBottom(self.height())
+            target.setTop(section.top())
+            target.setBottom(section.bottom())
             if target.adjusted(-Size.TIGHT, 0, Size.TIGHT // 2, 0).contains(pos):
                 self.filter_requested.emit(logical)
                 return
@@ -620,7 +632,7 @@ class ColumnFilterPopup(QFrame):
         self._table.set_column_filter(COLUMNS[self._col].name, excluded=self._shown_excluded())
 
     def _sort(self, order) -> None:
-        self._table.view.sortByColumn(self._col, order)
+        self._table.sort_by(self._col, order)
         self.close()
 
     def _clear(self) -> None:
@@ -675,31 +687,66 @@ class RunTable(QWidget):
         self.invert_button.setText("Invert")
         self.invert_button.setCheckable(True)
         self.invert_button.setToolTip("Show the runs the filters do not match")
+        self.pivot_button = QToolButton()
+        self.pivot_button.setText("Pivot")
+        self.pivot_button.setCheckable(True)
+        self.pivot_button.setToolTip(
+            "Swap rows and columns: one column per run, one row per setting")
         row = QHBoxLayout()
         row.setSpacing(Size.GAP)
         row.addWidget(self.filter_edit, stretch=1)
         row.addWidget(self.invert_button)
+        row.addWidget(self.pivot_button)
         layout.addLayout(row)
 
-        # The table
+        # The table: runs in rows, or in columns when pivoted
         self.model = RunTableModel(self)
         self.proxy = RunFilterModel(self)
         self.proxy.setSourceModel(self.model)
+        self.transpose = QTransposeProxyModel(self)
+        self.transpose.setSourceModel(self.proxy)
+        self.pivoted = False
+        self.sort_column, self.sort_order = 0, Qt.SortOrder.AscendingOrder
         self.view = QTableView()
-        self.header = FilterHeader(self.view)
-        self.view.setHorizontalHeader(self.header)
-        self.view.setModel(self.proxy)
-        self.view.setSortingEnabled(True)
-        self.view.sortByColumn(0, Qt.SortOrder.AscendingOrder)
-        self.header.setSortIndicatorShown(False)  # FilterHeader draws its own
-        self.view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.view.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.view.setShowGrid(False)
         self.view.setWordWrap(False)
-        self.view.verticalHeader().setVisible(False)
-        self.view.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self._arrange()
+        self.sort_by(0, Qt.SortOrder.AscendingOrder)
+        layout.addWidget(self.view, stretch=1)
+
+        self.filter_edit.textChanged.connect(self._apply_filter)
+        self.invert_button.toggled.connect(self._apply_filter)
+        self.pivot_button.toggled.connect(self.set_pivoted)
+        self.view.doubleClicked.connect(
+            lambda index: self.run_activated.emit(self.model.run(self._model_row(index))))
+
+    def _arrange(self) -> None:
+        """Lay the table out as it is pivoted or not: its model, the header
+        of the settings (with the drop-downs) and that of the runs."""
+        horizontal, vertical = Qt.Orientation.Horizontal, Qt.Orientation.Vertical
+        self.model.centered = self.pivoted
+        self.view.setModel(self.transpose if self.pivoted else self.proxy)
+        self.header = FilterHeader(vertical if self.pivoted else horizontal)
+        runs = QHeaderView(horizontal if self.pivoted else vertical)
+        if self.pivoted:
+            self.view.setVerticalHeader(self.header)
+            self.view.setHorizontalHeader(runs)
+        else:
+            self.view.setHorizontalHeader(self.header)
+            self.view.setVerticalHeader(runs)
+        # Reparented into a shown view, a new header stays hidden until shown;
+        # the runs need no header (the Run row numbers them when pivoted)
+        self.header.setVisible(True)
+        runs.setVisible(False)
+        runs.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        runs.setHighlightSections(False)
+        runs.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        if self.pivoted:
+            self.header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.header.setSortIndicatorShown(False)  # FilterHeader draws its own
         self.header.setSectionsMovable(True)
         self.header.setSectionsClickable(True)
         self.header.setHighlightSections(False)
@@ -707,15 +754,54 @@ class RunTable(QWidget):
         self.header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.header.customContextMenuRequested.connect(self._header_menu)
         self.header.filter_requested.connect(self.open_filter)
-        layout.addWidget(self.view, stretch=1)
-
-        self.filter_edit.textChanged.connect(self._apply_filter)
-        self.invert_button.toggled.connect(self._apply_filter)
+        self.header.filtered = set(self.column_filters)
+        self.header.blockSignals(True)
+        self.header.setSortIndicator(self.sort_column, self.sort_order)
+        self.header.blockSignals(False)
+        # A click on a section flips its sort indicator: sort by it
+        self.header.sortIndicatorChanged.connect(self.sort_by)
+        self.view.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectColumns if self.pivoted
+            else QAbstractItemView.SelectionBehavior.SelectRows)
         self.view.selectionModel().selectionChanged.connect(
             lambda *_: self.selection_changed.emit())
-        self.view.doubleClicked.connect(
-            lambda index: self.run_activated.emit(
-                self.model.run(self.proxy.mapToSource(index).row())))
+
+    def set_pivoted(self, pivoted: bool) -> None:
+        """Show the runs as columns (or rows again). The selected runs stay
+        selected; the filters, sorting and order of the columns travel with
+        their names."""
+        if pivoted == self.pivoted:
+            return
+        selected = self.selected_runs()
+        order = [self.header.logicalIndex(v) for v in range(self.header.count())]
+        self.pivoted = pivoted
+        self.pivot_button.blockSignals(True)
+        self.pivot_button.setChecked(pivoted)
+        self.pivot_button.blockSignals(False)
+        self._arrange()
+        for visual, logical in enumerate(order):
+            self.header.moveSection(self.header.visualIndex(logical), visual)
+        self.view.selectionModel().blockSignals(True)
+        self.select_runs(selected)
+        self.view.selectionModel().blockSignals(False)
+        self.view.resizeColumnsToContents()
+        if selected:
+            self.view.scrollTo(self.view.selectionModel().selectedIndexes()[0])
+
+    def sort_by(self, col: int, order: Qt.SortOrder) -> None:
+        """Sort the runs by a column (a row when pivoted)."""
+        self.sort_column, self.sort_order = col, order
+        self.header.blockSignals(True)
+        self.header.setSortIndicator(col, order)
+        self.header.blockSignals(False)
+        self.proxy.sort(col, order)
+        self.header.viewport().update()
+
+    def _model_row(self, index: QModelIndex) -> int:
+        """The model row of the run a table index shows."""
+        if self.pivoted:
+            index = self.transpose.mapToSource(index)
+        return self.proxy.mapToSource(index).row()
 
     # -- Contents -------------------------------------------------------------
 
@@ -731,12 +817,14 @@ class RunTable(QWidget):
     def select_runs(self, runs: list[OptimizationRun]) -> None:
         sel = self.view.selectionModel()
         sel.clearSelection()
-        flags = sel.SelectionFlag.Select | sel.SelectionFlag.Rows
+        flags = sel.SelectionFlag.Select | (sel.SelectionFlag.Columns if self.pivoted
+                                            else sel.SelectionFlag.Rows)
         for row in range(self.model.rowCount()):
             if any(self.model.run(row) is r for r in runs):
                 index = self.proxy.mapFromSource(self.model.index(row, 0))
                 if index.isValid():
-                    sel.select(index, flags)
+                    sel.select(self.transpose.mapFromSource(index) if self.pivoted
+                               else index, flags)
 
     def visible_rows(self) -> list[int]:
         """Model rows that pass the filter, in table order."""
@@ -747,9 +835,10 @@ class RunTable(QWidget):
         return [self.model.run(r) for r in self.visible_rows()]
 
     def selected_runs(self) -> list[OptimizationRun]:
-        rows = sorted(index.row() for index in self.view.selectionModel().selectedRows())
-        return [self.model.run(self.proxy.mapToSource(self.proxy.index(r, 0)).row())
-                for r in rows]
+        sel = self.view.selectionModel()
+        indexes = sel.selectedColumns() if self.pivoted else sel.selectedRows()
+        return [self.model.run(self._model_row(index)) for index in
+                sorted(indexes, key=lambda i: i.column() if self.pivoted else i.row())]
 
     def values(self, name: str, rows: list[int] | None = None) -> list:
         """Raw values of a column, for the given model rows (default: the
@@ -807,23 +896,27 @@ class RunTable(QWidget):
     def open_filter(self, col: int) -> ColumnFilterPopup:
         """Drop the filter of a column down under its header section."""
         popup = ColumnFilterPopup(self, col)
-        popup.move(self.drop_position(col, popup.width()))
+        popup.move(self.drop_position(col, popup.width(), popup.sizeHint().height()))
         popup.show()
         popup.condition.setFocus()
         return popup
 
-    def drop_position(self, col: int, width: int) -> QPoint:
-        """Where a drop-down of that width opens under a header section: at
+    def drop_position(self, col: int, width: int, height: int = 0) -> QPoint:
+        """Where a drop-down of that size opens under a header section: at
         its left edge, or at its right edge (as far as it shows) where it
         would pass the right edge of the window (the last columns), and
-        always on the screen."""
-        left = self.header.sectionViewportPosition(col)
-        pos = self.header.mapToGlobal(QPoint(left, self.header.height()))
-        if pos.x() + width > self.window().frameGeometry().right() + 1:
-            right = min(left + self.header.sectionSize(col), self.header.width())
-            pos.setX(self.header.mapToGlobal(QPoint(right, 0)).x() - width)
+        always on the screen. Pivoted, it opens right of the row name."""
+        start = self.header.sectionViewportPosition(col)
+        if self.pivoted:
+            pos = self.header.mapToGlobal(QPoint(self.header.width(), start))
+        else:
+            pos = self.header.mapToGlobal(QPoint(start, self.header.height()))
+            if pos.x() + width > self.window().frameGeometry().right() + 1:
+                right = min(start + self.header.sectionSize(col), self.header.width())
+                pos.setX(self.header.mapToGlobal(QPoint(right, 0)).x() - width)
         screen = (self.screen() or QApplication.primaryScreen()).availableGeometry()
         pos.setX(max(screen.left(), min(pos.x(), screen.right() + 1 - width)))
+        pos.setY(max(screen.top(), min(pos.y(), screen.bottom() + 1 - height)))
         return pos
 
     def _apply_filter(self, *_):

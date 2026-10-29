@@ -232,7 +232,7 @@ never call `setStyleSheet` on it.
 | Rich text dialog | `show_document(parent, title, html, w, h)` around `theme.text_browser()`; mark status with `class='ok'`, `'warn'`, `'error'`, numbers with `class='num'` |
 | Slider | `QSlider`; the temperature slider is `TemperatureSlider` (cool-to-warm groove) |
 | Theme setting | `ThemeDialog` (`widgets.py`), from View > Theme... |
-| Table of records | `QTableView` without grid lines, rows selected whole; numbers monospaced and right-aligned, blanks for what does not apply (the explorer's `RunTable`, `explorer.py`) |
+| Table of records | `QTableView` without grid lines, rows selected whole; numbers monospaced and right-aligned, blanks for what does not apply; a *Pivot* toggle swaps rows and columns, the drop-downs moving to the row names (the explorer's `RunTable`, `explorer.py`) |
 | Column filter | As in a spreadsheet: a `chevron_down` in `TEXT_3` at the right of each header section opens a `#DropDownPanel` (sort, checklist of values, and a condition that previews which values it unchecks, greying them in `TEXT_3`, until Enter keeps it); a filtered column shows the `filter` funnel in `TEXT`; the sorted column has `sort_up`/`sort_down` in `TEXT_2` left of it (`FilterHeader`, `ColumnFilterPopup`) |
 
 **Layout of the main window**: sidebar (workflow order: data, method,
