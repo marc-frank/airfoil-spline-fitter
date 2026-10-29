@@ -388,6 +388,8 @@ class FittingController:
                 optimize_le_position=sweep_opt_config.optimize_le_position,
             )
 
+            # The live preview replaces the previous fit, as in a single fit
+            w._plot_manager.clear_plot_items()
             reset_iteration_tracking()
             self._reset_loss_plot()
             fit_start_time = time.perf_counter()
