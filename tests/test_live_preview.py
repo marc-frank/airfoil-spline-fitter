@@ -134,6 +134,25 @@ def test_sweep_shows_every_fit_and_its_comparison_point(window, counted, monkeyp
     assert sizes == [0, 1, 2, 3, 3]
 
 
+def test_sweep_fit_in_progress_replaces_the_previous_fit(window, counted, monkeypatch):
+    """While a sweep fit is drawn live, the previous fit's curve is gone."""
+    from spline_fitter.gui import live
+    draw = live.LiveProgress._draw
+    stale = []
+
+    def record(self):
+        draw(self)
+        stale.append([k for k in window._plot_manager._curve_items if k.startswith("final_")])
+
+    monkeypatch.setattr(live.LiveProgress, "_draw", record)
+    window._combo_live.setCurrentIndex(2)
+    window._sweep_ctrl._btn_sweep.click()
+    window._sweep_ctrl._spin_max.setValue(11)
+    window._fitting_controller.on_fit()
+    assert len(window._fitting_controller._sweep_results) == 2
+    assert stale and not any(stale)
+
+
 
 def test_second_sweep_shows_the_whole_project_range(window, monkeypatch):
     """The comparison plot of a sweep keeps the runs of earlier sweeps of the
