@@ -729,7 +729,7 @@ def style_plot(plot: pg.PlotWidget) -> None:
     # An even margin above the plot area and right of it; the axis labels
     # on the left and bottom keep a small one
     m = Size.PLOT_MARGIN
-    item.layout.setContentsMargins(Size.GAP, m, m, Size.TIGHT)
+    item.layout.setContentsMargins(Size.TIGHT, m, m, Size.TIGHT)
     if not isinstance(item.getAxis("left"), _DecadeAxis):
         item.setAxisItems({side: _DecadeAxis(side) for side in ("left", "bottom")})
     axis_pen = pg.mkPen(color=Ink.GRID, width=1)
