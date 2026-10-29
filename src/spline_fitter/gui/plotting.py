@@ -279,7 +279,6 @@ class PlotManager:
         numeric ticks."""
         label_plot(self._comparison_plot, "bottom", x_label)
         label_plot(self._comparison_plot, "left", y_label)
-        self._comparison_plot.setTitle("")
         item = self._comparison_plot.getPlotItem()
         item.setLogMode(x=log_x, y=log_y)
         item.getAxis("bottom").setTicks([x_ticks] if x_ticks else None)

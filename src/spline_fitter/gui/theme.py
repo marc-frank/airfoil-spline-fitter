@@ -34,7 +34,7 @@ import os
 import tempfile
 
 import pyqtgraph as pg
-from PyQt6.QtCore import QLocale, QObject, QPointF, QRect, QSettings, QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QLocale, QObject, QPointF, QRect, QRectF, QSettings, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QColor,
     QFont,
@@ -236,6 +236,7 @@ class Size:
     KNOT_SIZE = 8
     TRACE_POINT = 4
     MARKER_SIZE = 13
+    PLOT_MARGIN = 24          # inside a plot's frame: above the plot area and right of it
 
 
 class Type:
@@ -704,9 +705,37 @@ class _DecadeAxis(pg.AxisItem):
                 for v, s in zip(values, strings, strict=True)]
 
 
+class FramedPlot(pg.PlotWidget):
+    """A plot widget whose plot item fits inside the stylesheet's frame.
+
+    pyqtgraph sizes the scene to the whole widget, so the 1 px border of the
+    frame would cut the plot item's right and bottom edges off; this sizes it
+    to the viewport inside the border, inset so that the 3 px outline the
+    Export dialog draws centred on the item's edge shows whole on every side.
+    """
+
+    OUTLINE_INSET = 2   # half of the Export dialog's 3 px outline, rounded up
+
+    def resizeEvent(self, ev):
+        if self.closed:
+            return
+        if self.autoPixelRange:
+            view = self.viewport().size()
+            self.range = QRectF(0, 0, view.width(), view.height())
+        pg.GraphicsView.setRange(self, self.range, padding=0, disableAutoPixel=False)
+        if self.autoPixelRange and self.centralWidget is not None:
+            i = self.OUTLINE_INSET
+            self.centralWidget.setGeometry(self.range.adjusted(i, i, -i, -i))
+        self.updateMatrix()
+
+
 def style_plot(plot: pg.PlotWidget) -> None:
-    """Drafting-film styling for a plot: grid, axes and labels."""
+    """Drafting-film styling for a plot: grid, axes, labels and margins."""
     item = plot.getPlotItem()
+    # An even margin above the plot area and right of it; the axis labels
+    # on the left and bottom keep a small one
+    m = Size.PLOT_MARGIN
+    item.layout.setContentsMargins(Size.TIGHT, m, m, Size.TIGHT)
     if not isinstance(item.getAxis("left"), _DecadeAxis):
         item.setAxisItems({side: _DecadeAxis(side) for side in ("left", "bottom")})
     axis_pen = pg.mkPen(color=Ink.GRID, width=1)

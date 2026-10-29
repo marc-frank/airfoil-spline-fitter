@@ -192,6 +192,7 @@ Use the named gaps, not numbers:
 | `GROUP` | 8 | Groups: caption and content, button rows, plot panels |
 | `PAD` | 12 | Padding inside panels and sidebar sections |
 | `PAD_LARGE` | 16 | Dialogs and documents |
+| `PLOT_MARGIN` | 24 | Inside a plot's frame: above the plot area and right of it (`style_plot`) |
 
 - **Every input and button is `Size.CONTROL_HEIGHT` (26 px) tall**: line
   edits, spin boxes, combo boxes, push and tool buttons, segments, the sweep
@@ -247,7 +248,7 @@ never call `setStyleSheet` on it.
 | Choice of 2-4 short options | `SegmentedControl` (not a combo box) in the sidebar and dialogs; the plot toolbars keep compact combo boxes |
 | Choice of many | `QComboBox` |
 | Numeric range sweep | `SweepableSpinBox` / `SweepableDoubleSpinBox` |
-| Plot | `pg.PlotWidget(viewBox=SmoothViewBox())` + `style_plot(plot)` + `label_plot(plot, side, text)` |
+| Plot | `FramedPlot(viewBox=SmoothViewBox())` + `style_plot(plot)` + `label_plot(plot, side, text)` |
 | Plot pens and brushes | `theme.pen(Ink.X, width, dashed, alpha)`, `theme.brush(Ink.X, alpha)` |
 | Numbers spanning decades | `ScientificSpinBox` (`widgets.py`) |
 | Settings dialog | `dialog_form(dialog)` (dialog padding) + `add_form_row(form, "Label", field)`, buttons in a `QDialogButtonBox` |
