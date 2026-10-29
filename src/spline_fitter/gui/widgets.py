@@ -454,8 +454,9 @@ class SweepableSpinBox(QWidget):
     """A spinbox with an inline sweep-range toggle button.
 
     When the range button (a dimension line) is toggled, a [max] field appears, turning
-    the single value into a range for parameter sweeps.  Only one
-    SweepableSpinBox in a *group* can be active at a time.
+    the single value into a range for parameter sweeps.  Several sweepable
+    widgets of a *group* can be active at once: the sweep fits every
+    combination of their values.
     """
 
     def __init__(self, spin_box: QSpinBox, group: list | None = None, parent=None):
@@ -477,7 +478,8 @@ class SweepableSpinBox(QWidget):
         self._btn_sweep.setIcon(icon("range", checked_role="TEXT"))
         self._btn_sweep.setIconSize(QSize(Size.GLYPH_LARGE, Size.GLYPH_LARGE))
         self._btn_sweep.setFixedSize(Size.CONTROL_HEIGHT, Size.CONTROL_HEIGHT)
-        self._btn_sweep.setToolTip("Sweep a range of values: one fit per value")
+        self._btn_sweep.setToolTip("Sweep a range of values: one fit per value, or per combination "
+                                   "with the other swept settings")
         self._btn_sweep.setCheckable(True)
         self._btn_sweep.clicked.connect(self._on_toggle_sweep)
         lay.addWidget(self._btn_sweep)
@@ -491,10 +493,6 @@ class SweepableSpinBox(QWidget):
 
     # ------------------------------------------------------------------
     def _on_toggle_sweep(self, checked: bool):
-        if checked and self._group:
-            for other in self._group:
-                if other is not self and other.is_sweep_active:
-                    other.stop_sweep()
         self._sweep_active = checked
         self._spin_max.setVisible(checked)
         if checked:
@@ -534,9 +532,9 @@ class SweepableDoubleSpinBox(QWidget):
     """A double-spinbox with an inline sweep-range toggle and step size.
 
     When the range button (a dimension line) is toggled, [max] and Step fields appear,
-    turning the single value into a range for parameter sweeps.  Only one
-    sweepable widget in a *group* can be active at a time (works with
-    both SweepableSpinBox and SweepableDoubleSpinBox in the same group).
+    turning the single value into a range for parameter sweeps.  Several
+    sweepable widgets of a *group* can be active at once (SweepableSpinBox
+    and SweepableDoubleSpinBox alike).
     """
 
     def __init__(
@@ -563,7 +561,8 @@ class SweepableDoubleSpinBox(QWidget):
         self._btn_sweep.setIcon(icon("range", checked_role="TEXT"))
         self._btn_sweep.setIconSize(QSize(Size.GLYPH_LARGE, Size.GLYPH_LARGE))
         self._btn_sweep.setFixedSize(Size.CONTROL_HEIGHT, Size.CONTROL_HEIGHT)
-        self._btn_sweep.setToolTip("Sweep a range of values: one fit per value")
+        self._btn_sweep.setToolTip("Sweep a range of values: one fit per value, or per combination "
+                                   "with the other swept settings")
         self._btn_sweep.setCheckable(True)
         self._btn_sweep.clicked.connect(self._on_toggle_sweep)
         lay.addWidget(self._btn_sweep)
@@ -590,10 +589,6 @@ class SweepableDoubleSpinBox(QWidget):
 
     # ------------------------------------------------------------------
     def _on_toggle_sweep(self, checked: bool):
-        if checked and self._group:
-            for other in self._group:
-                if other is not self and other.is_sweep_active:
-                    other.stop_sweep()
         self._sweep_active = checked
         for widget in (self._spin_max, self._lbl_step, self._spin_step):
             widget.setVisible(checked)

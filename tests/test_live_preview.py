@@ -124,7 +124,7 @@ def test_sweep_shows_every_fit_and_its_comparison_point(window, counted, monkeyp
     plots = window._plot_manager
     set_data = plots.set_comparison_data
     monkeypatch.setattr(plots, "set_comparison_data",
-                        lambda x, y: (sizes.append(len(x)), set_data(x, y)))
+                        lambda x, y, **kw: (sizes.append(len(x)), set_data(x, y, **kw)))
     window._sweep_ctrl._btn_sweep.click()
     window._sweep_ctrl._spin_max.setValue(12)
     window._fitting_controller.on_fit()
@@ -197,12 +197,42 @@ def test_sections_sweep_splits_the_airfoil_per_count(window):
     window._sweep_sections._spin_max.setValue(3)
     window._fitting_controller.on_fit()
     results = window._fitting_controller._sweep_results
-    assert [v for v, _ in results] == [2, 3]
+    assert [v for v, _ in results] == [(2,), (3,)]
     assert [len(r.section_control_points) for _, r in results] == [2, 3]
     x, _ = window._plot_manager._comparison_curve.getData()
     assert list(x) == [2, 3]
     # The best count is applied, with the airfoil split to match it
     assert window._airfoil.num_sections == window._spin_sections.value()
+
+
+def test_sweep_toggles_add_up(window):
+    """Turning on a second sweep keeps the first one."""
+    window._sweep_degree._btn_sweep.click()
+    window._sweep_ctrl._btn_sweep.click()
+    assert window._get_active_sweeps() == [window._sweep_degree, window._sweep_ctrl]
+
+
+def test_combined_sweep_fits_every_combination(window):
+    """Two swept settings: one fit per pair of values, those with too few
+    control points for their degree left out, and the best pair applied."""
+    window._combo_live.setCurrentIndex(0)
+    window._spin_degree.setValue(3)
+    window._sweep_degree._btn_sweep.click()
+    window._sweep_degree._spin_max.setValue(4)
+    window._spin_ctrl.setValue(10)
+    window._sweep_ctrl._btn_sweep.click()
+    window._sweep_ctrl._spin_max.setValue(12)
+    window._fitting_controller.on_fit()
+    results = window._fitting_controller._sweep_results
+    assert [v for v, _ in results] == [(3, 10), (3, 11), (3, 12), (4, 10), (4, 11), (4, 12)]
+    assert [(r.degree, len(r.section_control_points[0])) for _, r in results] == [
+        (3, 10), (3, 11), (3, 12), (4, 10), (4, 11), (4, 12)]
+    # Along control points (the most values), two fits per value: dots, not a line
+    x, _ = window._plot_manager._comparison_curve.getData()
+    assert list(x) == [10, 10, 11, 11, 12, 12]
+    best, _ = min(results, key=lambda vr: vr[1].final_error)
+    assert (window._spin_degree.value(), window._spin_ctrl.value()) == best
+    assert window.statusBar().currentMessage().startswith("Sweep complete: 6 fits")
 
 
 def test_smoothing_sweep_steps_by_step_size(window):

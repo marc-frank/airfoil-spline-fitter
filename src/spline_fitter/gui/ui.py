@@ -567,12 +567,9 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._action_save_project.setEnabled(enabled)
         self._action_save_project_as.setEnabled(enabled)
 
-    def _get_active_sweep(self) -> SweepableSpinBox | None:
-        """Return the SweepableSpinBox that has sweep mode active, or None."""
-        for sweep_box in self._sweep_group:
-            if sweep_box.is_sweep_active:
-                return sweep_box
-        return None
+    def _get_active_sweeps(self) -> list[SweepableSpinBox]:
+        """The sweepable widgets in sweep mode, in sidebar order."""
+        return [box for box in self._sweep_group if box.is_sweep_active]
 
     def _set_fitting_ui(self, fitting: bool):
         """Enable/disable UI elements during fitting.
