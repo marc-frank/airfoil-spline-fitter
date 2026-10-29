@@ -80,6 +80,14 @@ def test_minimal_draws_only_the_result(window, counted):
     assert counted["steps"] > 5 and counted["drawn"] == 0
 
 
+def test_result_shows_sections_times_control_points(window):
+    window._combo_live.setCurrentIndex(0)
+    window._fitting_controller.on_fit()
+    window._set_save_enabled(True)
+    assert window._lbl_result_ctrl.text() == "2 × 10"
+    assert window._lbl_result_ctrl.toolTip() == "10, 10 per section"
+
+
 def test_live_setting_can_change_while_fitting(window, counted, monkeypatch):
     """Switching from Detailed to Minimal mid-fit stops the drawing, and the
     worker waiting for a Detailed drawing is released."""
