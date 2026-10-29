@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import math
 
-import pyqtgraph as pg
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QAbstractSpinBox,
@@ -38,7 +37,7 @@ from ..optimization.models import (
 )
 from .explorer import COLUMNS, RunTable
 from .motion import SmoothViewBox
-from .theme import Size, glyph_size, icon, label_plot, style_plot
+from .theme import FramedPlot, Size, glyph_size, icon, label_plot, style_plot
 from .widgets import (
     CollapsibleSection,
     DropDownPanel,
@@ -173,7 +172,7 @@ class WindowLayoutMixin:
 
         # Main plot (airfoil visualization) with its display toolbar
         center_layout.addLayout(self._build_plot_toolbar())
-        self._plot = pg.PlotWidget(parent=center_panel, viewBox=SmoothViewBox())
+        self._plot = FramedPlot(parent=center_panel, viewBox=SmoothViewBox())
         style_plot(self._plot)
         self._plot.getPlotItem().setAspectLocked(True, ratio=1)
         label_plot(self._plot, "bottom", "x")
@@ -193,7 +192,7 @@ class WindowLayoutMixin:
         loss_layout.setSpacing(Size.GAP)
         loss_layout.addLayout(self._build_loss_toolbar())
 
-        self._loss_plot = pg.PlotWidget(parent=loss_container, viewBox=SmoothViewBox())
+        self._loss_plot = FramedPlot(parent=loss_container, viewBox=SmoothViewBox())
         style_plot(self._loss_plot)
         label_plot(self._loss_plot, "bottom", "Evaluations")
         label_plot(self._loss_plot, "left", "Error")
@@ -208,7 +207,7 @@ class WindowLayoutMixin:
         comparison_layout.setContentsMargins(0, 0, 0, 0)
         comparison_layout.setSpacing(Size.GAP)
         comparison_layout.addLayout(self._build_comparison_toolbar())
-        self._comparison_plot = pg.PlotWidget(parent=comparison_container, viewBox=SmoothViewBox())
+        self._comparison_plot = FramedPlot(parent=comparison_container, viewBox=SmoothViewBox())
         style_plot(self._comparison_plot)
         label_plot(self._comparison_plot, "bottom", "Control points")
         label_plot(self._comparison_plot, "left", "Error")
