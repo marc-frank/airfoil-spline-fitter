@@ -481,12 +481,13 @@ class ProjectManager:
     # ------------------------------------------------------------------
 
     def sweep_series(self, spline_config: SplineConfig, opt_config: OptimizationConfig,
-                     axis: str) -> tuple[list, list]:
+                     swept: tuple[str, ...], axis: str) -> tuple[list, list]:
         """Errors of all project runs along a sweep axis, as (x, y) sorted by x.
 
         A run belongs to the series when it matches the given configuration
-        in everything but the swept parameter, so earlier sweeps over other
-        ranges show next to the running one. Of runs at the same value, the
+        in everything but the swept parameters, so earlier sweeps over other
+        ranges show next to the running one. With several swept parameters
+        several runs share an x value. Of runs at the same values, the
         latest counts.
         """
         if self._project is None:
@@ -497,12 +498,12 @@ class ProjectManager:
             "Sections": lambda c, o: c.num_sections,
             "Smoothing weight": lambda c, o: o.smoothing_weight,
         }
-        by_value: dict = {}
+        by_values: dict = {}
         for run in self._project.optimization_runs:
             c, o = run.spline_config, run.optimization_config
             # Along the sections axis the junction count changes: compare
             # the continuity setting instead of the junctions themselves
-            if axis == "Sections":
+            if "Sections" in swept:
                 same_junctions = (c.continuity == spline_config.continuity
                                   and c.geometric_continuity == spline_config.geometric_continuity)
             else:
@@ -513,11 +514,12 @@ class ProjectManager:
                     or o.knot_placement != opt_config.knot_placement
                     or o.parameterization != opt_config.parameterization
                     or any(get(c, o) != get(spline_config, opt_config)
-                           for name, get in fixed.items() if name != axis)):
+                           for name, get in fixed.items() if name not in swept)):
                 continue
-            by_value[self._get_run_axis_value(run, axis)] = run.result.final_error
-        x = sorted(by_value)
-        return x, [by_value[v] for v in x]
+            values = tuple(self._get_run_axis_value(run, name) for name in swept)
+            by_values[values] = (self._get_run_axis_value(run, axis), run.result.final_error)
+        points = sorted(by_values.values())
+        return [p[0] for p in points], [p[1] for p in points]
 
     @staticmethod
     def _run_control_points(run: OptimizationRun) -> int:

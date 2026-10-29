@@ -10,6 +10,7 @@ All window widget access is routed through ``self._window``.
 
 from __future__ import annotations
 
+import itertools
 import time
 from dataclasses import replace as dc_replace
 from typing import TYPE_CHECKING
@@ -46,7 +47,8 @@ class FittingController:
 
     def __init__(self, window: SplineFitterWindow):
         self._window = window
-        self._sweep_results: list[tuple[int | float, FitResult]] = []
+        # (the swept values, one per swept parameter; the fit)
+        self._sweep_results: list[tuple[tuple, FitResult]] = []
         self._sweep_mode = False
 
     # ------------------------------------------------------------------
@@ -69,10 +71,10 @@ class FittingController:
             w.statusBar().showMessage(str(e))
             return
 
-        # Check for active parameter sweep
-        active_sweep = w._get_active_sweep()
-        if active_sweep is not None:
-            self._run_sweep_fit(config, opt_config, fairness_weights, active_sweep)
+        # Check for active parameter sweeps
+        active_sweeps = w._get_active_sweeps()
+        if active_sweeps:
+            self._run_sweep_fit(config, opt_config, fairness_weights, active_sweeps)
             return
 
         # Clear sweep state when doing single fit
@@ -275,113 +277,115 @@ class FittingController:
     # Parameter sweep
     # ------------------------------------------------------------------
 
+    def _sweep_axis_of(self, box) -> tuple[str, list, object] | None:
+        """A swept parameter: its name, its values and how one value changes
+        (spline config, optimization config)."""
+        w = self._window
+        if box is w._sweep_smoothing_weight:
+            return ("Smoothing weight", box.sweep_values(),
+                    lambda c, o, v: (c, dc_replace(o, smoothing_weight=v)))
+        low, high = sorted(box.sweep_range)
+        values = list(range(int(low), int(high) + 1))
+        if box is w._sweep_ctrl:
+            return ("Control points", values,
+                    lambda c, o, v: (dc_replace(c, num_control_points=v), o))
+        if box is w._sweep_degree:
+            return "Degree", values, lambda c, o, v: (dc_replace(c, degree=v), o)
+        if box is w._sweep_sections:
+            def with_sections(c, o, v):
+                # Per-junction overrides fit one section count only
+                junctions = c.junction_continuity
+                if junctions and len(junctions) != v - 1:
+                    junctions = ()
+                return dc_replace(c, num_sections=v, junction_continuity=junctions), o
+            return "Sections", values, with_sections
+        return None
+
     def _run_sweep_fit(
         self,
         config: SplineConfig,
         opt_config: OptimizationConfig,
         fairness_weights: FairnessWeights,
-        sweep_box=None,
+        sweep_boxes: list,
     ):
-        """Run sweep of fits with varying parameter values.
+        """Run one fit per combination of the swept parameters' values.
 
         Each fit is shown live like a single fit, and the comparison plot
         gains a point (and the best marker moves) after every fit.
         """
         w = self._window
-
-        if sweep_box is None:
-            return
-
-        min_val, max_val = sweep_box.sweep_range
-
         airfoil = w._airfoil
 
-        # Ensure min <= max
-        if min_val > max_val:
-            min_val, max_val = max_val, min_val
-
-        # Determine which parameter is being swept
-        is_opt_config_sweep = False
-
-        def make_airfoil(v):
-            return airfoil
-        if sweep_box is w._sweep_ctrl:
-            param_name = "Control points"
-            actual_min = config.continuity.minimum_control_points(config.degree)
-            if min_val < actual_min:
-                min_val = actual_min
-                w.statusBar().showMessage(
-                    f"Raised the start of the sweep to {actual_min} "
-                    f"(required for degree {config.degree}, {config.continuity.name})"
-                )
-                QApplication.processEvents()
-            sweep_values = list(range(int(min_val), int(max_val) + 1))
-
-            def make_config(v):
-                return dc_replace(config, num_control_points=v), opt_config
-        elif sweep_box is w._sweep_degree:
-            param_name = "Degree"
-            sweep_values = list(range(int(min_val), int(max_val) + 1))
-
-            def make_config(v):
-                return dc_replace(config, degree=v), opt_config
-        elif sweep_box is w._sweep_sections:
-            param_name = "Sections"
-            sweep_values = list(range(int(min_val), int(max_val) + 1))
-
-            def make_config(v):
-                # Per-junction overrides fit one section count only
-                junctions = config.junction_continuity
-                if junctions and len(junctions) != v - 1:
-                    junctions = ()
-                return dc_replace(config, num_sections=v, junction_continuity=junctions), opt_config
-
-            def make_airfoil(v):
-                return create_airfoil_data(
-                    list(airfoil.coordinates), filename=airfoil.filename, name=airfoil.name,
-                    precision=airfoil.precision, num_sections=v,
-                )
-        elif sweep_box is w._sweep_smoothing_weight:
-            param_name = "Smoothing weight"
-            is_opt_config_sweep = True
-            sweep_values = sweep_box.sweep_values()
-
-            def make_config(v):
-                return config, dc_replace(opt_config, smoothing_weight=v)
-        else:
+        axes = [(box, axis) for box in sweep_boxes
+                if (axis := self._sweep_axis_of(box)) is not None]
+        if not axes:
             return
+        names = [name for _, (name, _, _) in axes]
+
+        def make_configs(values):
+            c, o = config, opt_config
+            for (_, (_, _, apply)), v in zip(axes, values, strict=True):
+                c, o = apply(c, o, v)
+            return c, o
+
+        # Every combination, less those with too few control points for
+        # their degree
+        combinations = []
+        too_few = 0
+        for values in itertools.product(*(vals for _, (_, vals, _) in axes)):
+            c, _ = make_configs(values)
+            if ("Control points" in names
+                    and c.num_control_points < c.continuity.minimum_control_points(c.degree)):
+                too_few += 1
+            else:
+                combinations.append(values)
+
+        def describe(values):
+            return ", ".join(
+                f"{name} {number(v, '.5g') if isinstance(v, float) else v}"
+                for name, v in zip(names, values, strict=True))
 
         # Reset state
         w._cancel_requested = False
         self._sweep_results = []
         self._sweep_mode = True
         # The comparison plot shows this sweep among the project's earlier
-        # runs of the same configuration
-        self._sweep_axis = (config, opt_config, param_name)
+        # runs of the same configuration, along the parameter with the most
+        # values (the first of them in the sidebar on a tie)
+        x_axis = max(range(len(axes)), key=lambda i: (len(axes[i][1][1]), -i))
+        self._sweep_axis = (config, opt_config, tuple(names), names[x_axis])
+        self._sweep_x = x_axis
         w._plot_manager.clear_plot_items()
-        w._project_manager.show_axis(param_name)
+        w._project_manager.show_axis(names[x_axis])
         w._plot_manager.set_comparison_data([], [])
         w._plot_manager.set_comparison_marker([], [])
 
         w._set_fitting_ui(True)
         sweep_start_time = time.perf_counter()
 
-        total_fits = len(sweep_values)
+        total_fits = len(combinations)
 
-        w.statusBar().showMessage(
-            f"Sweep: fitting {total_fits} splines "
-            f"({param_name} {min_val}–{max_val})..."
-        )
+        msg = f"Sweep: fitting {total_fits} splines ({', '.join(names)})"
+        if too_few:
+            msg += (f" | Left out {too_few} combinations with too few control points "
+                    "for their degree")
+        w.statusBar().showMessage(msg + "...")
         QApplication.processEvents()
 
         # Perform sweep
-        for idx, val in enumerate(sweep_values):
+        for idx, values in enumerate(combinations):
             if w._cancel_requested:
                 break
 
-            sweep_config, sweep_opt_config = make_config(val)
-            sweep_airfoil = make_airfoil(val)
-            val_str = f"{number(val, '.5g')}" if is_opt_config_sweep else str(val)
+            sweep_config, sweep_opt_config = make_configs(values)
+            if sweep_config.num_sections == airfoil.num_sections:
+                sweep_airfoil = airfoil
+            else:
+                sweep_airfoil = create_airfoil_data(
+                    list(airfoil.coordinates), filename=airfoil.filename, name=airfoil.name,
+                    precision=airfoil.precision, num_sections=sweep_config.num_sections,
+                )
+            label = describe(values)
 
             bounds = compute_optimization_bounds(
                 sweep_airfoil, sweep_config,
@@ -398,7 +402,7 @@ class FittingController:
             error_logger = OptimizerErrorLogger(run_name=run_name)
             live = LiveProgress(
                 w, sweep_config, sweep_opt_config, error_logger, fit_start_time,
-                status_prefix=f"Sweep {idx + 1}/{total_fits} | {param_name} {val_str} | ",
+                status_prefix=f"Sweep {idx + 1}/{total_fits} | {label} | ",
                 airfoil=sweep_airfoil,
             )
 
@@ -423,7 +427,7 @@ class FittingController:
                 live.show_loss()
 
                 if fit_result is not None:
-                    self._sweep_results.append((val, fit_result))
+                    self._sweep_results.append((values, fit_result))
 
                     # Add to project
                     w._project_manager.add_optimization_run(
@@ -442,42 +446,42 @@ class FittingController:
                     self._show_sweep_comparison()
 
             except Exception as e:
-                print(f"Sweep fit failed for {param_name}={val}: {e}")
+                print(f"Sweep fit failed for {label}: {e}")
 
             # Update progress
             progress = (idx + 1) / total_fits * 100
             elapsed = time.perf_counter() - sweep_start_time
-            if self._sweep_results and self._sweep_results[-1][0] == val:
+            if self._sweep_results and self._sweep_results[-1][0] == values:
                 last_error = self._sweep_results[-1][1].final_error
                 w.statusBar().showMessage(
                     f"Sweep: {idx + 1}/{total_fits} ({number(progress, '.0f')}%) | "
-                    f"{param_name} {val_str}, error {format_error(last_error)} | "
+                    f"{label}, error {format_error(last_error)} | "
                     f"{format_duration(elapsed)}"
                 )
             else:
                 w.statusBar().showMessage(
                     f"Sweep: {idx + 1}/{total_fits} ({number(progress, '.0f')}%) | "
-                    f"{param_name} {val_str} | {format_duration(elapsed)}"
+                    f"{label} | {format_duration(elapsed)}"
                 )
             QApplication.processEvents()
 
         elapsed = time.perf_counter() - sweep_start_time
 
         if self._sweep_results:
-            best_val, best_result = self._show_sweep_comparison()
+            best_values, best_result = self._show_sweep_comparison()
 
-            sweep_box.spinbox.setValue(best_val)
+            for (box, _), v in zip(axes, best_values, strict=True):
+                box.spinbox.setValue(v)
 
             w._fit_result = best_result
             w._plot_manager.plot_fitted_spline(w._fit_result)
             w._refresh_curvature_comb()
             w._set_save_enabled(True)
 
-            best_val_str = f"{number(best_val, '.5g')}" if is_opt_config_sweep else str(best_val)
             msg = (
                 f"Sweep complete: {len(self._sweep_results)} fits "
                 f"in {format_duration(elapsed)} | "
-                f"Best: {param_name} {best_val_str}, "
+                f"Best: {describe(best_values)}, "
                 f"error {format_error(best_result.final_error)}"
             )
         else:
@@ -490,12 +494,14 @@ class FittingController:
 
         w._set_fitting_ui(False)
 
-    def _show_sweep_comparison(self) -> tuple[int | float, FitResult]:
-        """Plot the errors of all project runs along the sweep axis and mark
-        the best of this sweep; returns it."""
+    def _show_sweep_comparison(self) -> tuple[tuple, FitResult]:
+        """Plot the errors of all project runs along the sweep's x axis and
+        mark the best of this sweep; returns it."""
         plots = self._window._plot_manager
         x, y = self._window._project_manager.sweep_series(*self._sweep_axis)
-        plots.set_comparison_data(x, y)
-        best_val, best_result = min(self._sweep_results, key=lambda vr: vr[1].final_error)
-        plots.set_comparison_marker([best_val], [best_result.final_error])
-        return best_val, best_result
+        # Several swept parameters put several fits at one x value
+        plots.set_comparison_data(x, y, connected=len(set(x)) == len(x))
+        best_values, best_result = min(self._sweep_results,
+                                       key=lambda vr: vr[1].final_error)
+        plots.set_comparison_marker([best_values[self._sweep_x]], [best_result.final_error])
+        return best_values, best_result
