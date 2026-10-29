@@ -236,7 +236,7 @@ class Size:
     KNOT_SIZE = 8
     TRACE_POINT = 4
     MARKER_SIZE = 13
-    PLOT_MARGIN = 24          # inside a plot's frame: above the plot area, right of it, below the x label
+    PLOT_MARGIN = 24          # inside a plot's frame: above the plot area and right of it
 
 
 class Type:
@@ -726,10 +726,10 @@ class FramedPlot(pg.PlotWidget):
 def style_plot(plot: pg.PlotWidget) -> None:
     """Drafting-film styling for a plot: grid, axes, labels and margins."""
     item = plot.getPlotItem()
-    # An even margin above the plot area, right of it and below the x label;
-    # the y label on the left keeps a small one
+    # An even margin above the plot area and right of it; the axis labels
+    # on the left and bottom keep a small one
     m = Size.PLOT_MARGIN
-    item.layout.setContentsMargins(Size.GAP, m, m, m)
+    item.layout.setContentsMargins(Size.GAP, m, m, Size.TIGHT)
     if not isinstance(item.getAxis("left"), _DecadeAxis):
         item.setAxisItems({side: _DecadeAxis(side) for side in ("left", "bottom")})
     axis_pen = pg.mkPen(color=Ink.GRID, width=1)

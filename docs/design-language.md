@@ -192,7 +192,7 @@ Use the named gaps, not numbers:
 | `GROUP` | 8 | Groups: caption and content, button rows, plot panels |
 | `PAD` | 12 | Padding inside panels and sidebar sections |
 | `PAD_LARGE` | 16 | Dialogs and documents |
-| `PLOT_MARGIN` | 24 | Inside a plot's frame: above the plot area, right of it and below the x label (`style_plot`) |
+| `PLOT_MARGIN` | 24 | Inside a plot's frame: above the plot area and right of it (`style_plot`) |
 
 - **Every input and button is `Size.CONTROL_HEIGHT` (26 px) tall**: line
   edits, spin boxes, combo boxes, push and tool buttons, segments, the sweep
