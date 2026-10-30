@@ -143,8 +143,9 @@ def test_plot_shows_the_filtered_runs_along_the_chosen_column(window):
 
 
 def test_switching_runs_reuses_the_plot_items(window):
-    """Switching runs only changes data: the curves, comb and details keep
-    their items, and the comparison plot only moves its marker."""
+    """Switching runs only changes data, also to a run with another section
+    count: the plots and details keep their items, and the comparison plot
+    only moves its marker."""
     for ctrl in (8, 10):
         _add(window, ctrl, 1e-3 / ctrl)
     runs = window._project_manager.project.optimization_runs
@@ -152,33 +153,33 @@ def test_switching_runs_reuses_the_plot_items(window):
     table = window._run_table
     table.select_runs([runs[0]])
     plots = window._plot_manager
-    items = {**plots._curve_items, **plots._comb_items}
+    items = list(window._plot.getPlotItem().items)
     cells = [label for pair in window._run_details._cells for label in pair]
     curve_data = plots._comparison_curve.getData()
 
     table.select_runs([runs[1]])
-    assert {**plots._curve_items, **plots._comb_items} == items
+    assert window._plot.getPlotItem().items == items
     assert [label for pair in window._run_details._cells for label in pair] == cells
-    assert len(plots._curve_items["final_ctrl_0"].getData()[0]) == 10
+    # Both sections' control polygons, a gap between them
+    polygon = plots._polygon_item.getData()[0]
+    assert len(polygon) == 2 * 10 + 1 and np.isnan(polygon[10])
     assert plots._comparison_curve.getData()[0] is curve_data[0]
     assert list(plots._comparison_marker.getData()[0]) == [10]
 
-    # A run with one section hides the second section's items, and the next
-    # run with two shows them again
+    # A run with one section
     upper, lower = runs[1].result.section_control_points
     window._project_manager.add_optimization_run(
         SplineConfig(num_control_points=19, num_sections=1, continuity=ContinuityMode.G2),
         OptimizationConfig(optimizer=OptimizerType.GN_VARPRO, max_iterations=0),
         FairnessWeights(), FitResult([upper + lower[1:]], 5, 1e-6, 3, 9, 0.5), [])
     table.select_runs([runs[2]])
-    assert "final_curve_1" not in plots._curve_items
-    table.select_runs([runs[1]])
-    assert {**plots._curve_items, **plots._comb_items} == items
-    assert all(item.isVisible() for item in items.values())
+    assert window._plot.getPlotItem().items == items
+    polygon = plots._polygon_item.getData()[0]
+    assert len(polygon) == 19 and not np.isnan(polygon).any()
 
     # A deleted run leaves the plot
     window._project_manager.on_delete_selected_runs()
-    assert list(plots._comparison_curve.getData()[0]) == [8, 19]
+    assert list(plots._comparison_curve.getData()[0]) == [8, 10]
 
 
 def test_moving_the_marker_keeps_the_comparison_range(window):

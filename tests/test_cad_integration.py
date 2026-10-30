@@ -267,7 +267,7 @@ def test_gui_tolerance_mode_fit_report_and_cad_export(monkeypatch, tmp_path):
     assert result.section_knots is not None
     assert result.report["max_deviation"] <= 1e-5 * (1 + 1e-9)
     assert "max dev" in window.statusBar().currentMessage()
-    assert "knots" in window._plot_manager._knot_items
+    assert len(window._plot_manager._knot_item.getData()[0]) > 0
     assert window._action_export_cad.isEnabled() and window._action_fit_report.isEnabled()
     run = window._project_manager._project.optimization_runs[-1]
     assert run.optimization_config.tolerance == pytest.approx(1e-5)
