@@ -49,7 +49,6 @@ from .theme import (
     glyph_size,
     icon,
     readout_heading,
-    readout_value,
     set_motion,
     set_theme,
     text_browser,
@@ -116,8 +115,10 @@ class ReadoutList(QWidget):
     up in their columns, and spare width goes between the pairs. Shows a
     plain message instead when there are no pairs.
 
-    The rich text carries the theme's colors, so it is rendered again when
-    the theme changes.
+    The title's rich text carries the theme's colors, so it is rendered
+    again when the theme changes. The values are plain text, styled by
+    object name: rich text takes long to measure, and every run shown
+    measures them all.
     """
 
     def __init__(self, parent=None):
@@ -138,6 +139,7 @@ class ReadoutList(QWidget):
         self._title_text = ""
         self._rows: list[tuple[str, str]] = []
         self._cells: list[tuple[QLabel, QLabel]] = []
+        self._hints: list[tuple[int, int]] = []  # their size hints' widths
         self._columns = 0
         theme_changed.changed.connect(self._render)
 
@@ -162,26 +164,41 @@ class ReadoutList(QWidget):
     def _render(self) -> None:
         self._title.setText(readout_heading(self._title_text) if self._rows
                             else self._title_text)
+        # The labels are reused, so a new run of as many pairs only changes
+        # text; a message hides them until then
         for label, value in self._cells:
+            label.setVisible(bool(self._rows))
+            value.setVisible(bool(self._rows))
+        if not self._rows:
+            return
+        if len(self._cells) != len(self._rows):
+            self._columns = 0
+        for label, value in self._cells[len(self._rows):]:
             label.deleteLater()
             value.deleteLater()
-        self._cells = []
-        for key, val in self._rows:
-            label = QLabel(key)
+        del self._cells[len(self._rows):]
+        while len(self._cells) < len(self._rows):
+            label = QLabel()
             label.setObjectName("Muted")
-            value = QLabel(readout_value(val))
+            value = QLabel()
+            value.setObjectName("ReadoutValue")
+            value.setTextFormat(Qt.TextFormat.PlainText)
             value.setContentsMargins(Size.GROUP, 0, 0, 0)
             self._cells.append((label, value))
-        self._columns = 0
+        for (label, value), (key, val) in zip(self._cells, self._rows, strict=True):
+            label.setText(key)
+            value.setText(val)
+        # Measured once: each width is looked up for every column count tried
+        self._hints = [(label.sizeHint().width(), value.sizeHint().width())
+                       for label, value in self._cells]
         self._reflow()
 
     def _widths(self, columns: int) -> int:
         """The width the pairs take in that many columns, with no spare."""
         total = 0
         for c in range(columns):
-            column = self._cells[c::columns]
-            total += max(label.sizeHint().width() for label, _ in column)
-            total += max(value.sizeHint().width() for _, value in column)
+            column = self._hints[c::columns]
+            total += max(label for label, _ in column) + max(value for _, value in column)
         return total + (columns - 1) * Size.PAD_LARGE
 
     def _reflow(self) -> None:

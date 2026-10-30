@@ -46,8 +46,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from PyQt6.QtCore import (
-    QAbstractTableModel,
+    QEvent,
     QModelIndex,
+    QObject,
     QPoint,
     QRect,
     QSortFilterProxyModel,
@@ -55,7 +56,7 @@ from PyQt6.QtCore import (
     QTransposeProxyModel,
     pyqtSignal,
 )
-from PyQt6.QtGui import QAction, QBrush
+from PyQt6.QtGui import QAction, QBrush, QRegion, QStandardItem, QStandardItemModel
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -240,65 +241,63 @@ class _Row:
         return getattr(self.run, name)
 
 
-class RunTableModel(QAbstractTableModel):
+class RunTableModel(QStandardItemModel):
     """The runs of a project, one per row, one column per ``COLUMNS`` entry.
 
-    The display role holds the formatted text, the user role the raw value
-    (for sorting, filtering and plotting).
+    Every cell is an item holding its formatted text, font and alignment, so
+    painting the table (on every click in it) runs no Python; ``value`` gives
+    the raw value (for sorting, filtering and plotting).
     """
 
     def __init__(self, parent=None):
-        super().__init__(parent)
+        super().__init__(0, len(COLUMNS), parent)
         self._rows: list[_Row] = []
         self._cells: list[list] = []
         # Pivoted, a column per run: every cell centered under the others
         self.centered = False
+        for col, column_ in enumerate(COLUMNS):
+            item = QStandardItem(column_.name)
+            item.setToolTip(column_.tip)
+            self.setHorizontalHeaderItem(col, item)
 
     def set_runs(self, runs: list[OptimizationRun]) -> None:
         self.beginResetModel()
         self._rows = [_Row(run, i + 1) for i, run in enumerate(runs)]
         self._cells = [[c.cell(row) for c in COLUMNS] for row in self._rows]
+        # Filled quietly: the reset tells the views once
+        self.blockSignals(True)
+        self.setRowCount(len(runs))
+        font = mono_font()
+        for r, values in enumerate(self._cells):
+            for col, (value, column_) in enumerate(zip(values, COLUMNS, strict=True)):
+                item = QStandardItem(column_.text(value))
+                if is_number(value):
+                    item.setFont(font)
+                item.setTextAlignment(self._alignment(value))
+                self.setItem(r, col, item)
+        self.blockSignals(False)
         self.endResetModel()
+
+    def set_centered(self, centered: bool) -> None:
+        """Center every cell (pivoted), or align numbers right and text left."""
+        self.centered = centered
+        for r, values in enumerate(self._cells):
+            for col, value in enumerate(values):
+                self.item(r, col).setTextAlignment(self._alignment(value))
+
+    def _alignment(self, value) -> Qt.AlignmentFlag:
+        # Numbers line up: monospaced and right-aligned
+        if self.centered:
+            return Qt.AlignmentFlag.AlignCenter
+        horizontal = (Qt.AlignmentFlag.AlignRight if is_number(value)
+                      else Qt.AlignmentFlag.AlignLeft)
+        return horizontal | Qt.AlignmentFlag.AlignVCenter
 
     def run(self, row: int) -> OptimizationRun:
         return self._rows[row].run
 
     def value(self, row: int, col: int):
         return self._cells[row][col]
-
-    def rowCount(self, parent=None) -> int:
-        return 0 if parent is not None and parent.isValid() else len(self._rows)
-
-    def columnCount(self, parent=None) -> int:
-        return 0 if parent is not None and parent.isValid() else len(COLUMNS)
-
-    def data(self, index: QModelIndex, role=Qt.ItemDataRole.DisplayRole):
-        if not index.isValid():
-            return None
-        value = self._cells[index.row()][index.column()]
-        if role == Qt.ItemDataRole.DisplayRole:
-            return COLUMNS[index.column()].text(value)
-        if role == Qt.ItemDataRole.UserRole:
-            return value
-        # Numbers line up: monospaced and right-aligned
-        if role == Qt.ItemDataRole.FontRole and is_number(value):
-            return mono_font()
-        if role == Qt.ItemDataRole.TextAlignmentRole:
-            if self.centered:
-                return Qt.AlignmentFlag.AlignCenter
-            horizontal = (Qt.AlignmentFlag.AlignRight if is_number(value)
-                          else Qt.AlignmentFlag.AlignLeft)
-            return horizontal | Qt.AlignmentFlag.AlignVCenter
-        return None
-
-    def headerData(self, section: int, orientation, role=Qt.ItemDataRole.DisplayRole):
-        if orientation != Qt.Orientation.Horizontal:
-            return None
-        if role == Qt.ItemDataRole.DisplayRole:
-            return COLUMNS[section].name
-        if role == Qt.ItemDataRole.ToolTipRole:
-            return COLUMNS[section].tip or None
-        return None
 
 
 # =============================================================================
@@ -387,8 +386,9 @@ class RunFilterModel(QSortFilterProxyModel):
         return self.matches(source_row) != self._inverted
 
     def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
-        a = left.data(Qt.ItemDataRole.UserRole)
-        b = right.data(Qt.ItemDataRole.UserRole)
+        model = self.sourceModel()
+        a = model.value(left.row(), left.column())
+        b = model.value(right.row(), right.column())
         # Blanks last, then numbers by value, everything else by its text
         if a is None or b is None:
             return b is None and a is not None
@@ -425,6 +425,11 @@ class FilterHeader(QHeaderView):
         super().__init__(orientation, parent)
         self.setObjectName("FilterHeader")
         self.filtered: set[int] = set()
+
+    def visualRegionForSelection(self, selection) -> QRegion:
+        # Sections are not highlighted: selecting runs leaves the header as it
+        # was (Qt would repaint all of it, as every setting is in the selection)
+        return QRegion()
 
     def _glyph_rect(self, section: QRect) -> QRect:
         side = Size.GLYPH
@@ -652,6 +657,18 @@ class ColumnFilterPopup(QFrame):
             super().keyPressEvent(event)
 
 
+class _OpaqueFill(QObject):
+    """Keeps a widget filled with its background color (the panel color, as
+    the stylesheet would paint it), which the stylesheet turns off whenever
+    it polishes the widget. Filled, the table is opaque, so scrolling moves
+    its pixels and paints only the rows scrolled in, not the whole table."""
+
+    def eventFilter(self, obj, event) -> bool:
+        if event.type() in (QEvent.Type.Polish, QEvent.Type.StyleChange):
+            obj.setAutoFillBackground(True)
+        return False
+
+
 class RunTable(QWidget):
     """The global filter above the sortable run table, whose header opens
     a filter for each column.
@@ -712,6 +729,7 @@ class RunTable(QWidget):
         self.view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.view.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.view.setShowGrid(False)
+        self.view.viewport().installEventFilter(_OpaqueFill(self))
         self.view.setWordWrap(False)
         self._arrange()
         self.sort_by(0, Qt.SortOrder.AscendingOrder)
@@ -727,7 +745,7 @@ class RunTable(QWidget):
         """Lay the table out as it is pivoted or not: its model, the header
         of the settings (with the drop-downs) and that of the runs."""
         horizontal, vertical = Qt.Orientation.Horizontal, Qt.Orientation.Vertical
-        self.model.centered = self.pivoted
+        self.model.set_centered(self.pivoted)
         self.view.setModel(self.transpose if self.pivoted else self.proxy)
         self.header = FilterHeader(vertical if self.pivoted else horizontal)
         runs = QHeaderView(horizontal if self.pivoted else vertical)

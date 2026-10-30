@@ -58,7 +58,7 @@ def comb_parameters(curve: BSplineCurve2D, n: int,
     share of the teeth.
     """
     t = _fine_grid(n)
-    d = curve.evaluate_derivatives(t, max_order=2)
+    d = curve.evaluate_derivatives(t, max_order=2, min_order=1)
     speed = np.hypot(d['dx'], d['dy'])
     kappa = compute_signed_curvature(d['dx'], d['dy'], d['d2x'], d['d2y'])
     s = _cumulative_trapezoid(speed, t)
@@ -91,6 +91,39 @@ def comb_values(curve: BSplineCurve2D, t: np.ndarray, quantity: int) -> np.ndarr
     return np.interp(t, fine, val)
 
 
+class _Trace(pg.PlotDataItem):
+    """The comparison trace. It keeps room for the marker around every point,
+    and the marker is left out of the range, so moving the marker to another
+    run never rescales the plot (and redraws its axes)."""
+
+    def __init__(self, marker: pg.PlotDataItem, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._marker = marker
+
+    def pixelPadding(self):
+        return max(super().pixelPadding(), self._marker.scatter.pixelPadding())
+
+
+def _joined(lines: list) -> tuple[np.ndarray, np.ndarray]:
+    """Several (x, y) lines as one, a gap (NaN) between them."""
+    xs, ys = [], []
+    for x, y in lines:
+        if xs:
+            xs.append([np.nan])
+            ys.append([np.nan])
+        xs.append(np.asarray(x, dtype=float))
+        ys.append(np.asarray(y, dtype=float))
+    if not xs:
+        return np.empty(0), np.empty(0)
+    return np.concatenate(xs), np.concatenate(ys)
+
+
+def _settle(plot: pg.PlotWidget) -> None:
+    """Auto-range the plot now: a range found while painting, as pyqtgraph
+    does, paints the plot a second time for the axes it changed."""
+    plot.getPlotItem().getViewBox().prepareForPaint()
+
+
 class PlotManager:
     """Manages all pyqtgraph plot visualizations.
 
@@ -109,10 +142,21 @@ class PlotManager:
         self._loss_plot = loss_plot
         self._comparison_plot = comparison_plot
 
-        # Plot item tracking
-        self._curve_items: dict = {}
-        self._comb_items: dict = {}
-        self._knot_items: dict = {}
+        # The main plot's items: one per kind of thing drawn, holding every
+        # section (a gap between sections), so a fit with another section
+        # count, a run switched to or a live step only brings other data.
+        # Cleared, an item holds no data
+        self._data_item = self._new_item(self._data_style(), symbol='o',
+                                         symbolSize=Size.DATA_SIZE)
+        self._curve_item = self._new_item(self._curve_style())
+        self._polygon_item = self._new_item(self._polygon_style())
+        self._knot_item = self._new_item(self._knot_style())
+        # The comb of the upper (even) and lower (odd) sections, by
+        # (side, tips): the teeth, and the envelope through their tips
+        self._comb_items = {(side, tips): self._new_item(self._comb_style(side, tips))
+                            for side in ('upper', 'lower') for tips in (False, True)}
+        # The curves of the last fit drawn, as (fit, curves)
+        self._last_curves: tuple = (None, [])
         self.show_knots = False
         # (scale, density, quantity) of the curvature comb; None = hidden
         self.comb_settings: tuple[float, int, int] | None = None
@@ -129,13 +173,21 @@ class PlotManager:
         # The trace is a line through the runs, or only dots when several
         # runs share an x value
         self._comparison_connected = True
-        self._comparison_curve = comparison_plot.plot(
-            [], [], symbol='o', symbolSize=Size.TRACE_POINT + 2, **self._comparison_style())
-        self._comparison_marker = comparison_plot.plot(
+        self._comparison_marker = pg.PlotDataItem(
             [], [], symbol='o', symbolSize=Size.MARKER_SIZE, **self._marker_style())
+        self._comparison_curve = _Trace(
+            self._comparison_marker, [], [], symbol='o', symbolSize=Size.TRACE_POINT + 2,
+            **self._comparison_style())
+        comparison_plot.addItem(self._comparison_curve)
+        comparison_plot.addItem(self._comparison_marker, ignoreBounds=True)
 
-        # The measured stations
-        self._data_item = None
+    def _new_item(self, style: dict, **symbol) -> pg.PlotDataItem:
+        """An empty main-plot item in a style; non-finite values break its line."""
+        style = dict(style)
+        z = style.pop('z', Z.DATA)
+        item = self._plot.plot([], [], connect='finite', **style, **symbol)
+        item.setZValue(z)
+        return item
 
     def _new_loss_curve(self):
         """The convergence trace: one dot per step."""
@@ -194,16 +246,6 @@ class PlotManager:
             return dict(pen=pen(color, 1.5), z=Z.COMB)
         return dict(pen=pen(color, alpha=Ink.COMB_TEETH_ALPHA), z=Z.COMB)
 
-    def _item_style(self, key: str) -> dict:
-        """The style of a main-plot item, by its key."""
-        if key == 'knots':
-            return self._knot_style()
-        if '_ctrl_' in key:
-            return self._polygon_style()
-        if key.startswith(('comb_', 'tips_')):
-            return self._comb_style(key.split('_', 1)[1], key.startswith('tips_'))
-        return self._curve_style()
-
     def restyle(self) -> None:
         """Reapply the theme's colors to every plot item (after a theme change)."""
         def apply(item, style: dict) -> None:
@@ -214,10 +256,12 @@ class PlotManager:
                 item.setSymbolBrush(style['symbolBrush'])
                 item.setSymbolPen(style['symbolPen'])
 
-        for items in (self._curve_items, self._comb_items, self._knot_items):
-            for key, item in items.items():
-                apply(item, self._item_style(key))
         apply(self._data_item, self._data_style())
+        apply(self._curve_item, self._curve_style())
+        apply(self._polygon_item, self._polygon_style())
+        apply(self._knot_item, self._knot_style())
+        for (side, tips), item in self._comb_items.items():
+            apply(item, self._comb_style(side, tips))
         apply(self._loss_curve, self._loss_style())
         apply(self._comparison_curve, self._comparison_style(self._comparison_connected))
         apply(self._comparison_marker, self._marker_style())
@@ -263,10 +307,12 @@ class PlotManager:
             self._comparison_connected = connected
             self._comparison_curve.setPen(self._comparison_style(connected)['pen'])
         self._comparison_curve.setData(x, y)
+        _settle(self._comparison_plot)
 
     def set_comparison_marker(self, x: list, y: list) -> None:
         """Update the comparison marker data."""
         self._comparison_marker.setData(x, y)
+        _settle(self._comparison_plot)
 
     def set_comparison_label(self, label: str) -> None:
         """Change the comparison plot X-axis label."""
@@ -301,37 +347,22 @@ class PlotManager:
     # -----------------------------------------------------------------
 
     def clear_plot_items(self) -> None:
-        """Remove all curve and control point items from the plot."""
-        for key in list(self._curve_items.keys()):
-            item = self._curve_items.pop(key)
-            try:
-                self._plot.removeItem(item)
-            except Exception:
-                pass
-
-        for key in list(self._comb_items.keys()):
-            item = self._comb_items.pop(key)
-            try:
-                self._plot.removeItem(item)
-            except Exception:
-                pass
+        """Clear the curve, control polygon, comb and knots (not the measured points)."""
+        for item in (self._curve_item, self._polygon_item):
+            item.setData([], [])
+        self.clear_comb_items()
         self.clear_knot_items()
 
     def clear_knot_items(self) -> None:
-        """Remove the knot markers from the plot."""
-        for key in list(self._knot_items.keys()):
-            item = self._knot_items.pop(key)
-            try:
-                self._plot.removeItem(item)
-            except Exception:
-                pass
+        """Clear the knot markers."""
+        self._knot_item.setData([], [])
 
     def refresh_knots(self, fit_result: FitResult | None) -> None:
         """Mark the curve points at the knots of every section (if enabled)."""
-        self.clear_knot_items()
         if fit_result is None or not self.show_knots:
+            self.clear_knot_items()
             return
-        self._draw_knots(fit_result.curves())
+        self._draw_knots(self._curves(fit_result))
 
     def _draw_knots(self, curves: list) -> None:
         """Mark the curve points at the knots of the given curves."""
@@ -342,18 +373,14 @@ class PlotManager:
                 kx, ky = curve.evaluate_array(knots)
                 xs.extend(kx.tolist())
                 ys.extend(ky.tolist())
-            self._put(self._knot_items, 'knots', xs, ys, **self._knot_style())
+            self._knot_item.setData(xs, ys)
         except Exception:
             pass
 
     def clear_comb_items(self) -> None:
-        """Remove all curvature comb items from the plot."""
-        for key in list(self._comb_items.keys()):
-            item = self._comb_items.pop(key)
-            try:
-                self._plot.removeItem(item)
-            except Exception:
-                pass
+        """Clear the curvature comb."""
+        for item in self._comb_items.values():
+            item.setData([], [])
 
     def plot_airfoil(self, coords: list) -> None:
         """Plot airfoil coordinate points.
@@ -361,14 +388,8 @@ class PlotManager:
         Args:
             coords: List of (x, y) tuples.
         """
-        # Forget the items too, or later drawings would reuse removed ones
         self.clear_plot_items()
-        self._plot.clear()
-        x = [p[0] for p in coords]
-        y = [p[1] for p in coords]
-        self._data_item = self._plot.plot(
-            x, y, symbol='o', symbolSize=Size.DATA_SIZE, **self._data_style())
-        self._data_item.setZValue(Z.DATA)
+        self._data_item.setData([p[0] for p in coords], [p[1] for p in coords])
         self._plot.autoRange()
 
     def reset_loss_plot(self, x_label: str, log_x: bool, log_y: bool) -> None:
@@ -413,6 +434,7 @@ class PlotManager:
         # Ensure same length
         min_len = min(len(x_plot), len(y_plot))
         self._loss_curve.setData(x_plot[:min_len], y_plot[:min_len])
+        _settle(self._loss_plot)
 
     def update_live_plot(
         self,
@@ -463,36 +485,13 @@ class PlotManager:
                     optimize_le_position=optimize_le_position,
                 )
 
-            # Drop items of sections that no longer exist
-            for key in [k for k in self._curve_items if k.startswith('live_')]:
-                if int(key.rsplit('_', 1)[1]) >= len(section_ctrl_pts):
-                    try:
-                        self._plot.removeItem(self._curve_items.pop(key))
-                    except Exception:
-                        pass
-
-            # Plot each section
-            curves = []
-            for section_idx, ctrl_pts in enumerate(section_ctrl_pts):
-                ctrl_pts = [(float(p[0]), float(p[1])) for p in ctrl_pts]
-                knots = None if section_knots is None else section_knots[section_idx]
-                curve = BSplineCurve2D(degree, ctrl_pts, knots)
-                curves.append(curve)
-
-                # Spline curve (items are reused: every step of a fit may be drawn)
-                ux, uy = curve.sample(1000)
-
-                self._put(self._curve_items, f'live_curve_{section_idx}', ux, uy,
-                          **self._curve_style())
-
-                # Control polygon
-                cx = [p[0] for p in ctrl_pts]
-                cy = [p[1] for p in ctrl_pts]
-                self._put(self._curve_items, f'live_ctrl_{section_idx}', cx, cy,
-                          **self._polygon_style())
+            curves = [
+                BSplineCurve2D(degree, [(float(p[0]), float(p[1])) for p in ctrl_pts],
+                               None if section_knots is None else section_knots[i])
+                for i, ctrl_pts in enumerate(section_ctrl_pts)]
+            self._draw_spline(curves)
 
             # Comb and knot markers of the curve in progress, if enabled
-            # (their items are updated in place)
             if self.comb_settings is not None:
                 self._draw_combs(curves, *self.comb_settings)
             if self.show_knots:
@@ -507,30 +506,12 @@ class PlotManager:
         Args:
             fit_result: The optimization result containing control points.
         """
-        # Clear live items
-        self.clear_plot_items()
-
         try:
-            # Plot each section
-            curves = fit_result.curves()
-            for section_idx, ctrl_pts in enumerate(fit_result.section_control_points):
-                curve = curves[section_idx]
-
-                # Spline curve
-                sx, sy = curve.sample(1000)
-
-                self._put(self._curve_items, f'final_curve_{section_idx}', sx, sy,
-                          **self._curve_style())
-
-                # Control polygon
-                cx = [p[0] for p in ctrl_pts]
-                cy = [p[1] for p in ctrl_pts]
-                self._put(self._curve_items, f'final_ctrl_{section_idx}', cx, cy,
-                          **self._polygon_style())
-
+            self._draw_spline(self._curves(fit_result))
         except Exception:
             pass
         self.refresh_knots(fit_result)
+        _settle(self._plot)
 
     # -----------------------------------------------------------------
     # Curvature Comb
@@ -554,30 +535,30 @@ class PlotManager:
         if fit_result is None:
             return
 
-        # Clear existing comb items
-        self.clear_comb_items()
-        self._draw_combs(fit_result.curves(), scale, density, qty)
+        self._draw_combs(self._curves(fit_result), scale, density, qty)
+        _settle(self._plot)
 
     def _draw_combs(self, curves: list, scale: float, density: int, qty: int) -> None:
-        """Draw the curvature comb of every section."""
+        """Draw the curvature comb of every section, alternating in color."""
         density = max(5, density)
         try:
-            for section_idx, curve in enumerate(curves):
-                # Use alternating colors for different sections
-                which = 'upper' if section_idx % 2 == 0 else 'lower'
-                self._draw_curvature_comb(f'{which}_{section_idx}', curve, scale, density, qty)
+            for start, side in enumerate(('upper', 'lower')):
+                combs = [self._curvature_comb(curve, scale, density, qty)
+                         for curve in curves[start::2]]
+                self._comb_items[side, False].setData(*_joined([c[0] for c in combs]))
+                self._comb_items[side, True].setData(*_joined([c[1] for c in combs]))
         except Exception:
             pass
 
-    def _draw_curvature_comb(
-        self,
-        which: str,
+    @staticmethod
+    def _curvature_comb(
         curve: BSplineCurve2D,
         scale: float,
         density: int,
         quantity: int,
-    ) -> None:
-        """Draw curvature comb for a single curve."""
+    ) -> tuple[tuple, tuple]:
+        """The comb of a single curve: its teeth (base, tip, gap) and the
+        envelope through their tips, each as (x, y)."""
         t = comb_parameters(curve, density)
         derivs = curve.evaluate_derivatives(t, max_order=1)
         x, y = derivs['x'], derivs['y']
@@ -594,24 +575,21 @@ class PlotManager:
         cx = x + nx * val * scale
         cy = y + ny * val * scale
 
-        # Build comb segments
-        seg_x = []
-        seg_y = []
-        for x0, y0, x1, y1 in zip(x, y, cx, cy, strict=False):
-            seg_x.extend([x0, x1, np.nan])
-            seg_y.extend([y0, y1, np.nan])
+        # Build comb segments: base, tip, gap
+        gap = np.full_like(x, np.nan)
+        seg_x = np.column_stack([x, cx, gap]).ravel()
+        seg_y = np.column_stack([y, cy, gap]).ravel()
 
-        self._put(self._comb_items, f'comb_{which}', seg_x, seg_y,
-                  **self._comb_style(which, tips=False))
-        self._put(self._comb_items, f'tips_{which}', cx, cy,
-                  **self._comb_style(which, tips=True))
+        return (seg_x, seg_y), (cx, cy)
 
-    def _put(self, items: dict, key: str, x, y, z: float = 0, **style) -> None:
-        """Plot ``x, y`` as ``items[key]``, reusing the item if it exists:
-        adding and removing items is what makes redrawing every fit step slow."""
-        item = items.get(key)
-        if item is None:
-            items[key] = item = self._plot.plot(x, y, **style)
-            item.setZValue(z)
-        else:
-            item.setData(x, y)
+    def _draw_spline(self, curves: list) -> None:
+        """Draw the curves and their control polygons."""
+        self._curve_item.setData(*_joined([curve.sample(1000) for curve in curves]))
+        self._polygon_item.setData(*_joined([np.array(curve.control_points).T
+                                             for curve in curves]))
+
+    def _curves(self, fit_result: FitResult) -> list:
+        """The fit's curves, built once for its spline, knots and comb."""
+        if self._last_curves[0] is not fit_result:
+            self._last_curves = (fit_result, fit_result.curves())
+        return self._last_curves[1]

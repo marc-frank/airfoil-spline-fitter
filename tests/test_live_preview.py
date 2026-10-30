@@ -143,14 +143,17 @@ def test_sweep_shows_every_fit_and_its_comparison_point(window, counted, monkeyp
 
 
 def test_sweep_fit_in_progress_replaces_the_previous_fit(window, counted, monkeypatch):
-    """While a sweep fit is drawn live, the previous fit's curve is gone."""
+    """While a sweep fit is drawn live, the previous fit's curve is gone: the
+    control polygon holds the points of the fit in progress only."""
     from spline_fitter.gui import live
     draw = live.LiveProgress._draw
     stale = []
 
     def record(self):
         draw(self)
-        stale.append([k for k in window._plot_manager._curve_items if k.startswith("final_")])
+        polygon = window._plot_manager._polygon_item.getData()[0]
+        drawn = len(polygon) - (self._config.num_sections - 1)
+        stale.append(drawn != self._config.num_sections * self._config.num_control_points)
 
     monkeypatch.setattr(live.LiveProgress, "_draw", record)
     window._combo_live.setCurrentIndex(2)

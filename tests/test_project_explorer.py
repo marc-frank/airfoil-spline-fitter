@@ -142,6 +142,80 @@ def test_plot_shows_the_filtered_runs_along_the_chosen_column(window):
     assert list(marker.getData()[0]) == [14]
 
 
+def test_switching_runs_reuses_the_plot_items(window):
+    """Switching runs only changes data, also to a run with another section
+    count: the plots and details keep their items, and the comparison plot
+    only moves its marker."""
+    for ctrl in (8, 10):
+        _add(window, ctrl, 1e-3 / ctrl)
+    runs = window._project_manager.project.optimization_runs
+    window._check_comb.setChecked(True)
+    table = window._run_table
+    table.select_runs([runs[0]])
+    plots = window._plot_manager
+    items = list(window._plot.getPlotItem().items)
+    cells = [label for pair in window._run_details._cells for label in pair]
+    curve_data = plots._comparison_curve.getData()
+
+    table.select_runs([runs[1]])
+    assert window._plot.getPlotItem().items == items
+    assert [label for pair in window._run_details._cells for label in pair] == cells
+    # Both sections' control polygons, a gap between them
+    polygon = plots._polygon_item.getData()[0]
+    assert len(polygon) == 2 * 10 + 1 and np.isnan(polygon[10])
+    assert plots._comparison_curve.getData()[0] is curve_data[0]
+    assert list(plots._comparison_marker.getData()[0]) == [10]
+
+    # A run with one section
+    upper, lower = runs[1].result.section_control_points
+    window._project_manager.add_optimization_run(
+        SplineConfig(num_control_points=19, num_sections=1, continuity=ContinuityMode.G2),
+        OptimizationConfig(optimizer=OptimizerType.GN_VARPRO, max_iterations=0),
+        FairnessWeights(), FitResult([upper + lower[1:]], 5, 1e-6, 3, 9, 0.5), [])
+    table.select_runs([runs[2]])
+    assert window._plot.getPlotItem().items == items
+    polygon = plots._polygon_item.getData()[0]
+    assert len(polygon) == 19 and not np.isnan(polygon).any()
+
+    # A deleted run leaves the plot
+    window._project_manager.on_delete_selected_runs()
+    assert list(plots._comparison_curve.getData()[0]) == [8, 10]
+
+
+def test_moving_the_marker_keeps_the_comparison_range(window):
+    """The marker is larger than the trace's dots: on a run at the end of the
+    trace it must not widen the plot (and redraw its axes)."""
+    for ctrl in (8, 10, 12):
+        _add(window, ctrl, 1e-3 / ctrl)
+    runs = window._project_manager.project.optimization_runs
+    view_box = window._comparison_plot.getPlotItem().getViewBox()
+    ranges = []
+    for run in (runs[1], runs[0], runs[2]):
+        window._run_table.select_runs([run])
+        ranges.append(view_box.viewRange())
+    assert ranges[0] == ranges[1] == ranges[2]
+
+
+def test_the_table_scrolls_without_repainting_all_of_it(window, tmp_path, monkeypatch):
+    """Filled with its background, the table is opaque, so Qt scrolls it by
+    moving its pixels; the stylesheet turns the fill off, also on a new theme."""
+    from PyQt6.QtCore import QSettings
+
+    from spline_fitter.gui import theme
+    viewport = window._run_table.view.viewport()
+    assert viewport.autoFillBackground()
+    ini = str(tmp_path / "settings.ini")
+    monkeypatch.setattr(theme, "_settings", lambda: QSettings(ini, QSettings.Format.IniFormat))
+    before = (theme.Scheme.MODE, theme.Scheme.TEMPERATURE)
+    try:
+        theme.set_theme("light" if theme.Scheme.DARK else "dark")
+        QApplication.processEvents()
+        assert viewport.autoFillBackground()
+        assert viewport.palette().base().color().name().lower() == theme.Palette.PANEL.lower()
+    finally:
+        theme.set_theme(*before)
+
+
 def test_double_click_applies_the_run_settings(window):
     _add(window, 11, 1e-4, optimizer=OptimizerType.DE, seed=7, max_iterations=500,
          metric=ErrorMetric.ORTHOGONAL)

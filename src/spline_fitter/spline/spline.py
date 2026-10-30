@@ -17,6 +17,7 @@ evaluation while providing a clean, domain-specific interface.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from functools import cached_property
 
 import numpy as np
 from scipy.interpolate import BSpline as ScipyBSpline
@@ -250,6 +251,7 @@ class BSplineCurve2D:
         self,
         t: np.ndarray,
         max_order: int = 2,
+        min_order: int = 0,
     ) -> dict:
         """
         Evaluate the curve and its derivatives at given parameters.
@@ -260,39 +262,30 @@ class BSplineCurve2D:
         Args:
             t: Parameter values to evaluate at
             max_order: Maximum derivative order to compute
+            min_order: Lowest order to compute (1 leaves out the position)
             
         Returns:
             Dictionary with keys:
-                'x', 'y': Position coordinates
+                'x', 'y': Position coordinates (if min_order is 0)
                 'dx', 'dy': First derivatives (if max_order >= 1)
                 'd2x', 'd2y': Second derivatives (if max_order >= 2)
                 'd3x', 'd3y': Third derivatives (if max_order >= 3)
         """
         t = np.asarray(t, dtype=np.float64)
-        result = {
-            'x': self._spline_x(t),
-            'y': self._spline_y(t),
-        }
-
-        if max_order >= 1 and self.degree >= 1:
-            d1x = self._spline_x.derivative(1)
-            d1y = self._spline_y.derivative(1)
-            result['dx'] = d1x(t)
-            result['dy'] = d1y(t)
-
-        if max_order >= 2 and self.degree >= 2:
-            d2x = self._spline_x.derivative(2)
-            d2y = self._spline_y.derivative(2)
-            result['d2x'] = d2x(t)
-            result['d2y'] = d2y(t)
-
-        if max_order >= 3 and self.degree >= 3:
-            d3x = self._spline_x.derivative(3)
-            d3y = self._spline_y.derivative(3)
-            result['d3x'] = d3x(t)
-            result['d3y'] = d3y(t)
-
+        result = {}
+        names = (('x', 'y'), ('dx', 'dy'), ('d2x', 'd2y'), ('d3x', 'd3y'))
+        for order in range(min_order, min(max_order, self.degree, 3) + 1):
+            # x and y in one call, each order straight from the curve's own
+            # coefficients (no derivative spline built per call)
+            values = self._spline_xy(t, order)
+            result[names[order][0]], result[names[order][1]] = values[..., 0], values[..., 1]
         return result
+
+    @cached_property
+    def _spline_xy(self) -> ScipyBSpline:
+        """x and y as one spline with two columns of coefficients."""
+        return ScipyBSpline(self._spline_x.t, np.stack([self._spline_x.c, self._spline_y.c], axis=-1),
+                            self._spline_x.k, extrapolate=False)
 
 
 # =============================================================================
