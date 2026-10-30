@@ -46,7 +46,7 @@ from PyQt6.QtGui import (
     QPen,
     QPixmap,
 )
-from PyQt6.QtWidgets import QApplication, QTextBrowser
+from PyQt6.QtWidgets import QApplication, QGraphicsItem, QTextBrowser
 
 from ..formatting import decimal_point, set_decimal_point
 
@@ -524,6 +524,8 @@ QPushButton#SectionHeader:hover {{ color: {P.TEXT}; background: transparent; }}
 #FileName {{ font-weight: 600; }}
 #Muted {{ color: {P.TEXT_3}; font-size: {Type.CAPTION_PX + 1}px; }}
 #Readout {{ font-family: {Type.MONO}; font-size: {Type.READOUT_PX}px; color: {P.TEXT}; }}
+/* A value of a label and value list: monospaced so values line up */
+#ReadoutValue {{ font-family: {Type.MONO}; color: {P.TEXT}; }}
 #RunBar {{ background: {P.WINDOW}; border-top: 1px solid {P.RULE}; }}
 #DropDownPanel {{ background: {P.FIELD}; border: 1px solid {P.RULE_STRONG};
     border-radius: {S.RADIUS}px; }}
@@ -683,7 +685,14 @@ def mono_font(point_size: float | None = None) -> QFont:
 class _DecadeAxis(pg.AxisItem):
     """An axis whose log scale labels only the decades (10^-6, 10^-5, ...),
     so the labels of the 2..9 ticks do not pile up below each decade.
-    Without a decade in view, the other ticks keep their labels."""
+    Without a decade in view, the other ticks keep their labels.
+
+    The axis, its grid included, is cached as a pixmap: drawing it is most of
+    a plot's repaint, and a new curve in the plot leaves it as it was."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.setCacheMode(QGraphicsItem.CacheMode.DeviceCoordinateCache)
 
     def updateAutoSIPrefix(self):
         # pyqtgraph rescales a labeled axis even with the prefix turned off
@@ -806,13 +815,6 @@ b {{ color: {Palette.TEXT}; }}
 def readout_heading(title: str) -> str:
     """The title of a label and value list as rich text for a QLabel."""
     return f"<span style='color: {Palette.TEXT}'>{html.escape(title)}</span>"
-
-
-def readout_value(value: str) -> str:
-    """A value of a label and value list as rich text for a QLabel:
-    monospaced so values line up; the labels keep the label's own color."""
-    return (f"<span style='font-family: {Type.MONO}; color: {Palette.TEXT}'>"
-            f"{html.escape(value)}</span>")
 
 
 def text_browser() -> QTextBrowser:

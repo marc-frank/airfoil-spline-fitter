@@ -42,3 +42,14 @@ def test_higher_comb_derivatives_are_finite(upper_surface, quantity):
     curve, _ = upper_surface
     values = comb_values(curve, comb_parameters(curve, 50), quantity)
     assert values.shape == (50,) and np.all(np.isfinite(values))
+
+
+def test_derivatives_leave_out_the_orders_below_the_lowest(upper_surface):
+    curve, exact = upper_surface
+    t = np.linspace(0, 1, 50)
+    all_orders = curve.evaluate_derivatives(t, max_order=2)
+    derivatives = curve.evaluate_derivatives(t, max_order=2, min_order=1)
+    assert sorted(derivatives) == ["d2x", "d2y", "dx", "dy"]
+    for key, values in derivatives.items():
+        assert np.array_equal(values, all_orders[key])
+    assert np.allclose(all_orders["d2y"], exact.derivative(2)(t)[:, 1])

@@ -45,6 +45,9 @@ class ProjectManager:
         self._project_path: str | None = None
         self._project_modified = False
         self._selected_runs: list[OptimizationRun] = []
+        # (x, y, run) of the comparison plot's points; None while the plot
+        # shows something else (a sweep) or the table changed since
+        self._comparison_points: list | None = None
 
     # ------------------------------------------------------------------
     # Properties
@@ -333,6 +336,7 @@ class ProjectManager:
         """Show every run of the project in the explorer table."""
         runs = self._project.optimization_runs if self._project else []
         self._window._run_table.set_runs(runs)
+        self._comparison_points = None
 
     def on_table_selection_changed(self):
         """Show the selected run (details and plots); mark the selection on
@@ -349,7 +353,7 @@ class ProjectManager:
             self._load_run_to_plots(runs[0])
         else:
             self._window._run_details.set_message(f"{len(runs)} runs selected")
-        self.refresh_comparison_plot()
+        self._mark_selected_runs()
 
     def on_load_selected_run(self):
         """Load settings: as a double-click on the one selected run."""
@@ -386,6 +390,7 @@ class ProjectManager:
             combo.setCurrentText(text)
             combo.blockSignals(False)
         self._window._plot_manager.set_comparison_label(name)
+        self._comparison_points = None
 
     def refresh_comparison_plot(self):
         """Plot the runs that pass the explorer's filter: the chosen fit
@@ -418,12 +423,22 @@ class ProjectManager:
 
         points.sort(key=lambda p: (p[0], p[1]))
         xs = [p[0] for p in points]
-        selected = table.selected_runs()
-        marked = [(x, y) for x, y, run in points if any(run is s for s in selected)]
         plots = w._plot_manager
         plots.set_comparison_axes(x_col.name, y_col.name, log_x, log_y, ticks)
         plots.set_comparison_data(xs, [p[1] for p in points], connected=len(set(xs)) == len(xs))
-        plots.set_comparison_marker([m[0] for m in marked], [m[1] for m in marked])
+        self._comparison_points = points
+        self._mark_selected_runs()
+
+    def _mark_selected_runs(self):
+        """Mark the selected runs on the comparison plot; only the marker
+        moves, unless the plot is not of the explorer's runs."""
+        if self._comparison_points is None:
+            self.refresh_comparison_plot()
+            return
+        selected = {id(run) for run in self._window._run_table.selected_runs()}
+        marked = [(x, y) for x, y, run in self._comparison_points if id(run) in selected]
+        self._window._plot_manager.set_comparison_marker([m[0] for m in marked],
+                                                         [m[1] for m in marked])
 
     # ------------------------------------------------------------------
     # Run details / plot helpers

@@ -58,7 +58,7 @@ def comb_parameters(curve: BSplineCurve2D, n: int,
     share of the teeth.
     """
     t = _fine_grid(n)
-    d = curve.evaluate_derivatives(t, max_order=2)
+    d = curve.evaluate_derivatives(t, max_order=2, min_order=1)
     speed = np.hypot(d['dx'], d['dy'])
     kappa = compute_signed_curvature(d['dx'], d['dy'], d['d2x'], d['d2y'])
     s = _cumulative_trapezoid(speed, t)
@@ -91,6 +91,25 @@ def comb_values(curve: BSplineCurve2D, t: np.ndarray, quantity: int) -> np.ndarr
     return np.interp(t, fine, val)
 
 
+class _Trace(pg.PlotDataItem):
+    """The comparison trace. It keeps room for the marker around every point,
+    and the marker is left out of the range, so moving the marker to another
+    run never rescales the plot (and redraws its axes)."""
+
+    def __init__(self, marker: pg.PlotDataItem, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._marker = marker
+
+    def pixelPadding(self):
+        return max(super().pixelPadding(), self._marker.scatter.pixelPadding())
+
+
+def _settle(plot: pg.PlotWidget) -> None:
+    """Auto-range the plot now: a range found while painting, as pyqtgraph
+    does, paints the plot a second time for the axes it changed."""
+    plot.getPlotItem().getViewBox().prepareForPaint()
+
+
 class PlotManager:
     """Manages all pyqtgraph plot visualizations.
 
@@ -113,6 +132,10 @@ class PlotManager:
         self._curve_items: dict = {}
         self._comb_items: dict = {}
         self._knot_items: dict = {}
+        # Hidden items of the keys above, kept for reuse (see _drop)
+        self._spares: dict = {}
+        # The curves of the last fit drawn, as (fit, curves)
+        self._last_curves: tuple = (None, [])
         self.show_knots = False
         # (scale, density, quantity) of the curvature comb; None = hidden
         self.comb_settings: tuple[float, int, int] | None = None
@@ -129,10 +152,13 @@ class PlotManager:
         # The trace is a line through the runs, or only dots when several
         # runs share an x value
         self._comparison_connected = True
-        self._comparison_curve = comparison_plot.plot(
-            [], [], symbol='o', symbolSize=Size.TRACE_POINT + 2, **self._comparison_style())
-        self._comparison_marker = comparison_plot.plot(
+        self._comparison_marker = pg.PlotDataItem(
             [], [], symbol='o', symbolSize=Size.MARKER_SIZE, **self._marker_style())
+        self._comparison_curve = _Trace(
+            self._comparison_marker, [], [], symbol='o', symbolSize=Size.TRACE_POINT + 2,
+            **self._comparison_style())
+        comparison_plot.addItem(self._comparison_curve)
+        comparison_plot.addItem(self._comparison_marker, ignoreBounds=True)
 
         # The measured stations
         self._data_item = None
@@ -214,7 +240,7 @@ class PlotManager:
                 item.setSymbolBrush(style['symbolBrush'])
                 item.setSymbolPen(style['symbolPen'])
 
-        for items in (self._curve_items, self._comb_items, self._knot_items):
+        for items in (self._curve_items, self._comb_items, self._knot_items, self._spares):
             for key, item in items.items():
                 apply(item, self._item_style(key))
         apply(self._data_item, self._data_style())
@@ -263,10 +289,12 @@ class PlotManager:
             self._comparison_connected = connected
             self._comparison_curve.setPen(self._comparison_style(connected)['pen'])
         self._comparison_curve.setData(x, y)
+        _settle(self._comparison_plot)
 
     def set_comparison_marker(self, x: list, y: list) -> None:
         """Update the comparison marker data."""
         self._comparison_marker.setData(x, y)
+        _settle(self._comparison_plot)
 
     def set_comparison_label(self, label: str) -> None:
         """Change the comparison plot X-axis label."""
@@ -328,10 +356,10 @@ class PlotManager:
 
     def refresh_knots(self, fit_result: FitResult | None) -> None:
         """Mark the curve points at the knots of every section (if enabled)."""
-        self.clear_knot_items()
         if fit_result is None or not self.show_knots:
+            self.clear_knot_items()
             return
-        self._draw_knots(fit_result.curves())
+        self._draw_knots(self._curves(fit_result))
 
     def _draw_knots(self, curves: list) -> None:
         """Mark the curve points at the knots of the given curves."""
@@ -364,6 +392,7 @@ class PlotManager:
         # Forget the items too, or later drawings would reuse removed ones
         self.clear_plot_items()
         self._plot.clear()
+        self._spares.clear()
         x = [p[0] for p in coords]
         y = [p[1] for p in coords]
         self._data_item = self._plot.plot(
@@ -413,6 +442,7 @@ class PlotManager:
         # Ensure same length
         min_len = min(len(x_plot), len(y_plot))
         self._loss_curve.setData(x_plot[:min_len], y_plot[:min_len])
+        _settle(self._loss_plot)
 
     def update_live_plot(
         self,
@@ -507,12 +537,16 @@ class PlotManager:
         Args:
             fit_result: The optimization result containing control points.
         """
-        # Clear live items
-        self.clear_plot_items()
+        # The items of an earlier fit are reused (adding and removing items
+        # is what makes switching between runs slow); the live preview's and
+        # those of sections this fit lacks go
+        keep = {f'final_{kind}_{i}' for kind in ('curve', 'ctrl')
+                for i in range(len(fit_result.section_control_points))}
+        self._drop(self._curve_items, keep)
 
         try:
             # Plot each section
-            curves = fit_result.curves()
+            curves = self._curves(fit_result)
             for section_idx, ctrl_pts in enumerate(fit_result.section_control_points):
                 curve = curves[section_idx]
 
@@ -531,6 +565,7 @@ class PlotManager:
         except Exception:
             pass
         self.refresh_knots(fit_result)
+        _settle(self._plot)
 
     # -----------------------------------------------------------------
     # Curvature Comb
@@ -554,9 +589,12 @@ class PlotManager:
         if fit_result is None:
             return
 
-        # Clear existing comb items
-        self.clear_comb_items()
-        self._draw_combs(fit_result.curves(), scale, density, qty)
+        curves = self._curves(fit_result)
+        keep = {f'{kind}_{"upper" if i % 2 == 0 else "lower"}_{i}'
+                for kind in ('comb', 'tips') for i in range(len(curves))}
+        self._drop(self._comb_items, keep)
+        self._draw_combs(curves, scale, density, qty)
+        _settle(self._plot)
 
     def _draw_combs(self, curves: list, scale: float, density: int, qty: int) -> None:
         """Draw the curvature comb of every section."""
@@ -594,22 +632,38 @@ class PlotManager:
         cx = x + nx * val * scale
         cy = y + ny * val * scale
 
-        # Build comb segments
-        seg_x = []
-        seg_y = []
-        for x0, y0, x1, y1 in zip(x, y, cx, cy, strict=False):
-            seg_x.extend([x0, x1, np.nan])
-            seg_y.extend([y0, y1, np.nan])
+        # Build comb segments: base, tip, gap
+        gap = np.full_like(x, np.nan)
+        seg_x = np.column_stack([x, cx, gap]).ravel()
+        seg_y = np.column_stack([y, cy, gap]).ravel()
 
         self._put(self._comb_items, f'comb_{which}', seg_x, seg_y,
                   **self._comb_style(which, tips=False))
         self._put(self._comb_items, f'tips_{which}', cx, cy,
                   **self._comb_style(which, tips=True))
 
+    def _curves(self, fit_result: FitResult) -> list:
+        """The fit's curves, built once for its spline, knots and comb."""
+        if self._last_curves[0] is not fit_result:
+            self._last_curves = (fit_result, fit_result.curves())
+        return self._last_curves[1]
+
+    def _drop(self, items: dict, keep: set) -> None:
+        """Hide the items whose key is not in ``keep``, as spares for the
+        next drawing that needs them (a run with more sections)."""
+        for key in [k for k in items if k not in keep]:
+            item = items.pop(key)
+            item.setVisible(False)
+            self._spares[key] = item
+
     def _put(self, items: dict, key: str, x, y, z: float = 0, **style) -> None:
-        """Plot ``x, y`` as ``items[key]``, reusing the item if it exists:
-        adding and removing items is what makes redrawing every fit step slow."""
+        """Plot ``x, y`` as ``items[key]``, reusing the item (or a spare) if
+        it exists: adding and removing items is what makes redrawing every
+        fit step, and switching between runs, slow."""
         item = items.get(key)
+        if item is None and key in self._spares:
+            items[key] = item = self._spares.pop(key)
+            item.setVisible(True)
         if item is None:
             items[key] = item = self._plot.plot(x, y, **style)
             item.setZValue(z)
