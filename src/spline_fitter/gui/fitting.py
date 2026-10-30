@@ -329,12 +329,13 @@ class FittingController:
             return c, o
 
         # Every combination, less those with too few control points for
-        # their degree (the sidebar allows them only with both swept)
+        # their degree and junctions (the sidebar allows them only when the
+        # count is swept along with the degree or the sections)
         combinations = []
         too_few = 0
         for values in itertools.product(*(vals for _, (_, vals, _) in axes)):
             c, _ = make_configs(values)
-            if c.num_control_points < c.continuity.minimum_control_points(c.degree):
+            if c.num_control_points < c.minimum_control_points:
                 too_few += 1
             else:
                 combinations.append(values)
@@ -367,7 +368,7 @@ class FittingController:
         msg = f"Sweep: fitting {total_fits} splines ({', '.join(names)})"
         if too_few:
             msg += (f" | Left out {too_few} combinations with too few control points "
-                    "for their degree")
+                    "for their degree and junctions")
         w.statusBar().showMessage(msg + "...")
         QApplication.processEvents()
 

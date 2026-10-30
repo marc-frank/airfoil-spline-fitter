@@ -13,6 +13,7 @@ clear documentation, and automatic comparison/hashing support.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum, auto
 
@@ -79,20 +80,21 @@ class ContinuityMode(Enum):
             ContinuityMode.G3: 4,  # LE + 3 curvature-rate control points per side
         }[self]
 
-    def minimum_control_points(self, degree: int) -> int:
-        """
-        Calculate minimum control points needed for given degree and continuity.
-        
-        Args:
-            degree: The B-spline degree
-            
-        Returns:
-            Minimum number of control points per curve segment
-        """
-        # Need at least degree+1 for a valid B-spline
-        base_minimum = degree + 1
-        # Plus enough for the constrained LE points
-        return max(base_minimum, self.constrained_control_points + 1)
+    @property
+    def order(self) -> int:
+        """The number of derivatives linked at a junction (0 to 3)."""
+        return int(self.name[1])
+
+
+def minimum_control_points(junction_orders: Sequence[int], degree: int) -> int:
+    """Fewest control points per section for a chain of sections joined
+    with the given continuity orders (one per junction): more than the
+    degree, and enough that the conditions at both ends of a section do not
+    overlap. A section between two junctions of order k needs 2k + 2, an end
+    section k + 2. The rule of ``bspline_varpro.constraints``; the other
+    optimizers lay the control points out the same way."""
+    ends = [0, *junction_orders, 0]
+    return max(degree + 1, *(a + b + 2 for a, b in zip(ends, ends[1:])))
 
 
 class OptimizerType(Enum):
@@ -391,6 +393,12 @@ class SplineConfig:
             return list(self.junction_continuity)
         kind = "G" if self.geometric_continuity else "C"
         return [f"{kind}{self.continuity.name[1]}"] * (self.num_sections - 1)
+
+    @property
+    def minimum_control_points(self) -> int:
+        """Fewest control points per section the degree and the continuity
+        of every junction allow."""
+        return minimum_control_points([int(s[1]) for s in self.junction_specs()], self.degree)
 
     @property
     def free_control_points_per_section(self) -> int:

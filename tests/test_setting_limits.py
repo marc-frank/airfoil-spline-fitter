@@ -1,10 +1,15 @@
-"""The Curve settings never allow a degree or control point count the
-continuity cannot be fitted with."""
+"""The Curve settings always form a combination that can be fitted: the
+setting just changed wins, and the degree, control points and continuity
+follow it in either direction."""
 import os
 
 import pytest
 
-from spline_fitter.optimization.models import ContinuityMode
+from spline_fitter.optimization.models import (
+    ContinuityMode,
+    OptimizerType,
+    minimum_control_points,
+)
 
 
 @pytest.fixture
@@ -20,73 +25,131 @@ def window():
     app.processEvents()
 
 
-def test_control_point_minimum_applies_from_the_start(window):
-    mode = window._combo_cont.currentData()
-    degree = window._spin_degree.value()
-    assert window._spin_ctrl.minimum() == mode.minimum_control_points(degree)
-    window._spin_ctrl.setValue(2)
-    assert window._spin_ctrl.value() >= degree + 1
+def _continuity(window, mode):
+    window._combo_cont.setCurrentIndex(window._combo_cont.findData(mode))
 
 
-def test_degree_raises_the_control_point_minimum(window):
-    window._combo_cont.setCurrentIndex(window._combo_cont.findData(ContinuityMode.G0))
-    window._spin_degree.setValue(3)
-    window._spin_ctrl.setValue(4)
-    window._spin_degree.setValue(5)
-    assert window._spin_ctrl.minimum() == 6
-    assert window._spin_ctrl.value() == 6
-
-
-def test_continuity_raises_the_degree_minimum(window):
-    window._combo_cont.setCurrentIndex(window._combo_cont.findData(ContinuityMode.G0))
+def _setup(window, mode=ContinuityMode.G0, degree=3, count=6, sections=2):
+    _continuity(window, ContinuityMode.G0)
     window._spin_degree.setValue(1)
-    assert window._spin_degree.value() == 1
-    window._combo_cont.setCurrentIndex(window._combo_cont.findData(ContinuityMode.G3))
+    window._spin_ctrl.setValue(count)
+    window._spin_sections.setValue(sections)
+    window._spin_degree.setValue(degree)
+    _continuity(window, mode)
+
+
+def _state(window):
+    return (window._combo_cont.currentData(), window._spin_degree.value(),
+            window._spin_ctrl.value())
+
+
+def test_minimum_control_points_follows_the_library():
+    from bspline_varpro.constraints import Junction
+    from bspline_varpro.constraints import minimum_control_points as library
+    for orders in ([], [3], [3, 3], [1, 3, 0], [2, 2, 2, 2]):
+        for degree in (1, 3, 5):
+            junctions = [Junction(order=o) for o in orders]
+            assert minimum_control_points(orders, degree) == max(library(junctions, degree))
+
+
+def test_the_default_settings_fit(window):
+    mode, degree, count = _state(window)
+    assert count >= minimum_control_points([mode.order], degree)
+
+
+def test_raising_the_degree_raises_the_count(window):
+    _setup(window, degree=3, count=4)
+    window._spin_degree.setValue(5)
+    assert _state(window) == (ContinuityMode.G0, 5, 6)
+
+
+def test_lowering_the_count_lowers_the_degree(window):
+    _setup(window, degree=5, count=6)
+    window._spin_ctrl.setValue(2)
+    assert _state(window) == (ContinuityMode.G0, 1, 2)
+
+
+def test_lowering_the_count_lowers_the_continuity_last(window):
+    _setup(window, ContinuityMode.G3, degree=5, count=8)
+    window._spin_ctrl.setValue(4)
+    # Degree 3 still carries G3, but its junction needs 5 points: G2 needs 4
+    assert _state(window) == (ContinuityMode.G2, 3, 4)
+
+
+def test_raising_the_continuity_raises_degree_and_count(window):
+    _setup(window, degree=1, count=2)
+    _continuity(window, ContinuityMode.G3)
+    assert _state(window) == (ContinuityMode.G3, 3, 5)
+
+
+def test_lowering_the_degree_lowers_the_continuity(window):
+    _setup(window, ContinuityMode.G3, degree=3, count=6)
+    window._spin_degree.setValue(2)
+    assert _state(window) == (ContinuityMode.G2, 2, 6)
+
+
+def test_middle_sections_need_both_junctions(window):
+    _setup(window, ContinuityMode.G3, degree=3, count=5, sections=2)
+    window._spin_sections.setValue(3)
+    assert window._spin_ctrl.value() == 8
+
+
+def test_per_junction_entries_set_hard_minimums(window):
+    window._combo_opt.setCurrentIndex(window._combo_opt.findData(OptimizerType.GN_VARPRO))
+    _setup(window, ContinuityMode.G0, degree=5, count=10)
+    window._edit_junctions.setText("G3")
+    window._edit_junctions.editingFinished.emit()
     assert window._spin_degree.minimum() == 3
-    assert window._spin_degree.value() == 3
-    assert window._spin_ctrl.value() >= ContinuityMode.G3.minimum_control_points(3)
-
-
-def test_sweep_upper_end_follows_the_minimum(window):
-    window._sweep_ctrl._btn_sweep.click()
-    window._sweep_ctrl._spin_max.setValue(window._spin_ctrl.minimum())
-    window._spin_degree.setValue(window._spin_degree.value() + 2)
-    low, high = window._sweep_ctrl.sweep_range
-    assert min(low, high) >= window._spin_ctrl.minimum()
-
-
-def _g0_degree_3_with_6_control_points(window):
-    window._combo_cont.setCurrentIndex(window._combo_cont.findData(ContinuityMode.G0))
-    window._spin_degree.setValue(3)
-    window._spin_ctrl.setValue(6)
+    assert window._spin_ctrl.minimum() == 5
+    window._spin_ctrl.setValue(2)
+    assert _state(window) == (ContinuityMode.G0, 4, 5)
 
 
 def test_degree_sweep_stops_at_what_a_fixed_count_allows(window):
-    _g0_degree_3_with_6_control_points(window)
+    _setup(window, degree=3, count=6)
     window._sweep_degree._btn_sweep.click()
     window._sweep_degree._spin_max.setValue(10)
     assert window._sweep_degree.sweep_range == (3, 5)
-    assert window._spin_ctrl.value() == 6
-    # Every swept degree must fit the count, so it cannot go below the top's need
+    # Fewer control points lower the swept degrees with them
     window._spin_ctrl.setValue(4)
-    assert window._spin_ctrl.value() == 6
+    assert window._sweep_degree.sweep_range == (3, 3)
 
 
-def test_degree_and_count_both_swept_open_the_limits(window):
-    _g0_degree_3_with_6_control_points(window)
+def test_section_sweep_stops_before_middle_sections_a_fixed_count_lacks(window):
+    _setup(window, ContinuityMode.G3, degree=3, count=6)
+    window._sweep_sections._btn_sweep.click()
+    window._sweep_sections._spin_max.setValue(5)
+    assert window._sweep_sections.sweep_range == (2, 2)
+    window._spin_ctrl.setValue(8)
+    window._sweep_sections._spin_max.setValue(5)
+    assert window._sweep_sections.sweep_range == (2, 5)
+
+
+def test_count_swept_with_the_degree_opens_the_limits(window):
+    _setup(window, degree=3, count=6)
     window._sweep_degree._btn_sweep.click()
     window._sweep_ctrl._btn_sweep.click()
     window._sweep_degree._spin_max.setValue(10)
     assert window._sweep_degree.sweep_range == (3, 10)
     window._spin_ctrl.setValue(4)
     assert window._spin_ctrl.value() == 4
-    # Back to a fixed count: it stays, and the degree sweep is capped again
+    # Back to a fixed count: it stays, and the swept degrees follow it
     window._sweep_ctrl._btn_sweep.click()
     assert window._spin_ctrl.value() == 4
     assert window._sweep_degree.sweep_range == (3, 3)
 
 
-def test_applying_a_stored_run_keeps_its_degree(window):
+def test_a_grown_tolerance_fit_ignores_the_count(window):
+    window._combo_opt.setCurrentIndex(window._combo_opt.findData(OptimizerType.GN_VARPRO))
+    window._seg_goal.setCurrentIndex(1)
+    window._check_grow.setChecked(True)
+    _setup(window, degree=3, count=4)
+    window._sweep_degree._btn_sweep.click()
+    window._sweep_degree._spin_max.setValue(9)
+    assert window._sweep_degree.sweep_range == (3, 9)
+
+
+def test_applying_a_stored_run_keeps_its_settings(window):
     from types import SimpleNamespace
 
     from spline_fitter.optimization.models import (
@@ -95,10 +158,9 @@ def test_applying_a_stored_run_keeps_its_degree(window):
         SplineConfig,
     )
 
-    window._combo_cont.setCurrentIndex(window._combo_cont.findData(ContinuityMode.G3))
+    _continuity(window, ContinuityMode.G3)
     cfg = SplineConfig(degree=2, num_control_points=4, continuity=ContinuityMode.G2)
     run = SimpleNamespace(spline_config=cfg, optimization_config=OptimizationConfig(),
                           fairness_weights=FairnessWeights())
     window._apply_run_settings(run)
-    assert window._spin_degree.value() == 2
-    assert window._spin_ctrl.value() == 4
+    assert _state(window) == (ContinuityMode.G2, 2, 4)

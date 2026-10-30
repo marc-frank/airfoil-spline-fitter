@@ -538,6 +538,10 @@ class SweepableSpinBox(QWidget):
         self._spin.setMinimum(minimum)
         self._spin_max.setMinimum(minimum)
 
+    def ends(self) -> list[QSpinBox]:
+        """The value, and the sweep's upper end while sweeping."""
+        return [self._spin, self._spin_max] if self._sweep_active else [self._spin]
+
     def set_sweep_maximum(self, maximum: int) -> None:
         """Set the highest allowed upper end of the sweep; one above it is
         lowered to it. The value itself keeps its own maximum."""
