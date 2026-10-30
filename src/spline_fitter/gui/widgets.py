@@ -476,6 +476,9 @@ class SweepableSpinBox(QWidget):
     combination of their values.
     """
 
+    # Sweep mode turned on or off, or the range's upper end changed
+    sweep_changed = pyqtSignal()
+
     def __init__(self, spin_box: QSpinBox, group: list | None = None, parent=None):
         super().__init__(parent)
         self._sweep_active = False
@@ -506,6 +509,7 @@ class SweepableSpinBox(QWidget):
         self._spin_max.setSingleStep(self._spin.singleStep())
         self._spin_max.setValue(min(self._spin.value() * 2, self._spin.maximum()))
         self._spin_max.setVisible(False)
+        self._spin_max.valueChanged.connect(lambda _: self.sweep_changed.emit())
         lay.addWidget(self._spin_max, stretch=1)
 
     # ------------------------------------------------------------------
@@ -515,6 +519,7 @@ class SweepableSpinBox(QWidget):
         if checked:
             self._spin_max.setMinimum(self._spin.minimum())
             self._spin_max.setValue(min(self._spin.value() * 2, self._spin.maximum()))
+        self.sweep_changed.emit()
 
     def stop_sweep(self) -> None:
         """Leave sweep mode."""
@@ -526,6 +531,17 @@ class SweepableSpinBox(QWidget):
         if not allowed and self._sweep_active:
             self.stop_sweep()
         self._btn_sweep.setEnabled(allowed)
+
+    def set_minimum(self, minimum: int) -> None:
+        """Set the lowest allowed value, of the value and the sweep's upper end
+        alike; either one below it is raised to it."""
+        self._spin.setMinimum(minimum)
+        self._spin_max.setMinimum(minimum)
+
+    def set_sweep_maximum(self, maximum: int) -> None:
+        """Set the highest allowed upper end of the sweep; one above it is
+        lowered to it. The value itself keeps its own maximum."""
+        self._spin_max.setMaximum(maximum)
 
     @property
     def is_sweep_active(self) -> bool:

@@ -329,13 +329,12 @@ class FittingController:
             return c, o
 
         # Every combination, less those with too few control points for
-        # their degree
+        # their degree (the sidebar allows them only with both swept)
         combinations = []
         too_few = 0
         for values in itertools.product(*(vals for _, (_, vals, _) in axes)):
             c, _ = make_configs(values)
-            if ("Control points" in names
-                    and c.num_control_points < c.continuity.minimum_control_points(c.degree)):
+            if c.num_control_points < c.continuity.minimum_control_points(c.degree):
                 too_few += 1
             else:
                 combinations.append(values)

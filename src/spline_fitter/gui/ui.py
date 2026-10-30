@@ -259,8 +259,12 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._check_subsample.toggled.connect(self._spin_subsample.setEnabled)
 
         # Spline configuration
-        self._spin_degree.valueChanged.connect(self._update_ctrl_minimum)
-        self._combo_cont.currentIndexChanged.connect(self._update_ctrl_minimum)
+        self._spin_degree.valueChanged.connect(self._update_curve_minimums)
+        self._combo_cont.currentIndexChanged.connect(self._update_curve_minimums)
+        self._spin_ctrl.valueChanged.connect(self._update_curve_minimums)
+        self._sweep_degree.sweep_changed.connect(self._update_curve_minimums)
+        self._sweep_ctrl.sweep_changed.connect(self._update_curve_minimums)
+        self._update_curve_minimums()
         self._combo_cont_kind.currentIndexChanged.connect(self._update_continuity_labels)
 
         # Display options
@@ -410,10 +414,11 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._check_grow.setChecked(opt.grow_control_points)
         choose(self._seg_err, opt.metric)
 
-        # Curve; degree and continuity before the count, whose minimum they set
+        # Curve; continuity before the degree and both before the count, as
+        # each sets the minimum of the next
         self._spin_sections.setValue(cfg.num_sections)
-        self._spin_degree.setValue(cfg.degree)
         choose(self._combo_cont, cfg.continuity)
+        self._spin_degree.setValue(cfg.degree)
         choose(self._combo_cont_kind, cfg.geometric_continuity)
         self._spin_ctrl.setMaximum(max(self._spin_ctrl.maximum(), cfg.num_control_points))
         self._spin_ctrl.setValue(cfg.num_control_points)
@@ -490,21 +495,35 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
             self.statusBar().showMessage(f"Failed to re-split airfoil: {e}")
             self._play_error_chime()
 
-    def _update_ctrl_minimum(self):
-        """Update minimum control points based on degree and continuity."""
-        try:
-            degree = self._spin_degree.value()
-            mode = self._combo_cont.currentData()
-            if mode is None:
-                return
+    def _update_curve_minimums(self):
+        """Keep the degree and control points at what the continuity needs: the
+        degree its derivative order, the control points the degree plus one
+        and the points the junction constrains. Raising the degree's minimum
+        can raise the degree, which calls this again for the control points.
 
-            min_ctrl = mode.minimum_control_points(degree)
-            self._spin_ctrl.setMinimum(min_ctrl)
+        A degree sweep with a fixed count must fit that count at every swept
+        degree, so its upper end stops at the highest degree the count allows.
+        With both swept, the limits are those of the lowest swept degree, and
+        the sweep leaves out the combinations with too few control points."""
+        mode = self._combo_cont.currentData()
+        if mode is None:
+            return
+        self._sweep_degree.set_minimum(mode.minimum_degree)
 
-            if self._spin_ctrl.value() < min_ctrl:
-                self._spin_ctrl.setValue(min_ctrl)
-        except Exception:
-            pass
+        # The cap first, so fixing the count lowers the swept degrees, not
+        # the other way round
+        ctrl_swept = self._sweep_ctrl.is_sweep_active
+        top = self._spin_degree.maximum()
+        if not ctrl_swept:
+            count = self._spin_ctrl.value()
+            top = max((d for d in range(mode.minimum_degree, top + 1)
+                       if mode.minimum_control_points(d) <= count), default=top)
+        self._sweep_degree.set_sweep_maximum(top)
+
+        degrees = (self._sweep_degree.sweep_range if self._sweep_degree.is_sweep_active
+                   else (self._spin_degree.value(),))
+        self._sweep_ctrl.set_minimum(
+            mode.minimum_control_points(min(degrees) if ctrl_swept else max(degrees)))
 
     def _update_loss_plot_axis(self):
         """Update loss plot X-axis based on combo selection."""
