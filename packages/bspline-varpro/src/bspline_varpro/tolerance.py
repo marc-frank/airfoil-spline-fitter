@@ -457,7 +457,8 @@ def grow_to_counts(sections, counts, degree, options: ChainOptions, t_sections, 
 
     Each round adds one knot to every span whose largest deviation is at least
     half the section's largest, worst span first, until each section has its
-    count. With ``"free"`` placement the knots go into those spans and are
+    count; when none of those spans can be split, any span holding two points
+    is. With ``"free"`` placement the knots go into those spans and are
     finally moved to where they reduce the error most (unless subsampled);
     with ``"uniform"`` the section is respaced evenly with the new count.
     """
@@ -480,6 +481,10 @@ def grow_to_counts(sections, counts, degree, options: ChainOptions, t_sections, 
             if room <= 0:
                 continue
             new = _new_knots(knots[s], t_sections[s], devs[s], 0.5 * float(np.max(devs[s])), 1e-4)[:room]
+            if not new:
+                # The worst points can sit alone in their spans, which cannot be
+                # split; any span holding two points can, worst first
+                new = _new_knots(knots[s], t_sections[s], devs[s], -1.0, 1e-4)[:room]
             if knot_placement == "uniform":
                 knots[s] = open_uniform_knots(degree, len(knots[s]) - degree - 1 + max(len(new), 1))
                 inserted = True

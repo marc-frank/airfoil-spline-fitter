@@ -169,6 +169,15 @@ def test_fixed_count_placement_and_growth():
         bv.validate_knots(k, 5)
 
 
+@pytest.mark.parametrize("count", [28, 30])
+def test_growth_reaches_dense_counts(count):
+    # Near interpolation the worst points sit alone in their knot spans
+    sections = naca_sections(31, code="2412")
+    result = bv.fit(sections, count, 3, continuity="G1", max_nfev=100,
+                    knot_placement="free", grow=True)
+    assert result.num_control_points == [count, count]
+
+
 def test_tolerance_fit_can_start_from_a_control_point_count():
     sections = naca_sections(61)
     result = bv.fit_to_tolerance(sections, 1e-4, 5, initial_control_points=9, remove_knots=False)
