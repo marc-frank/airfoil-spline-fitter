@@ -21,13 +21,18 @@ view (a flat vector of real-valued variables) and the spline's view
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 
 import numpy as np
 
 from ..geometry import compute_arc_length_parameters
-from ..spline.fairness import compute_fairness_penalty
+from ..spline.fairness import compute_fairness_penalty, compute_penalty_scales
 from ..spline.spline import BSplineCurve2D
-from .control_points import construct_control_points, generate_initial_guess
+from .control_points import (
+    construct_control_points,
+    generate_initial_guess,
+    initial_guess_from_fit,
+)
 from .models import (
     AirfoilData,
     Bounds,
@@ -67,6 +72,7 @@ def compute_fitting_error(
     t_params: list[list[float]],
     fairness_weights: FairnessWeights,
     optimize_le_position: bool = False,
+    penalty_scales: FairnessWeights | None = None,
 ) -> float:
     """
     Compute the spline fitting objective function for n sections.
@@ -84,6 +90,7 @@ def compute_fitting_error(
         t_params: Parameter values for each section
         fairness_weights: Weights for regularization terms
         optimize_le_position: If True, LE position is in variables
+        penalty_scales: Multiplier per penalty term (compute_penalty_scales)
         
     Returns:
         Total objective function value
@@ -135,7 +142,7 @@ def compute_fitting_error(
         if fairness_weights.is_enabled:
             try:
                 regularization = compute_fairness_penalty(
-                    section_ctrl_pts, curves, fairness_weights
+                    section_ctrl_pts, curves, fairness_weights, penalty_scales
                 )
             except Exception:
                 regularization = 0.0
@@ -214,22 +221,53 @@ def run_optimization(
 
     optimize_le = opt_config.optimize_le_position
 
+    # Start from the plain least-squares fit: it already follows the shape and
+    # meets the junction conditions, and it costs one linear solve. On the
+    # objective's own parameters it is the best fit the parametric metric can
+    # reach without penalties. It is also the yardstick for the fairness
+    # penalties, so their weights mean the same for every shape, unit and
+    # degree. The polyline guess stands in when it fails.
+    penalty_scales = None
+    try:
+        reference = get_optimizer(OptimizerType.DIRECT_LSQ).fit(
+            config, replace(opt_config, custom_parameters=t_params), airfoil)
+        reference_pts = reference.section_control_points
+        x0 = initial_guess_from_fit(config, reference_pts, bounds, optimize_le_position=optimize_le)
+        if fairness_weights.is_enabled:
+            penalty_scales = compute_penalty_scales(
+                reference_pts, [BSplineCurve2D(config.degree, pts) for pts in reference_pts],
+                reference.fun)
+    except Exception:
+        x0 = generate_initial_guess(
+            config, sections, t_params, bounds,
+            optimize_le_position=optimize_le,
+        )
+
+    # The best point evaluated: a stopped run reports its last iterate, and an
+    # iterate can end above the starting point
+    best = {"x": x0, "fun": float("inf")}
+
     def objective(x):
-        return compute_fitting_error(
+        value = compute_fitting_error(
             x, config, opt_config,
             sections, t_params,
             fairness_weights,
             optimize_le_position=optimize_le,
+            penalty_scales=penalty_scales,
         )
+        if value < best["fun"]:
+            best["x"], best["fun"] = np.array(x, dtype=np.float64), value
+        return value
 
-    # Generate initial guess for local optimizers
-    x0 = generate_initial_guess(
-        config, sections, t_params, bounds,
-        optimize_le_position=optimize_le,
-    )
+    # Every control point fixed (degree 1 with ends and junctions only): the
+    # curve is already determined, and the optimizers reject an empty vector
+    if len(x0) == 0:
+        return RawOptimResult(x=x0, fun=objective(x0), nit=0)
+
+    objective(x0)
 
     # Run the optimizer
-    return optimizer.optimize(
+    result = optimizer.optimize(
         objective=objective,
         x0=x0,
         bounds=bounds,
@@ -237,3 +275,6 @@ def run_optimization(
         callback=callback,
         seed=opt_config.random_seed,
     )
+    if not result.fun <= best["fun"]:
+        result.x, result.fun = best["x"], best["fun"]
+    return result

@@ -69,6 +69,7 @@ def compute_fitting_error(
     fairness_weights: FairnessWeights,
     construct_control_points_fn,
     optimize_le_position: bool = False,
+    penalty_scales: FairnessWeights | None = None,
 ) -> float:
     """
     Compute the spline fitting objective function for n sections.
@@ -87,6 +88,7 @@ def compute_fitting_error(
         fairness_weights: Weights for regularization terms
         construct_control_points_fn: Function to build control points from variables
         optimize_le_position: If True, LE position is in variables
+        penalty_scales: Multiplier per penalty term (compute_penalty_scales)
         
     Returns:
         Total objective function value
@@ -139,7 +141,7 @@ def compute_fitting_error(
         if fairness_weights.is_enabled:
             try:
                 regularization = compute_fairness_penalty(
-                    section_ctrl_pts, curves, fairness_weights
+                    section_ctrl_pts, curves, fairness_weights, penalty_scales
                 )
             except Exception:
                 regularization = 0.0

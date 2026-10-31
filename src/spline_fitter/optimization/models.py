@@ -491,7 +491,9 @@ class FairnessWeights:
     point distributions and smooth curvature profiles. Each weight
     controls how strongly to penalize a particular aspect of unfairness.
     
-    All weights should be in range [0, 1]. A value of 0 disables the term.
+    Weights are 0 or more. A value of 0 disables the term;
+    at 1 a term equals the error of the plain least-squares fit (see
+    compute_penalty_scales).
     
     Attributes:
         length_variance: Penalize uneven spacing between control points

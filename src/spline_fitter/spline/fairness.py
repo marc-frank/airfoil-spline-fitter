@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from dataclasses import fields
 
 import numpy as np
 
@@ -243,12 +244,13 @@ def compute_curve_energy(
             # Curvature squared integral: ∫κ² |v| dt
             curvature_integral += float(np.sum(w * (kappa ** 2) * speed))
 
-            if not has_third_deriv:
-                continue
-
-            # Third derivatives (jerk)
-            jx = d3x_spline(t_values)
-            jy = d3y_spline(t_values)
+            # Third derivatives (jerk); zero for a quadratic, whose curvature
+            # still changes along it
+            if has_third_deriv:
+                jx = d3x_spline(t_values)
+                jy = d3y_spline(t_values)
+            else:
+                jx = jy = np.zeros_like(t_values)
 
             # Curvature derivative with respect to arc length
             cross_prime = vx * jy - vy * jx
@@ -287,6 +289,7 @@ def compute_fairness_penalty(
     section_control_points: Sequence[PointList],
     section_curves: Sequence[BSplineCurve2D | None],
     weights: FairnessWeights,
+    scales: FairnessWeights | None = None,
 ) -> float:
     """
     Compute the total fairness regularization penalty for n sections.
@@ -298,6 +301,7 @@ def compute_fairness_penalty(
         section_control_points: List of control point lists for each section
         section_curves: List of B-spline curves (for energy terms)
         weights: Weights for each regularization term
+        scales: Multiplier per term (see compute_penalty_scales); 1 when None
         
     Returns:
         Total weighted regularization penalty (averaged over sections)
@@ -359,12 +363,53 @@ def compute_fairness_penalty(
     length_variance, polygon_bend, anti_bunching, end_handles, curvature_sq, curvature_grad = terms
 
     # Compute weighted sum
+    values = {
+        'length_variance': length_variance,
+        'polygon_bend': polygon_bend,
+        'anti_bunching': anti_bunching,
+        'end_handles': end_handles,
+        'curvature_squared': curvature_sq,
+        'curvature_gradient': curvature_grad,
+    }
     penalty = 0.0
-    penalty += weights.length_variance * length_variance
-    penalty += weights.polygon_bend * polygon_bend
-    penalty += weights.anti_bunching * anti_bunching
-    penalty += weights.end_handles * end_handles
-    penalty += weights.curvature_squared * curvature_sq
-    penalty += weights.curvature_gradient * curvature_grad
+    for name, value in values.items():
+        scale = 1.0 if scales is None else getattr(scales, name)
+        penalty += getattr(weights, name) * value * scale
 
     return float(penalty)
+
+
+def compute_penalty_scales(
+    section_control_points: Sequence[PointList],
+    section_curves: Sequence[BSplineCurve2D | None],
+    reference_error: float,
+) -> FairnessWeights:
+    """
+    Multipliers that put every penalty term on the scale of the fit.
+    
+    Unscaled, the terms are dimensionless while the fitting error is a length,
+    and bending and wiggle grow with the curvature of the shape (on an
+    airfoil's leading edge, wiggle is many decades above the fitting error),
+    so a weight would mean something different for every shape, unit and
+    degree. Scaled, each term at weight 1 equals ``reference_error`` on the
+    given reference curve.
+    
+    Args:
+        section_control_points: Control points of the reference curve
+        section_curves: B-spline curves of the reference curve
+        reference_error: Fitting error of the reference curve
+        
+    Returns:
+        Multiplier per term for compute_fairness_penalty. A term that is zero
+        on the reference curve (bunching on an even polygon) counts as 1,
+        the natural size of a dimensionless term.
+    """
+    if not math.isfinite(reference_error):
+        return FairnessWeights(**{f.name: 1.0 for f in fields(FairnessWeights)})
+    scales = {}
+    for f in fields(FairnessWeights):
+        term = compute_fairness_penalty(
+            section_control_points, section_curves, FairnessWeights(**{f.name: 1.0}))
+        usable = term > 0 and math.isfinite(term)
+        scales[f.name] = reference_error / (term if usable else 1.0)
+    return FairnessWeights(**scales)

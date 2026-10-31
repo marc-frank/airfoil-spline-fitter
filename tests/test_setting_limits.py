@@ -164,3 +164,12 @@ def test_applying_a_stored_run_keeps_its_settings(window):
                           fairness_weights=FairnessWeights())
     window._apply_run_settings(run)
     assert _state(window) == (ContinuityMode.G2, 2, 4)
+
+
+def test_curvature_penalties_need_a_curved_degree(window):
+    window._check_fairness.setChecked(True)
+    _setup(window, degree=1)
+    assert window._spin_w_bend.isEnabled()
+    assert not window._spin_w_curv.isEnabled() and not window._spin_w_grad.isEnabled()
+    window._spin_degree.setValue(2)
+    assert window._spin_w_curv.isEnabled() and window._spin_w_grad.isEnabled()

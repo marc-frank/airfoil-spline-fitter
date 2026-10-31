@@ -14,7 +14,7 @@ from collections.abc import Sequence
 import numpy as np
 
 from ..geometry import interpolate_along_polyline
-from ..spline.spline import create_open_uniform_knots
+from ..spline.spline import BSplineCurve2D, create_open_uniform_knots
 from .constraints import compute_derivative_constraint_coeffs
 from .models import (
     Bounds,
@@ -61,7 +61,8 @@ def construct_control_points(
         variables: Flat array of optimization variables
         config: Spline configuration with continuity mode
         sections: List of n point lists (original section data for endpoints)
-        optimize_le_position: If True, extract LE (x, y) from variables (only for n>=2)
+        optimize_le_position: If True, every junction's (x, y) is at the end of
+            the variables (only for n>=2)
         
     Returns:
         List of n control point lists, one per section
@@ -133,8 +134,8 @@ def construct_control_points(
             # Last section: n_constrained junction CPs + n_free + 1 endpoint
             return max(0, n_ctrl - 1 - n_constrained)
         else:
-            # Interior: n_constrained left + n_free + n_constrained right (but shared points)
-            return max(0, n_ctrl - 2 * n_constrained + 1)
+            # Interior: n_constrained left + n_free + n_constrained right
+            return max(0, n_ctrl - 2 * n_constrained)
 
     # Calculate total free point variables
     total_free_pts = sum(get_n_free_for_section(i) for i in range(num_sections))
@@ -163,6 +164,14 @@ def construct_control_points(
     else:  # G3
         params_per_junction = 6  # D1x, D1y, D2x, D2y, D3x, D3y
 
+    # Junction points: the split points, or one moving (x, y) per junction at
+    # the end of the variables
+    junction_pts = [section[-1] for section in sections[:-1]]
+    if optimize_le_position:
+        tail = len(variables) - 2 * len(junction_pts)
+        junction_pts = [(float(variables[tail + 2 * j]), float(variables[tail + 2 * j + 1]))
+                        for j in range(len(junction_pts))]
+
     # Build control points for each section
     result = []
 
@@ -176,13 +185,7 @@ def construct_control_points(
             start_pt = section[0]
             junction_idx = 0
 
-            # Get junction point
-            if optimize_le_position and num_sections >= 2:
-                # For n=2 with LE optimization, junction is the LE
-                junction_pt = (float(variables[-2]), float(variables[-1]))
-            else:
-                # Junction point is the last point of this section
-                junction_pt = section[-1]
+            junction_pt = junction_pts[junction_idx]
 
             # Compute constrained CPs at junction end
             if mode == ContinuityMode.G0:
@@ -203,11 +206,7 @@ def construct_control_points(
             junction_idx = section_idx - 1
             end_pt = section[-1]
 
-            # Get junction point (same as end of previous section)
-            if optimize_le_position and num_sections == 2:
-                junction_pt = (float(variables[-2]), float(variables[-1]))
-            else:
-                junction_pt = section[0]
+            junction_pt = junction_pts[junction_idx]
 
             # Compute constrained CPs at junction start
             if mode == ContinuityMode.G0:
@@ -225,8 +224,8 @@ def construct_control_points(
             left_junction_idx = section_idx - 1
             right_junction_idx = section_idx
 
-            left_junction_pt = section[0]
-            right_junction_pt = section[-1]
+            left_junction_pt = junction_pts[left_junction_idx]
+            right_junction_pt = junction_pts[right_junction_idx]
 
             if mode == ContinuityMode.G0:
                 ctrl_pts = [left_junction_pt] + free_pts + [right_junction_pt]
@@ -378,7 +377,7 @@ def generate_initial_guess(
         sections: List of n section point lists
         t_params: Arc-length parameters for each section
         bounds: Variable bounds for clamping
-        optimize_le_position: If True, append LE (x, y) initial guess (n>=2 only)
+        optimize_le_position: If True, append every junction's (x, y) (n>=2 only)
         
     Returns:
         Initial guess as a numpy array
@@ -415,7 +414,7 @@ def generate_initial_guess(
         elif section_idx == 0 or section_idx == num_sections - 1:
             return max(0, n_ctrl - 1 - n_constrained)
         else:
-            return max(0, n_ctrl - 2 * n_constrained + 1)
+            return max(0, n_ctrl - 2 * n_constrained)
 
     x0 = []
 
@@ -477,11 +476,79 @@ def generate_initial_guess(
                 # Parametric G3: D1, D2, D3
                 x0.extend([D1[0], D1[1], D2[0], D2[1], D3[0], D3[1]])
 
-    # Append LE position if optimizing (for n=2 backward compatibility)
+    # Junction positions start at the split points
     if optimize_le_position and num_sections >= 2:
-        x0.extend([0.0, 0.0])
+        for section in sections[:-1]:
+            x0.extend([float(section[-1][0]), float(section[-1][1])])
 
-    # Clamp to bounds
+    return _clamp_to_bounds(x0, bounds)
+
+
+def initial_guess_from_fit(
+    config: SplineConfig,
+    section_control_points: list[PointList],
+    bounds: Sequence[Bounds],
+    optimize_le_position: bool = False,
+) -> np.ndarray:
+    """
+    The variables that reproduce a fitted curve, the inverse of construct_control_points.
+    
+    The fit must have the configured degree and count in every section, on open
+    uniform knots, with the configured continuity at its junctions (as the
+    constrained least-squares fit has). Free control points are copied; each
+    junction's parameters are the curve's derivatives there, averaged over both
+    sides.
+    
+    Args:
+        config: Spline configuration
+        section_control_points: Control points of the fit, one list per section
+        bounds: Variable bounds for clamping
+        optimize_le_position: If True, append every junction's (x, y) (n>=2 only)
+        
+    Returns:
+        Initial guess as a numpy array
+    """
+    degree = config.degree
+    n_ctrl = config.num_control_points
+    mode = config.continuity
+    num_sections = len(section_control_points)
+    n_constrained = mode.constrained_control_points
+    if any(len(pts) != n_ctrl for pts in section_control_points):
+        raise ValueError(f"Every section needs {n_ctrl} control points")
+
+    x0: list[float] = []
+    for section_idx, pts in enumerate(section_control_points):
+        if num_sections == 1:
+            free_pts = pts[1:-1]
+        elif section_idx == 0:
+            free_pts = pts[1:max(1, n_ctrl - n_constrained)]
+        else:
+            # After the junction point and its constrained neighbours
+            end = n_ctrl - 1 if section_idx == num_sections - 1 else n_ctrl - n_constrained
+            free_pts = pts[n_constrained:max(n_constrained, end)]
+        for x, y in free_pts:
+            x0.extend([float(x), float(y)])
+
+    order = n_constrained - 1
+    if num_sections >= 2 and order > 0:
+        names = (('dx', 'dy'), ('d2x', 'd2y'), ('d3x', 'd3y'))
+        curves = [BSplineCurve2D(degree, pts) for pts in section_control_points]
+        for before, after in zip(curves[:-1], curves[1:], strict=False):
+            d_before = before.evaluate_derivatives(np.array([1.0]), max_order=order, min_order=1)
+            d_after = after.evaluate_derivatives(np.array([0.0]), max_order=order, min_order=1)
+            for name_x, name_y in names[:order]:
+                x0.extend([0.5 * float(d_before[name_x][0] + d_after[name_x][0]),
+                           0.5 * float(d_before[name_y][0] + d_after[name_y][0])])
+
+    if optimize_le_position and num_sections >= 2:
+        for pts in section_control_points[:-1]:
+            x0.extend([float(pts[-1][0]), float(pts[-1][1])])
+
+    return _clamp_to_bounds(x0, bounds)
+
+
+def _clamp_to_bounds(x0: Sequence[float], bounds: Sequence[Bounds]) -> np.ndarray:
+    """The variables clamped to their bounds (open where a bound is None)."""
     x0_clamped = []
     for i, val in enumerate(x0):
         if i < len(bounds):

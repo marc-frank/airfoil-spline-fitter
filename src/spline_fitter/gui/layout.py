@@ -914,7 +914,9 @@ class WindowLayoutMixin:
 
         self._check_fairness = QCheckBox("Add fairness penalties")
         self._check_fairness.setChecked(False)
-        self._check_fairness.setToolTip("Add fairness penalties to the objective function.")
+        self._check_fairness.setToolTip(
+            "Add fairness penalties to the objective function.\n"
+            "At weight 1, each penalty equals the error of a plain least-squares fit.")
         layout.addWidget(self._check_fairness)
 
         self._fairness_container = QWidget()
@@ -922,7 +924,7 @@ class WindowLayoutMixin:
         self._fairness_container.setLayout(wf)
 
         def _ws() -> QDoubleSpinBox:
-            s = QDoubleSpinBox(); s.setRange(0.0, 1.0); s.setDecimals(4)
+            s = ScientificSpinBox(); s.setRange(0.0, 1e4)
             s.setSingleStep(0.001); s.setValue(0.0); return s
 
         self._spin_w_lenvar = _ws()
@@ -943,13 +945,15 @@ class WindowLayoutMixin:
 
         self._spin_w_curv = _ws()
         self._spin_w_curv.setToolTip(
-            "Penalize bending energy: the integral of \u03BA\u00B2 along the curve")
-        _add_row(wf, "Bending", self._spin_w_curv)
+            "Penalize bending energy: the integral of \u03BA\u00B2 along the curve.\n"
+            "Degree 2 or more: a degree 1 curve is straight between its knots.")
+        self._lbl_w_curv = _add_row(wf, "Bending", self._spin_w_curv)
 
         self._spin_w_grad = _ws()
         self._spin_w_grad.setToolTip(
-            "Penalize wiggles: the integral of (d\u03BA/ds)\u00B2 along the curve")
-        _add_row(wf, "Wiggle", self._spin_w_grad)
+            "Penalize wiggles: the integral of (d\u03BA/ds)\u00B2 along the curve.\n"
+            "Degree 2 or more: a degree 1 curve is straight between its knots.")
+        self._lbl_w_grad = _add_row(wf, "Wiggle", self._spin_w_grad)
 
         layout.addWidget(self._fairness_container)
         self._fairness_container.setEnabled(False)

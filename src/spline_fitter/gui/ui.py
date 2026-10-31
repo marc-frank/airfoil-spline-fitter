@@ -547,6 +547,11 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
             self._resolve_curve(changed)
         finally:
             self._resolving_curve = False
+        # The curvature penalties of a degree 1 curve, straight between its
+        # knots, are zero
+        curved = max(s.value() for s in self._sweep_degree.ends()) >= 2
+        for widget in (self._lbl_w_curv, self._spin_w_curv, self._lbl_w_grad, self._spin_w_grad):
+            widget.setEnabled(curved)
 
     def _resolve_curve(self, changed: str) -> None:
         degree, count, sections = self._sweep_degree, self._sweep_ctrl, self._sweep_sections

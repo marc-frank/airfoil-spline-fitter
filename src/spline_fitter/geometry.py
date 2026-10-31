@@ -23,7 +23,6 @@ from .optimization.models import (
     AirfoilData,
     BoundingBox,
     Bounds,
-    ContinuityMode,
     Point2D,
     PointList,
     SplineConfig,
@@ -499,8 +498,8 @@ def compute_optimization_bounds(
             # End sections: 1 endpoint + n_free + n_constrained junction CPs
             return max(0, n_ctrl - 1 - n_constrained)
         else:
-            # Interior: junction both sides (shared points)
-            return max(0, n_ctrl - 2 * n_constrained + 1)
+            # Interior: n_constrained at each junction
+            return max(0, n_ctrl - 2 * n_constrained)
 
     # Add bounds for free control points in all sections
     for section_idx in range(num_sections):
@@ -510,38 +509,26 @@ def compute_optimization_bounds(
     # Add bounds for junction parameters (n-1 junctions for n sections)
     num_junctions = max(0, num_sections - 1)
 
+    # Parametric derivatives grow with the knot density: the k-th by about
+    # (n_ctrl - degree)^k times the airfoil's size, along either axis (the
+    # tangent is vertical at the leading edge)
+    span = max(base_w, base_h)
+    density = max(1, n_ctrl - config.degree)
+    order = mode.constrained_control_points - 1
     for _junction_idx in range(num_junctions):
-        if mode == ContinuityMode.G0:
-            # No extra parameters for G0
-            pass
+        for k, factor in zip((1, 2, 3), (3.0, 10.0, 50.0), strict=False):
+            if k <= order:
+                limit = factor * span * density ** k
+                bounds.append((-limit, limit))  # Dk x
+                bounds.append((-limit, limit))  # Dk y
 
-        elif mode == ContinuityMode.G1:
-            # Parametric G1: D1x, D1y (same derivative both sides)
-            bounds.append((-3.0 * base_w, 3.0 * base_w))  # D1x
-            bounds.append((-3.0 * base_h, 3.0 * base_h))  # D1y
-
-        elif mode == ContinuityMode.G2:
-            # Parametric G2: D1x, D1y, D2x, D2y
-            bounds.append((-3.0 * base_w, 3.0 * base_w))    # D1x
-            bounds.append((-3.0 * base_h, 3.0 * base_h))    # D1y
-            bounds.append((-10.0 * base_w, 10.0 * base_w))  # D2x
-            bounds.append((-10.0 * base_h, 10.0 * base_h))  # D2y
-
-        else:  # G3
-            # Parametric G3: D1, D2, D3
-            bounds.append((-3.0 * base_w, 3.0 * base_w))      # D1x
-            bounds.append((-3.0 * base_h, 3.0 * base_h))      # D1y
-            bounds.append((-10.0 * base_w, 10.0 * base_w))    # D2x
-            bounds.append((-10.0 * base_h, 10.0 * base_h))    # D2y
-            bounds.append((-50.0 * base_w, 50.0 * base_w))    # D3x
-            bounds.append((-50.0 * base_h, 50.0 * base_h))    # D3y
-
-    # Optional LE position variables (appended at end)
+    # Optional junction positions (appended at end): each near its split point
     if optimize_le_position and num_sections >= 2:
-        # Allow LE to move within a small range around origin
-        le_range = 0.02  # ±2% of chord
-        bounds.append((-le_range, le_range))  # LE x
-        bounds.append((-le_range, le_range))  # LE y
+        reach = 0.02 * base_w  # 2% of chord
+        for section in airfoil.sections[:-1]:
+            jx, jy = section[-1]
+            bounds.append((jx - reach, jx + reach))
+            bounds.append((jy - reach, jy + reach))
 
     return bounds
 
