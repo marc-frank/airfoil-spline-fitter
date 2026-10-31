@@ -270,11 +270,16 @@ class BSplineCurve2D:
                 'dx', 'dy': First derivatives (if max_order >= 1)
                 'd2x', 'd2y': Second derivatives (if max_order >= 2)
                 'd3x', 'd3y': Third derivatives (if max_order >= 3)
+            Derivatives above the degree are zero.
         """
         t = np.asarray(t, dtype=np.float64)
         result = {}
         names = (('x', 'y'), ('dx', 'dy'), ('d2x', 'd2y'), ('d3x', 'd3y'))
-        for order in range(min_order, min(max_order, self.degree, 3) + 1):
+        for order in range(min_order, min(max_order, 3) + 1):
+            if order > self.degree:
+                # Derivatives above the degree vanish
+                result[names[order][0]] = result[names[order][1]] = np.zeros_like(t)
+                continue
             # x and y in one call, each order straight from the curve's own
             # coefficients (no derivative spline built per call)
             values = self._spline_xy(t, order)

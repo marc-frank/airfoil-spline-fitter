@@ -53,3 +53,18 @@ def test_derivatives_leave_out_the_orders_below_the_lowest(upper_surface):
     for key, values in derivatives.items():
         assert np.array_equal(values, all_orders[key])
     assert np.allclose(all_orders["d2y"], exact.derivative(2)(t)[:, 1])
+
+
+@pytest.mark.parametrize("degree", [1, 2])
+def test_low_degree_combs_are_finite(degree):
+    curve = BSplineCurve2D(degree, [(0, 0), (0.3, 0.2), (0.7, 0.1), (1, 0)])
+    t = comb_parameters(curve, 40)
+    for quantity in range(4):
+        assert np.all(np.isfinite(comb_values(curve, t, quantity)))
+
+
+def test_derivatives_above_the_degree_are_zero():
+    curve = BSplineCurve2D(2, [(0, 0), (0.3, 0.2), (0.7, 0.1), (1, 0)])
+    derivatives = curve.evaluate_derivatives(np.linspace(0, 1, 9), max_order=3)
+    assert not np.any(derivatives["d3x"]) and not np.any(derivatives["d3y"])
+    assert np.any(derivatives["d2y"])
