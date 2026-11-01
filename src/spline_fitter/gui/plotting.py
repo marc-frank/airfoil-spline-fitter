@@ -13,6 +13,8 @@ from __future__ import annotations
 import numpy as np
 import pyqtgraph as pg
 
+from ..analysis import foot_points, scipy_curves
+from ..geometry import find_leading_edge_index
 from ..optimization.models import FitResult, SplineConfig
 from ..spline import BSplineCurve2D, compute_signed_curvature
 from .theme import Ink, Palette, Size, Z, brush, label_plot, pen
@@ -157,6 +159,22 @@ class PlotManager:
         # The curves of the last fit drawn, as (fit, curves)
         self._last_curves: tuple = (None, [])
         self.show_knots = False
+        # Deviation of the data, magnified along the curve's normal: by
+        # (side, tips) the whiskers from the curve and the envelope through
+        # their tips, and the tolerance band at the same magnification
+        self._deviation_items = {(side, tips): self._new_item(self._deviation_style(side, tips))
+                                 for side in ('upper', 'lower') for tips in (False, True)}
+        self._tolerance_item = self._new_item(self._tolerance_style())
+        # The measured points, and the deviations of the last fit measured as
+        # (fit, coords, (distance, foot, normal))
+        self._coords: list = []
+        self._last_deviations: tuple = (None, None, None)
+        # The foot points of the live preview's last step, which the next
+        # step refines rather than searching the curves again
+        self._live_start = None
+        # Height of the deviation (share of the chord the tolerance is drawn
+        # away from the curve); None = hidden
+        self.deviation_height: float | None = None
         # (scale, density, quantity) of the curvature comb; None = hidden
         self.comb_settings: tuple[float, int, int] | None = None
 
@@ -245,6 +263,21 @@ class PlotManager:
             return dict(pen=pen(color, 1.5), z=Z.COMB)
         return dict(pen=pen(color, alpha=Ink.COMB_TEETH_ALPHA), z=Z.COMB)
 
+    @staticmethod
+    def _deviation_style(side: str, tips: bool) -> dict:
+        """Deviation, drawn like the comb: faint whiskers, and the envelope
+        through their tips, in the color of the surface."""
+        color = Ink.DEVIATION_UPPER if side == 'upper' else Ink.DEVIATION_LOWER
+        if tips:
+            return dict(pen=pen(color, 1.5), z=Z.COMB)
+        return dict(pen=pen(color, alpha=Ink.COMB_TEETH_ALPHA), z=Z.COMB)
+
+    @staticmethod
+    def _tolerance_style() -> dict:
+        """The tolerance band: dashed construction lines, fainter than the
+        control polygon."""
+        return dict(pen=pen(Ink.CONSTRUCTION, dashed=True, alpha=110), z=Z.CONSTRUCTION)
+
     def restyle(self) -> None:
         """Reapply the theme's colors to every plot item (after a theme change)."""
         def apply(item, style: dict) -> None:
@@ -261,6 +294,9 @@ class PlotManager:
         apply(self._knot_item, self._knot_style())
         for (side, tips), item in self._comb_items.items():
             apply(item, self._comb_style(side, tips))
+        for (side, tips), item in self._deviation_items.items():
+            apply(item, self._deviation_style(side, tips))
+        apply(self._tolerance_item, self._tolerance_style())
         apply(self._loss_curve, self._loss_style())
         apply(self._comparison_curve, self._comparison_style(self._comparison_connected))
         apply(self._comparison_marker, self._marker_style())
@@ -351,6 +387,7 @@ class PlotManager:
             item.setData([], [])
         self.clear_comb_items()
         self.clear_knot_items()
+        self.clear_deviation_items()
 
     def clear_knot_items(self) -> None:
         """Clear the knot markers."""
@@ -388,6 +425,7 @@ class PlotManager:
             coords: List of (x, y) tuples.
         """
         self.clear_plot_items()
+        self._coords = list(coords)
         self._data_item.setData([p[0] for p in coords], [p[1] for p in coords])
         self._plot.autoRange()
 
@@ -440,6 +478,7 @@ class PlotManager:
         variables: np.ndarray,
         config: SplineConfig,
         preview=None,
+        tolerance: float | None = None,
     ) -> None:
         """Update the live preview during optimization.
 
@@ -449,6 +488,7 @@ class PlotManager:
             preview: Optional ``(section_control_points, section_knots, degree)``
                 from optimizers whose control-point counts and knots change
                 (VarPro tolerance mode); takes precedence over ``variables``.
+            tolerance: The fit's tolerance, if any, for the deviation's scale.
         """
         try:
             section_knots = None
@@ -481,6 +521,11 @@ class PlotManager:
                 self._draw_combs(curves, *self.comb_settings)
             if self.show_knots:
                 self._draw_knots(curves)
+            if self.deviation_height is not None:
+                self._draw_deviation(
+                    FitResult(section_ctrl_pts, degree, 0.0, 0, 0, 0.0,
+                              section_knots=section_knots),
+                    tolerance, live=True)
 
         except Exception:
             pass
@@ -496,7 +541,84 @@ class PlotManager:
         except Exception:
             pass
         self.refresh_knots(fit_result)
+        self.refresh_deviation(fit_result)
         _settle(self._plot)
+
+    # -----------------------------------------------------------------
+    # Deviation
+    # -----------------------------------------------------------------
+
+    def clear_deviation_items(self) -> None:
+        """Clear the deviation whiskers and the tolerance band (and forget the
+        live preview's foot points: the next fit searches anew)."""
+        self._live_start = None
+        for item in (*self._deviation_items.values(), self._tolerance_item):
+            item.setData([], [])
+
+    def refresh_deviation(self, fit_result: FitResult | None) -> None:
+        """Draw the deviation of the data from a finished fit, if shown."""
+        if fit_result is None or self.deviation_height is None:
+            self.clear_deviation_items()
+            return
+        self._draw_deviation(fit_result, (fit_result.report or {}).get('tolerance'),
+                             cache=True)
+
+    def _draw_deviation(self, fit_result: FitResult, tolerance: float | None,
+                        cache: bool = False, live: bool = False) -> None:
+        """Draw the signed deviation of every data point from the fit: a
+        whisker from the point's foot on the curve along the normal, outward
+        for a point outside, magnified so the tolerance (or, without one, the
+        largest deviation) is ``deviation_height`` of the chord away; the
+        envelope through the tips, by surface; and the tolerance band at the
+        same magnification. ``cache`` keeps the measurement of a finished
+        fit for the next time it is drawn; ``live`` refines the foot points
+        of the live preview's previous step."""
+        height = self.deviation_height
+        coords = self._coords
+        if height is None or len(coords) < 2:
+            self.clear_deviation_items()
+            return
+        try:
+            fit, measured, found = self._last_deviations
+            if live:
+                found = foot_points(coords, fit_result, start=self._live_start)
+                self._live_start = found[3]
+            elif not cache or fit is not fit_result or measured is not coords:
+                found = foot_points(coords, fit_result)
+                if cache:
+                    self._last_deviations = (fit_result, coords, found)
+            dev, foot, normal, _ = found
+            reference = tolerance or float(np.max(np.abs(dev)))
+            chord = float(np.ptp([p[0] for p in coords]))
+            if reference <= 0 or chord <= 0:
+                self.clear_deviation_items()
+                return
+            scale = height * chord / reference
+            tips = foot + (scale * dev)[:, None] * normal
+            le = find_leading_edge_index(coords)
+            for side, part in (('upper', slice(0, le + 1)), ('lower', slice(le, None))):
+                base, tip = foot[part], tips[part]
+                gap = np.full(len(base), np.nan)
+                self._deviation_items[side, False].setData(
+                    np.column_stack([base[:, 0], tip[:, 0], gap]).ravel(),
+                    np.column_stack([base[:, 1], tip[:, 1], gap]).ravel())
+                self._deviation_items[side, True].setData(tip[:, 0], tip[:, 1])
+            self._tolerance_item.setData(*self._tolerance_band(fit_result, scale * tolerance)
+                                         if tolerance else ([], []))
+        except Exception:
+            self.clear_deviation_items()
+
+    @staticmethod
+    def _tolerance_band(fit_result: FitResult, reach: float) -> tuple[np.ndarray, np.ndarray]:
+        """The curves offset by ``reach`` to either side, as one line."""
+        offsets = []
+        for curve in scipy_curves(fit_result):
+            u = np.linspace(curve.t[curve.k], curve.t[-curve.k - 1], 400)
+            at, tangent = curve(u), curve(u, nu=1)
+            right = np.column_stack([tangent[:, 1], -tangent[:, 0]])
+            right /= np.maximum(np.hypot(right[:, 0], right[:, 1]), 1e-300)[:, None]
+            offsets += [(at + reach * right).T, (at - reach * right).T]
+        return _joined(offsets)
 
     # -----------------------------------------------------------------
     # Curvature Comb

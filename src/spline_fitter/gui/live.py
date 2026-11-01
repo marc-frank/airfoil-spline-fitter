@@ -146,7 +146,8 @@ class LiveProgress:
         self._latest["new"] = False
         self.show_loss()
         w._plot_manager.update_live_plot(
-            self._latest["x"], self._config, preview=self._latest["preview"])
+            self._latest["x"], self._config, preview=self._latest["preview"],
+            tolerance=self._opt_config.tolerance)
         w.statusBar().showMessage(self._latest["status"])
 
     def show_loss(self):

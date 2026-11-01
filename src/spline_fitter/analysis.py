@@ -85,6 +85,91 @@ def fit_report(
     return report
 
 
+# Newton steps that refine the foot points of a fit from those of the fit
+# before it (a live preview's previous step)
+REFINE_STEPS = 3
+
+
+def _domain(curve: BSpline) -> tuple[float, float]:
+    return float(curve.t[curve.k]), float(curve.t[-curve.k - 1])
+
+
+def _search(pts: np.ndarray, curves: list[BSpline]) -> np.ndarray:
+    """Parameter of every point's nearest point on each whole curve, (n, sections)."""
+    return np.column_stack([diagnostics.project(pts, curve)[0] for curve in curves])
+
+
+def _refine(pts: np.ndarray, curves: list[BSpline], u: np.ndarray) -> np.ndarray:
+    """Newton steps on each curve from the previous parameters, (n, sections).
+
+    Every section keeps its own foot of every point, so a point whose
+    nearest section changes (at a junction, or across the trailing edge,
+    where a lower-surface point also has a foot on the upper surface) is
+    still caught: the nearest of the feet is taken afterwards."""
+    u = u.copy()
+    for i, curve in enumerate(curves):
+        lo, hi = _domain(curve)
+        ui = np.clip(u[:, i], lo, hi)
+        for _ in range(REFINE_STEPS):
+            c0, c1, c2 = curve(ui), curve(ui, nu=1), curve(ui, nu=2)
+            diff = c0 - pts
+            g = np.sum(diff * c1, axis=1)
+            h = np.sum(c1 * c1, axis=1) + np.sum(diff * c2, axis=1)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                ui = np.clip(ui - np.where(h > 0, g / h, 0.0), lo, hi)
+        u[:, i] = ui
+    return u
+
+
+def foot_points(
+    points: Sequence[Sequence[float]], result: FitResult, start: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Signed orthogonal distance of every point to the nearest section of a
+    fit, with its foot point on the curve and the unit normal there.
+
+    The normal points to the right of the curve's direction of travel, and
+    the distance is positive on that side: outside the airfoil for
+    coordinates in Selig order (counterclockwise), inside for the other way
+    round. So ``foot + distance * normal`` is the point.
+
+    Args:
+        start: The parameters this returned for a fit close to this one, to
+            refine with a few Newton steps instead of searching every curve
+            (the live preview, step after step). A start for another number
+            of points or sections is ignored.
+
+    Returns:
+        ``(distance, foot, normal, start)``, shaped (n,), (n, 2), (n, 2), and
+        the parameters of every point on every section, (n, sections), to
+        start from for the next fit.
+    """
+    pts = np.asarray(points, dtype=np.float64)
+    curves = scipy_curves(result)
+    if start is not None and start.shape == (len(pts), len(curves)):
+        u = _refine(pts, curves, start)
+    else:
+        u = _search(pts, curves)
+    best = np.full(len(pts), np.inf)
+    foot, tangent = np.zeros_like(pts), np.zeros_like(pts)
+    for i, curve in enumerate(curves):
+        at = curve(u[:, i])
+        d = np.hypot(*(pts - at).T)
+        closer = d < best
+        best = np.where(closer, d, best)
+        foot[closer] = at[closer]
+        tangent[closer] = curve(u[closer, i], nu=1)
+    normal = np.column_stack([tangent[:, 1], -tangent[:, 0]])
+    normal /= np.maximum(np.hypot(normal[:, 0], normal[:, 1]), 1e-300)[:, None]
+    signed = np.copysign(best, np.sum((pts - foot) * normal, axis=1))
+    return signed, foot, normal, u
+
+
+def signed_deviations(points: Sequence[Sequence[float]], result: FitResult) -> np.ndarray:
+    """Signed orthogonal distance of every point to the nearest section of a
+    fit, positive outside (see :func:`foot_points`)."""
+    return foot_points(points, result)[0]
+
+
 def default_tolerance(coordinates: Sequence[Sequence[float]], precision: int | None) -> float:
     """Tolerance from the decimal precision of the source file and the data noise."""
     return bv_airfoil.default_tolerance(np.asarray(coordinates, dtype=np.float64),

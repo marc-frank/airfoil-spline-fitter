@@ -127,6 +127,7 @@ Named by what they draw, never by hue.
 | `KNOTS` | sulfur diamonds with a canvas outline (`MODE_COLORS`) | Knots (the ducks that hold the batten) |
 | `COMB_UPPER` | sky blue (`MODE_COLORS`) | Comb on the suction side (upper surface, even sections) |
 | `COMB_LOWER` | rose (`MODE_COLORS`) | Comb on the pressure side (lower surface, odd sections) |
+| `DEVIATION_UPPER` / `DEVIATION_LOWER` | the comb's colors: faint whiskers from the curve, an envelope through their tips | Signed deviation of the data on the upper / lower surface, magnified along the normal; the tolerance band is faint dashed `CONSTRUCTION` |
 | `TRACE` | light grey dots or line | Convergence and comparison traces |
 | `MARKER` | ink dot with a canvas ring | The current run in a trace |
 | `GRID` | `TEXT_2` at `GRID_ALPHA` | Grid and axes |

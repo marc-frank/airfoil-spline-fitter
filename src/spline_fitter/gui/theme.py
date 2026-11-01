@@ -167,6 +167,9 @@ class Ink:
     COMB_UPPER = (0, 0, 0)
     COMB_LOWER = (0, 0, 0)
     COMB_TEETH_ALPHA = 90      # teeth are faint; the envelope through the tips is the reading
+    # Deviation of the data from the curve, by surface in the comb's colors
+    DEVIATION_UPPER = (0, 0, 0)
+    DEVIATION_LOWER = (0, 0, 0)
     # Convergence and comparison traces; the current run is marked in ink
     TRACE = (0, 0, 0)
     MARKER = rgb(Palette.INK)
@@ -200,6 +203,7 @@ def _set_tokens(dark: bool, temperature: int) -> None:
             setattr(Ink, name, rgb(colors[side]))
     Ink.DATA = rgb(Palette.TEXT)
     Ink.TRACE = Ink.GRID = rgb(Palette.TEXT_2)
+    Ink.DEVIATION_UPPER, Ink.DEVIATION_LOWER = Ink.COMB_UPPER, Ink.COMB_LOWER
 
 
 _set_tokens(Scheme.DARK, Scheme.TEMPERATURE)

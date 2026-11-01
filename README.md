@@ -17,7 +17,9 @@ Professional B-spline curve fitting tool for airfoil coordinate data.
 - **Fit report**: maximum and RMS deviation, control points and knots,
   curvature extrema, junction continuity, and leading-edge radius, with a
   warning when the tolerance is below the data's rounding error
-- **Knot display** and an interactive curvature comb
+- **Knot display**, an interactive curvature comb, and the **deviation** of
+  every data point from the curve, magnified along the normal with the
+  tolerance band
 - **Two fitting methods**: VarPro Levenberg-Marquardt (tolerance mode, free
   knots, geometric continuity) and Direct LSQ (one constrained least-squares
   solve)
@@ -72,7 +74,9 @@ Typical workflow:
    starts from the Control Points setting (in tolerance mode the count can
    still grow or shrink from there).
 3. **Fit Spline**. The status bar shows the maximum and RMS deviation and the
-   control-point count. **Show Knots** marks the knots on the curve.
+   control-point count. **Show Knots** marks the knots on the curve, and
+   **Deviation** shows where the fit departs from the data, also while it
+   fits (its arrow sets the height: 5% of the chord at the tolerance).
 4. **View > Fit Report** (Ctrl+R) shows deviation, fairness, and junction
    measurements.
 5. **File > Export CAD** (Ctrl+E) writes STEP, IGES, or DXF with units and a
