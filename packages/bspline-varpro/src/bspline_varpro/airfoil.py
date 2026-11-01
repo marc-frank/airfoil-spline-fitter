@@ -90,30 +90,38 @@ class NACA4:
 
 
 def read_dat(path: Union[str, Path]) -> Tuple[str, np.ndarray]:
-    """``(name, points)`` from a Selig or Lednicer airfoil file, in Selig order."""
-    lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
-    name = lines[0].strip() if lines else ""
+    """``(name, points)`` from a Selig or Lednicer airfoil file, in Selig order.
+
+    A Lednicer file starts with the upper and lower point counts, then lists both
+    surfaces from the leading to the trailing edge. The counts split the surfaces
+    when they account for every point; otherwise the split is where x jumps back
+    from the trailing to the leading edge. The name is the first line unless that
+    line is a coordinate pair, then the file's stem.
+    """
+    path = Path(path)
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    name = path.stem
     rows: List[List[float]] = []
-    blocks: List[List[List[float]]] = [rows]
-    for line in lines[1:]:
+    for i, line in enumerate(lines):
         parts = line.replace(",", " ").split()
-        if len(parts) < 2:
-            if rows:
-                rows = []
-                blocks.append(rows)
-            continue
         try:
             rows.append([float(parts[0]), float(parts[1])])
-        except ValueError:
-            continue
-    blocks = [b for b in blocks if b]
-    if not blocks:
+        except (ValueError, IndexError):
+            if i == 0:
+                name = line.strip()
+    if not rows:
         raise ValueError(f"No coordinates found in {path}.")
-    first = np.array(blocks[0])
-    if len(first) == 1 and first[0, 0] > 1.5 and first[0, 1] > 1.5 and len(blocks) >= 3:
-        upper, lower = np.array(blocks[1]), np.array(blocks[2])
-        return name, np.vstack([upper[::-1], lower[1:] if np.allclose(upper[0], lower[0]) else lower])
-    return name, np.vstack([np.array(b) for b in blocks])
+    points = np.array(rows)
+    n_upper, n_lower = points[0]
+    if len(points) > 4 and min(n_upper, n_lower) >= 2 and np.all(points[0] == np.round(points[0])):
+        points = points[1:]
+        if n_upper + n_lower != len(points):
+            n_upper = np.argmin(np.diff(points[:, 0])) + 1
+        upper, lower = points[:int(n_upper)], points[int(n_upper):]
+        if np.allclose(upper[0], lower[0]):
+            lower = lower[1:]
+        points = np.vstack([upper[::-1], lower])
+    return name, points
 
 
 def write_dat(path: Union[str, Path], points: np.ndarray, name: str = "airfoil", decimals: int = 6) -> Path:

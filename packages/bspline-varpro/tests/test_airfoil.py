@@ -21,16 +21,30 @@ def test_dat_round_trip(tmp_path):
     assert np.array_equal(back, pts)
 
 
-def test_lednicer_is_converted_to_selig(tmp_path):
+@pytest.mark.parametrize("header, blank, counts, name", [
+    ("NACA 2412\n", "\n", "21. 21.", "NACA 2412"),
+    ("NACA 2412\n", "\n", "21 21", "NACA 2412"),
+    ("NACA 2412\n", "", "21. 21.", "NACA 2412"),   # no blank lines between blocks
+    ("", "\n", "21. 21.", "l"),                     # no name line
+    ("NACA 2412\n", "\n", "22. 21.", "NACA 2412"),  # counts that do not match the rows
+])
+def test_lednicer_is_converted_to_selig(tmp_path, header, blank, counts, name):
     pts = np.round(NACA4("2412").points(21), 5)
     upper, lower = airfoil.split_at_leading_edge(pts)
-    rows = [f"{x:.5f} {y:.5f}" for x, y in upper[::-1]]
-    rows_lower = [f"{x:.5f} {y:.5f}" for x, y in lower]
-    text = "NACA 2412\n21. 21.\n\n" + "\n".join(rows) + "\n\n" + "\n".join(rows_lower) + "\n"
-    (tmp_path / "l.dat").write_text(text)
-    name, back = airfoil.read_dat(tmp_path / "l.dat")
-    assert name == "NACA 2412"
+    rows = "\n".join(f"{x:.5f} {y:.5f}" for x, y in upper[::-1])
+    rows_lower = "\n".join(f"{x:.5f} {y:.5f}" for x, y in lower)
+    (tmp_path / "l.dat").write_text(f"{header}{counts}\n{blank}{rows}\n{blank}{rows_lower}\n")
+    back_name, back = airfoil.read_dat(tmp_path / "l.dat")
+    assert back_name == name
     assert np.allclose(back, pts)
+
+
+def test_lednicer_without_a_shared_leading_edge_keeps_every_point(tmp_path):
+    pts = np.round(NACA4("2412").points(21), 5)
+    upper, lower = airfoil.split_at_leading_edge(pts)
+    rows = "\n".join(f"{x:.5f} {y:.5f}" for x, y in [*upper[::-1], *lower[1:]])
+    (tmp_path / "l.dat").write_text(f"NACA 2412\n21. 20.\n{rows}\n")
+    assert np.allclose(airfoil.read_dat(tmp_path / "l.dat")[1], pts)
 
 
 def test_decimal_places():
