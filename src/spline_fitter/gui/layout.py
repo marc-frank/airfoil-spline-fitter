@@ -332,9 +332,11 @@ class WindowLayoutMixin:
         self._action_redo = edit_menu.addAction("&Redo")
         self._action_redo.setShortcuts(QKeySequence.keyBindings(QKeySequence.StandardKey.Redo))
         edit_menu.addSeparator()
-        # Ctrl+V stays with the text fields
+        # Ctrl+V pastes an airfoil only while no input field has focus: a
+        # focused field takes the key for its own text first
         self._action_paste_airfoil = edit_menu.addAction("&Paste airfoil")
-        self._action_paste_airfoil.setShortcut("Ctrl+Shift+V")
+        self._action_paste_airfoil.setShortcuts(
+            QKeySequence.keyBindings(QKeySequence.StandardKey.Paste))
 
         # View menu
         view_menu = menubar.addMenu("&View")
