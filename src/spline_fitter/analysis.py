@@ -85,6 +85,44 @@ def fit_report(
     return report
 
 
+def foot_points(
+    points: Sequence[Sequence[float]], result: FitResult,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Signed orthogonal distance of every point to the nearest section of a
+    fit, with its foot point on the curve and the unit normal there.
+
+    The normal points to the right of the curve's direction of travel, and
+    the distance is positive on that side: outside the airfoil for
+    coordinates in Selig order (counterclockwise), inside for the other way
+    round. So ``foot + distance * normal`` is the point.
+
+    Returns:
+        ``(distance, foot, normal)``, shaped (n,), (n, 2) and (n, 2).
+    """
+    pts = np.asarray(points, dtype=np.float64)
+    best = np.full(len(pts), np.inf)
+    signed = np.zeros(len(pts))
+    foot, normal = np.zeros_like(pts), np.zeros_like(pts)
+    for curve in scipy_curves(result):
+        u, d = diagnostics.project(pts, curve)
+        at, tangent = curve(u), curve(u, nu=1)
+        right = np.column_stack([tangent[:, 1], -tangent[:, 0]])
+        right /= np.maximum(np.hypot(right[:, 0], right[:, 1]), 1e-300)[:, None]
+        side = np.sum((pts - at) * right, axis=1)
+        closer = (d < best)[:, None]
+        best = np.where(closer[:, 0], d, best)
+        signed = np.where(closer[:, 0], np.copysign(d, side), signed)
+        foot = np.where(closer, at, foot)
+        normal = np.where(closer, right, normal)
+    return signed, foot, normal
+
+
+def signed_deviations(points: Sequence[Sequence[float]], result: FitResult) -> np.ndarray:
+    """Signed orthogonal distance of every point to the nearest section of a
+    fit, positive outside (see :func:`foot_points`)."""
+    return foot_points(points, result)[0]
+
+
 def default_tolerance(coordinates: Sequence[Sequence[float]], precision: int | None) -> float:
     """Tolerance from the decimal precision of the source file and the data noise."""
     return bv_airfoil.default_tolerance(np.asarray(coordinates, dtype=np.float64),

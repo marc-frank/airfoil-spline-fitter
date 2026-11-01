@@ -428,6 +428,44 @@ class WindowLayoutMixin:
         comb_row.addWidget(self._btn_comb_settings)
         toolbar.addLayout(comb_row)
 
+        # Deviation: toggle, with its height in the drop-down
+        self._check_deviation = QToolButton()
+        self._check_deviation.setText("Deviation")
+        self._check_deviation.setObjectName("SplitToggle")
+        self._check_deviation.setCheckable(True)
+        self._check_deviation.setToolTip(
+            "Display the distance of every data point from the curve, magnified\n"
+            "along the normal, outward for a point outside. The dashed lines\n"
+            "are the tolerance. Use the arrow for the height."
+        )
+
+        deviation_settings = QWidget()
+        deviation_form = _form()
+        deviation_settings.setLayout(deviation_form)
+        deviation_form.setContentsMargins(Size.PAD, Size.PAD, Size.PAD, Size.PAD)
+        self._spin_deviation_height = QDoubleSpinBox()
+        self._spin_deviation_height.setRange(0.001, 1.0)
+        self._spin_deviation_height.setDecimals(3)
+        self._spin_deviation_height.setSingleStep(0.01)
+        self._spin_deviation_height.setValue(0.04)
+        self._spin_deviation_height.setToolTip(
+            "How far from the curve the tolerance is drawn, as a share of the chord\n"
+            "(without a tolerance, the largest deviation).")
+        _add_row(deviation_form, "Height", self._spin_deviation_height)
+
+        self._btn_deviation_settings = QToolButton()
+        self._btn_deviation_settings.setObjectName("ArrowButton")
+        self._btn_deviation_settings.setIcon(icon("chevron_down"))
+        self._btn_deviation_settings.setIconSize(glyph_size())
+        self._btn_deviation_settings.setToolTip("Deviation settings")
+        self._deviation_panel = DropDownPanel(self._btn_deviation_settings, deviation_settings,
+                                              self)
+        deviation_row = QHBoxLayout()
+        deviation_row.setSpacing(0)
+        deviation_row.addWidget(self._check_deviation)
+        deviation_row.addWidget(self._btn_deviation_settings)
+        toolbar.addLayout(deviation_row)
+
         toolbar.addStretch()
 
         live_label = QLabel("Live preview")

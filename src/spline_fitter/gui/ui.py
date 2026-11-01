@@ -240,6 +240,8 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._combo_log_scale.currentIndexChanged.connect(self._update_loss_plot_log_scale)
         self._check_comb.toggled.connect(self._update_curvature_comb)
         self._check_knots.toggled.connect(self._update_knots)
+        self._check_deviation.toggled.connect(self._update_deviation)
+        self._spin_deviation_height.valueChanged.connect(self._update_deviation)
         self._combo_comb_qty.currentIndexChanged.connect(self._refresh_curvature_comb)
         self._spin_comb_scale.valueChanged.connect(self._refresh_curvature_comb)
         self._spin_comb_density.valueChanged.connect(self._refresh_curvature_comb)
@@ -540,6 +542,12 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
             self._plot_manager.clear_comb_items()
         else:
             self._refresh_curvature_comb()
+
+    def _update_deviation(self):
+        """Show, hide or rescale the deviation of the data from the curve."""
+        self._plot_manager.deviation_height = (
+            self._spin_deviation_height.value() if self._check_deviation.isChecked() else None)
+        self._plot_manager.refresh_deviation(self._fit_result)
 
     def _refresh_curvature_comb(self):
         """Refresh the curvature comb visualization (also used by the live preview)."""
