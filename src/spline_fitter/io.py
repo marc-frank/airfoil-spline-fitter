@@ -126,114 +126,85 @@ def normalize_coords(coords):
 
     return normalized_coords
 
+def _is_point_counts(x, y):
+    """Whether a coordinate pair is a Lednicer header: two whole point counts.
+
+    A Selig file's first point is the trailing edge, near (1, 0) or (100, 0).
+    """
+    return x >= 2 and y >= 2 and x == int(x) and y == int(y)
+
+
+def _lednicer_to_selig(coords, n_upper, n_lower):
+    """
+    Joins Lednicer surfaces (upper then lower, both LE -> TE) into Selig order.
+    The header counts split the surfaces when they account for every point;
+    otherwise the split is where x jumps back from the trailing to the leading edge.
+    The leading-edge point is kept once when both surfaces list it.
+    """
+    if n_upper + n_lower != len(coords):
+        steps = [coords[i + 1][0] - coords[i][0] for i in range(len(coords) - 1)]
+        n_upper = steps.index(min(steps)) + 1
+    upper, lower = coords[:n_upper], coords[n_upper:]
+    if lower and lower[0] == upper[0]:
+        lower = lower[1:]
+    return list(reversed(upper)) + lower
+
+
 def parse_airfoil_data(filepath):
     """
     Parses an airfoil data file, automatically detecting the format.
     Handles Selig and Lednicer formats, comments, and 0-100 scaling.
     Returns the airfoil name from filename, name from content, coordinates, and max precision.
     """
-    lines = []
     with open(filepath, encoding='utf-8', errors='ignore') as f:
-        for line in f:
-            # Remove comments and strip whitespace
-            line_content = line.split('#', 1)[0].strip()
-            if line_content:
-                lines.append(line_content)
+        text = f.read()
+    return parse_airfoil_text(text, os.path.splitext(os.path.basename(filepath))[0])
+
+
+def parse_airfoil_text(text, filename_name=None):
+    """
+    Parses airfoil coordinates from text, by the rules of parse_airfoil_data
+    (for example coordinates copied from a web page). ``filename_name`` is
+    returned as the name from the filename, and is the name from content
+    when the text has none.
+    """
+    lines = []
+    for line in text.splitlines():
+        # Remove comments and strip whitespace
+        line_content = line.split('#', 1)[0].strip()
+        if line_content:
+            lines.append(line_content)
 
     if not lines:
         return None, None, None, 0
 
-    filename_name = os.path.splitext(os.path.basename(filepath))[0]
     content_name = filename_name # Default to filename if no name is in the file
-    max_precision = 0
 
-    # --- Format Detection: Try Lednicer first (more specific format) ---
-    # Search for the Lednicer header (two numbers) in the first few lines.
-    header_line_index = -1
-    n_upper, n_lower = 0, 0
-    for i, line in enumerate(lines[:5]): # Check first 5 lines
+    # Every line holding a coordinate pair, as floats and as written (for precision)
+    rows = []
+    for i, line in enumerate(lines):
+        parts = line.split()
         try:
-            parts = line.split()
-            if len(parts) == 2:
-                n_upper_cand = int(float(parts[0]))
-                n_lower_cand = int(float(parts[1]))
-                # Sanity check: do the point counts match the file length?
-                if len(lines) - (i + 1) >= n_upper_cand + n_lower_cand > 0:
-                    n_upper, n_lower = n_upper_cand, n_lower_cand
-                    header_line_index = i
-                    # If there's a line before the header, it's likely the name
-                    if i > 0:
-                        try:
-                            # Check if the previous line is NOT coordinates
-                            prev_line_parts = lines[i-1].split()
-                            if len(prev_line_parts) < 2 or not all(c.isdigit() or c in '.-+eE' for c in prev_line_parts[0]):
-                                content_name = lines[i-1].strip()
-                        except (ValueError, IndexError):
-                             content_name = lines[i-1].strip()
-                    break
+            # Clean strings by removing parentheses before float conversion
+            x_str, y_str = parts[0].strip('()'), parts[1].strip('()')
+            rows.append((float(x_str), float(y_str), x_str, y_str))
         except (ValueError, IndexError):
-            continue
+            if i == 0:
+                content_name = line  # First line is a name
+            # Otherwise skip malformed coordinate lines
 
-    if header_line_index != -1:
-        # Found a Lednicer-style header, process as Lednicer
-        start_index = header_line_index + 1
-        upper_lines = lines[start_index : start_index + n_upper]
-        lower_lines = lines[start_index + n_upper : start_index + n_upper + n_lower]
-
-        upper_coords = []
-        for line in upper_lines:
-            line_parts = line.split()[:2]
-            upper_coords.append(tuple(map(float, line_parts)))
-            max_precision = max(max_precision, get_precision(line_parts[0]), get_precision(line_parts[1]))
-
-        lower_coords = []
-        for line in lower_lines:
-            line_parts = line.split()[:2]
-            lower_coords.append(tuple(map(float, line_parts)))
-            max_precision = max(max_precision, get_precision(line_parts[0]), get_precision(line_parts[1]))
-
-        if upper_coords and lower_coords:
-            coords = list(reversed(upper_coords)) + lower_coords[1:]
-            coords = filter_coordinate_outliers(coords)
-            coords = normalize_coords(coords)
-            return filename_name, content_name, coords, max_precision
-
-    # --- Assume Selig Format if Lednicer detection fails ---
-    data_lines = lines
-    # Check if the first line is coordinates or a name, and adjust data_lines accordingly
-    try:
-        first_line_parts = lines[0].split()
-        if len(first_line_parts) >= 2:
-            float(first_line_parts[0])
-            float(first_line_parts[1])
-            # First line is coordinates, so all lines are data
-            data_lines = lines
-    except (ValueError, IndexError):
-        # First line is a name, so data starts from the second line
-        content_name = lines[0].strip()
-        data_lines = lines[1:]
-
-    coords = []
-    for line in data_lines:
-        try:
-            parts = line.split()
-            if len(parts) >= 2:
-                x_str, y_str = parts[0], parts[1]
-                # Clean strings by removing parentheses before float conversion
-                x_str_clean = x_str.strip().strip('()')
-                y_str_clean = y_str.strip().strip('()')
-
-                x_val, y_val = float(x_str_clean), float(y_str_clean)
-
-                coords.append((x_val, y_val))
-                precision = max(get_precision(x_str), get_precision(y_str))
-                max_precision = max(max_precision, precision)
-        except (ValueError, IndexError):
-            continue # Skip malformed coordinate lines
+    # Lednicer: the first row holds the upper and lower point counts
+    if len(rows) > 4 and _is_point_counts(rows[0][0], rows[0][1]):
+        n_upper, n_lower = int(rows[0][0]), int(rows[0][1])
+        rows = rows[1:]
+        coords = _lednicer_to_selig([(x, y) for x, y, _, _ in rows], n_upper, n_lower)
+    else:
+        coords = [(x, y) for x, y, _, _ in rows]
 
     if not coords:
         return None, None, None, 0
 
+    max_precision = max(max(get_precision(x_str), get_precision(y_str)) for _, _, x_str, y_str in rows)
     coords = filter_coordinate_outliers(coords)
     coords = normalize_coords(coords)
     return filename_name, content_name, coords, max_precision
