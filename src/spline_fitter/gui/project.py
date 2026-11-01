@@ -21,7 +21,6 @@ from PyQt6.QtWidgets import QFileDialog
 
 from ..formatting import format_duration, number
 from ..optimization.models import (
-    FairnessWeights,
     FitResult,
     IterationRecord,
     OptimizationConfig,
@@ -208,7 +207,6 @@ class ProjectManager:
         self,
         spline_config: SplineConfig,
         opt_config: OptimizationConfig,
-        fairness_weights: FairnessWeights,
         result: FitResult,
         loss_history: list[IterationRecord],
         replot: bool = True,
@@ -231,7 +229,6 @@ class ProjectManager:
         run = create_optimization_run(
             spline_config=spline_config,
             optimization_config=opt_config,
-            fairness_weights=fairness_weights,
             result=result,
             loss_history=loss_history,
         )
@@ -239,7 +236,7 @@ class ProjectManager:
         # Check for duplicate configuration and replace if found
         replaced = False
         for i, existing in enumerate(self._project.optimization_runs):
-            if self._configs_match(existing, spline_config, opt_config, fairness_weights):
+            if self._configs_match(existing, spline_config, opt_config):
                 self._project.optimization_runs[i] = run
                 replaced = True
                 break
@@ -271,12 +268,10 @@ class ProjectManager:
         existing_run: OptimizationRun,
         spline_config: SplineConfig,
         opt_config: OptimizationConfig,
-        fairness_weights: FairnessWeights,
     ) -> bool:
         """Check if an existing run has identical configuration."""
         ec = existing_run.spline_config
         eo = existing_run.optimization_config
-        ef = existing_run.fairness_weights
 
         # Compare spline config
         if (
@@ -298,22 +293,11 @@ class ProjectManager:
             return False
 
         # Compare optimization config
-        if eo.optimizer != opt_config.optimizer or eo.metric != opt_config.metric:
+        if eo.optimizer != opt_config.optimizer:
             return False
 
         # Compare smoothing weight (distinguishes GN-VarPro sweep runs)
         if eo.smoothing_weight != opt_config.smoothing_weight:
-            return False
-
-        # Compare fairness weights
-        if (
-            ef.length_variance != fairness_weights.length_variance
-            or ef.polygon_bend != fairness_weights.polygon_bend
-            or ef.anti_bunching != fairness_weights.anti_bunching
-            or ef.end_handles != fairness_weights.end_handles
-            or ef.curvature_squared != fairness_weights.curvature_squared
-            or ef.curvature_gradient != fairness_weights.curvature_gradient
-        ):
             return False
 
         return True
@@ -456,8 +440,6 @@ class ProjectManager:
                     ("Continuity", continuity)]
         if opt.tolerance:
             settings.append(("Tolerance", f"{number(opt.tolerance, '.3e')}"))
-        if opt.optimizer.uses_error_metric:
-            settings.append(("Error metric", opt.metric.display_name))
         fit = [("Error", f"{number(res.final_error, '.3e')}")]
         if res.report:
             fit += [("Max deviation", f"{number(res.report['max_deviation'], '.3e')}"),

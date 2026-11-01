@@ -6,16 +6,11 @@ Optimization infrastructure for spline fitting.
 
 This package provides:
     - models: Data structures (AirfoilData, SplineConfig, etc.)
-    - parallel: Multiprocessing utilities for orthogonal distance computation
-    - objective_functions: Optimizer wrappers and objective functions
-    - optimizers: Individual optimizer implementations
+    - optimizers: VarPro LM and Direct LSQ
 """
 
 from .engine import (
     OptimizerErrorLogger,
-    compute_fitting_error,
-    construct_control_points,
-    generate_initial_guess,
     get_evaluation_count,
     increment_iteration,
     reset_iteration_tracking,
@@ -28,9 +23,7 @@ from .models import (
     Bounds,
     # Enumerations
     ContinuityMode,
-    ErrorMetric,
     EvaluationRecord,
-    FairnessWeights,
     FitResult,
     IterationRecord,
     OptimizationConfig,
@@ -46,16 +39,8 @@ from .models import (
 from .optimizers import (
     AlgebraicOptimizer,
     BaseOptimizer,
-    EarlyStopException,
     RawOptimResult,
     get_optimizer,
-)
-from .parallel import (
-    OrthogonalDistanceArgs,
-    get_pool,
-    orthogonal_distance_worker,
-    run_parallel,
-    shutdown_pool,
 )
 
 __all__ = [
@@ -66,12 +51,10 @@ __all__ = [
     # Enumerations
     "ContinuityMode",
     "OptimizerType",
-    "ErrorMetric",
     # Data structures
     "AirfoilData",
     "SplineConfig",
     "OptimizationConfig",
-    "FairnessWeights",
     "FitResult",
     "BoundingBox",
     "IterationRecord",
@@ -79,24 +62,14 @@ __all__ = [
     "OptimizationRun",
     "ProjectFile",
     "ProjectMetadata",
-    # Parallel utilities
-    "get_pool",
-    "shutdown_pool",
-    "run_parallel",
-    "orthogonal_distance_worker",
-    "OrthogonalDistanceArgs",
     # Optimization functions
     "run_optimization",
     "OptimizerErrorLogger",
-    "construct_control_points",
-    "generate_initial_guess",
-    "compute_fitting_error",
     "reset_iteration_tracking",
     "get_evaluation_count",
     "increment_iteration",
     # Optimizer classes
     "RawOptimResult",
-    "EarlyStopException",
     "BaseOptimizer",
     "AlgebraicOptimizer",
     "get_optimizer",

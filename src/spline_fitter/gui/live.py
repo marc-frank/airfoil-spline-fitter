@@ -15,7 +15,6 @@ draws. The Live preview setting picks what is drawn:
 
 from __future__ import annotations
 
-import math
 import threading
 import time
 from typing import TYPE_CHECKING
@@ -58,13 +57,6 @@ class LiveProgress:
         self._logger = error_logger
         self._start = start_time
         self._prefix = status_prefix
-        self._is_direct_cp = opt_config.optimizer.is_iterative_algebraic
-
-        # Early stopping (not for VarPro, which converges by itself)
-        self.early_stopped = False
-        self._best_error = float("inf")
-        self._patience = max(50, opt_config.max_iterations // 20)
-        self._no_improvement = 0
 
         # VarPro tolerance mode: solver steps reported, last refit's max deviation
         self._steps = False
@@ -99,8 +91,7 @@ class LiveProgress:
         elif self._steps:
             self._deviation = error
             return False
-        if self._record(error):
-            return True
+        self._record(error)
 
         elapsed = time.perf_counter() - self._start
         status = (f"{self._prefix}Fitting... {format_duration(elapsed)} | "
@@ -123,26 +114,11 @@ class LiveProgress:
                     return True
         return False
 
-    def _record(self, error: float) -> bool:
-        """Log one iteration; True when early stopping ends the fit."""
+    def _record(self, error: float) -> None:
+        """Log one iteration."""
         iteration = increment_iteration()
         self._logger.log(iteration, get_evaluation_count(), error,
                          time.perf_counter() - self._start)
-        best_so_far = min(self._logger.errors)
-        if math.isfinite(best_so_far) and best_so_far < self._best_error:
-            if math.isfinite(self._best_error) and abs(self._best_error) > 0:
-                improvement = (self._best_error - best_so_far) / abs(self._best_error)
-            else:
-                improvement = 1.0
-            self._no_improvement = 0 if improvement > 1e-6 else self._no_improvement + 1
-            self._best_error = best_so_far
-        else:
-            self._no_improvement += 1
-        is_varpro = self._opt_config.optimizer.value == "gn-varpro"
-        if self._no_improvement >= self._patience and not is_varpro:
-            self.early_stopped = True
-            return True
-        return False
 
     # -- GUI thread --------------------------------------------------------
 
@@ -170,10 +146,7 @@ class LiveProgress:
         self._latest["new"] = False
         self.show_loss()
         w._plot_manager.update_live_plot(
-            self._latest["x"], self._config, self._airfoil.sections,
-            self._opt_config.optimize_le_position, self._is_direct_cp,
-            preview=self._latest["preview"],
-        )
+            self._latest["x"], self._config, preview=self._latest["preview"])
         w.statusBar().showMessage(self._latest["status"])
 
     def show_loss(self):

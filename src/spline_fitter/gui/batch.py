@@ -19,11 +19,10 @@ from PyQt6.QtWidgets import (
 
 from ..analysis import default_tolerance
 from ..formatting import format_duration, format_error
-from ..geometry import compute_optimization_bounds, create_airfoil_data
+from ..geometry import create_airfoil_data
 from ..io import export_spline_data, parse_airfoil_data
 from ..optimization import (
     OptimizerErrorLogger,
-    construct_control_points,
     get_evaluation_count,
     reset_iteration_tracking,
     run_optimization,
@@ -116,7 +115,6 @@ class BatchController:
         try:
             config = self._window._get_spline_config()
             opt_config = self._window._get_optimization_config()
-            fairness_weights = self._window._get_fairness_weights()
         except ValueError as e:
             self._window.statusBar().showMessage(str(e))
             return
@@ -167,12 +165,6 @@ class BatchController:
                         opt_config, tolerance=default_tolerance(airfoil.coordinates, airfoil.precision),
                     )
 
-                # Compute bounds
-                bounds = compute_optimization_bounds(
-                    airfoil, config,
-                    optimize_le_position=opt_config.optimize_le_position,
-                )
-
                 # Reset tracking
                 reset_iteration_tracking()
 
@@ -192,15 +184,12 @@ class BatchController:
                     airfoil=airfoil,
                 )
 
-                def batch_work(airfoil=airfoil, file_opt_config=file_opt_config, bounds=bounds,
-                               live=live):
+                def batch_work(airfoil=airfoil, file_opt_config=file_opt_config, live=live):
                     """Fit one file (worker thread)."""
                     return run_optimization(
                         config,
                         file_opt_config,
                         airfoil,
-                        fairness_weights,
-                        bounds,
                         callback=live.callback,
                         should_stop=lambda: self._window._cancel_requested,
                     )
@@ -213,19 +202,14 @@ class BatchController:
                     raise RuntimeError("Optimization failed")
                 if self._window._cancel_requested:
                     break
-                if not result.success and not live.early_stopped:
+                if not result.success:
                     raise ValueError("Optimizer did not converge: " + result.message)
 
-                # Construct control points for all sections
-                section_ctrl_pts = result.section_control_points or construct_control_points(
-                    result.x, config,
-                    [list(sec) for sec in airfoil.sections],
-                    optimize_le_position=opt_config.optimize_le_position,
-                )
+                section_ctrl_pts = result.section_control_points
 
                 # Show the finished fit
                 plots.update_live_plot(
-                    result.x, config, airfoil.sections, opt_config.optimize_le_position,
+                    result.x, config,
                     preview=(section_ctrl_pts, result.section_knots, config.degree),
                 )
 

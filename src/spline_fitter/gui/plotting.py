@@ -13,7 +13,6 @@ from __future__ import annotations
 import numpy as np
 import pyqtgraph as pg
 
-from ..optimization import construct_control_points
 from ..optimization.models import FitResult, SplineConfig
 from ..spline import BSplineCurve2D, compute_signed_curvature
 from .theme import Ink, Palette, Size, Z, brush, label_plot, pen
@@ -440,20 +439,13 @@ class PlotManager:
         self,
         variables: np.ndarray,
         config: SplineConfig,
-        sections: list,
-        optimize_le_position: bool = False,
-        is_direct_control_points: bool = False,
         preview=None,
     ) -> None:
         """Update the live preview during optimization.
 
         Args:
-            variables: Either optimization variables OR flattened control points
+            variables: Flattened control points, [x0, y0, x1, y1, ...] per section
             config: Spline configuration
-            sections: Airfoil sections (list of point lists)
-            optimize_le_position: Whether LE position is being optimized
-            is_direct_control_points: If True, variables are flattened control points
-                                      (for algebraic methods like Orthogonal LSQ)
             preview: Optional ``(section_control_points, section_knots, degree)``
                 from optimizers whose control-point counts and knots change
                 (VarPro tolerance mode); takes precedence over ``variables``.
@@ -464,8 +456,7 @@ class PlotManager:
             # Build curves for all sections
             if preview is not None:
                 section_ctrl_pts, section_knots, degree = preview
-            elif is_direct_control_points:
-                # Variables are flattened control points: [x0,y0,x1,y1,...] per section
+            else:
                 n_ctrl = config.num_control_points
                 num_sections = config.num_sections
                 section_ctrl_pts = []
@@ -478,12 +469,6 @@ class PlotManager:
                         pts.append((x, y))
                     section_ctrl_pts.append(pts)
                     offset += 2 * n_ctrl
-            else:
-                section_ctrl_pts = construct_control_points(
-                    variables, config,
-                    [list(sec) for sec in sections],
-                    optimize_le_position=optimize_le_position,
-                )
 
             curves = [
                 BSplineCurve2D(degree, [(float(p[0]), float(p[1])) for p in ctrl_pts],

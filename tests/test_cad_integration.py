@@ -11,7 +11,6 @@ from spline_fitter.geometry import create_airfoil_data
 from spline_fitter.io import export_spline_data, parse_spline_data
 from spline_fitter.optimization.models import (
     ContinuityMode,
-    FairnessWeights,
     FitResult,
     OptimizationConfig,
     OptimizerType,
@@ -108,7 +107,7 @@ def test_engine_dispatches_tolerance_mode():
     result = run_optimization(
         SplineConfig(degree=5, geometric_continuity=True, continuity=ContinuityMode.G2),
         OptimizationConfig(optimizer=OptimizerType.GN_VARPRO, tolerance=1e-4),
-        naca_airfoil(n=41, decimals=5), FairnessWeights(), [])
+        naca_airfoil(n=41, decimals=5))
     assert result.success and result.fun <= 1e-4 * (1 + 1e-9)
 
 
@@ -199,7 +198,7 @@ def test_project_round_trip_keeps_knots_and_settings(tmp_path, tolerance_fit):
     config = SplineConfig(num_sections=2, geometric_continuity=True, junction_continuity=("G3",))
     options = OptimizationConfig(optimizer=OptimizerType.GN_VARPRO, tolerance=1e-5)
     project = create_project(airfoil)
-    project.optimization_runs.append(create_optimization_run(config, options, FairnessWeights(), result, []))
+    project.optimization_runs.append(create_optimization_run(config, options, result, []))
     save_project(project, str(tmp_path / "p.splineproj"))
     run = load_project(str(tmp_path / "p.splineproj")).optimization_runs[0]
     assert run.spline_config == config and run.optimization_config == options

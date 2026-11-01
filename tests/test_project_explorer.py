@@ -11,8 +11,6 @@ from PyQt6.QtWidgets import QApplication
 from spline_fitter.geometry import create_airfoil_data
 from spline_fitter.optimization.models import (
     ContinuityMode,
-    ErrorMetric,
-    FairnessWeights,
     FitResult,
     OptimizationConfig,
     OptimizerType,
@@ -40,13 +38,12 @@ def window():
 def _add(window, ctrl, error, optimizer=OptimizerType.GN_VARPRO, **opt):
     upper = [(1 - i / (ctrl - 1), 0.05 * np.sin(np.pi * i / (ctrl - 1))) for i in range(ctrl)]
     lower = [(x, -y) for x, y in reversed(upper)]
-    if optimizer == OptimizerType.GN_VARPRO:
-        opt.setdefault("max_iterations", 0)  # VarPro's own limit, as the sidebar stores it
+    opt.setdefault("max_iterations", 0)  # VarPro's own limit, as the sidebar stores it
     result = FitResult([upper, lower], 5, error, 3, 9, 0.5)
     window._project_manager.add_optimization_run(
         SplineConfig(num_control_points=ctrl, continuity=ContinuityMode.G2),
         OptimizationConfig(optimizer=optimizer, **opt),
-        FairnessWeights(), result, [])
+        result, [])
 
 
 def _column(window, name):
@@ -59,10 +56,8 @@ def _column(window, name):
 def test_every_sidebar_setting_and_fit_metric_has_a_column():
     from spline_fitter.gui.explorer import COLUMN_NAMES
     for name in ("Optimizer", "Goal", "Tolerance", "Knots", "Parameterization", "Grow points",
-                 "Error metric", "Degree", "Control points", "Sections", "Continuity", "Type",
-                 "Per junction", "Subsample", "Smoothing", "Iteration limit", "Seed",
-                 "Search scale", "Optimize junctions", "Even edges", "Polygon bend",
-                 "Bunching", "End handles", "Bending", "Wiggle",
+                 "Degree", "Control points", "Sections", "Continuity", "Type",
+                 "Per junction", "Subsample", "Smoothing", "Optimize junctions",
                  "Error", "Max deviation", "RMS deviation", "Fitted control points",
                  "Iterations", "Evaluations", "Time", "Converged"):
         assert name in COLUMN_NAMES
@@ -71,11 +66,11 @@ def test_every_sidebar_setting_and_fit_metric_has_a_column():
 def test_filter_invert_and_sort(window):
     for ctrl, error in ((10, 3e-4), (14, 1e-5), (12, 5e-5)):
         _add(window, ctrl, error)
-    _add(window, 8, 2e-3, optimizer=OptimizerType.DE, seed=4)
+    _add(window, 8, 2e-3, optimizer=OptimizerType.DIRECT_LSQ, parameterization="arc_length")
     table = window._run_table
     assert _column(window, "Run") == ["1", "2", "3", "4"]
     # Blank where the optimizer does not read the setting
-    assert _column(window, "Seed") == ["", "", "", "4"]
+    assert _column(window, "Parameterization") == ["", "", "", "Arc length"]
 
     table.filter_edit.setText("varpro")
     assert _column(window, "Control points") == ["10", "14", "12"]
@@ -93,7 +88,7 @@ def test_filter_invert_and_sort(window):
     table.set_column_filter("Error", "<1e-4")
     assert _column(window, "Control points") == ["14", "12"]
     table.filter_edit.setText("varpro")
-    table.set_column_filter("Optimizer", excluded={"Differential evolution"})
+    table.set_column_filter("Optimizer", excluded={"Direct LSQ"})
     assert _column(window, "Control points") == ["14", "12"]
     assert table.header.filtered == {_index("Control points"), _index("Error"),
                                      _index("Optimizer")}
@@ -115,7 +110,7 @@ def _index(name):
 def test_plot_shows_the_filtered_runs_along_the_chosen_column(window):
     for ctrl, error in ((10, 3e-4), (14, 1e-5), (12, 5e-5)):
         _add(window, ctrl, error)
-    _add(window, 8, 2e-3, optimizer=OptimizerType.DE)
+    _add(window, 8, 2e-3, optimizer=OptimizerType.DIRECT_LSQ)
     curve = window._plot_manager._comparison_curve
     assert list(curve.getData()[0]) == [8, 10, 12, 14]
 
@@ -171,7 +166,7 @@ def test_switching_runs_reuses_the_plot_items(window):
     window._project_manager.add_optimization_run(
         SplineConfig(num_control_points=19, num_sections=1, continuity=ContinuityMode.G2),
         OptimizationConfig(optimizer=OptimizerType.GN_VARPRO, max_iterations=0),
-        FairnessWeights(), FitResult([upper + lower[1:]], 5, 1e-6, 3, 9, 0.5), [])
+        FitResult([upper + lower[1:]], 5, 1e-6, 3, 9, 0.5), [])
     table.select_runs([runs[2]])
     assert window._plot.getPlotItem().items == items
     polygon = plots._polygon_item.getData()[0]
@@ -217,8 +212,7 @@ def test_the_table_scrolls_without_repainting_all_of_it(window, tmp_path, monkey
 
 
 def test_double_click_applies_the_run_settings(window):
-    _add(window, 11, 1e-4, optimizer=OptimizerType.DE, seed=7, max_iterations=500,
-         metric=ErrorMetric.ORTHOGONAL)
+    _add(window, 11, 1e-4, optimizer=OptimizerType.DIRECT_LSQ, parameterization="arc_length")
     _add(window, 13, 1e-5, smoothing_weight=0.02, knot_placement="free")
     runs = window._project_manager.project.optimization_runs
     table = window._run_table
@@ -235,7 +229,7 @@ def test_double_click_applies_the_run_settings(window):
 
 
 def test_load_settings_button_and_details_spread_with_the_width(window):
-    _add(window, 11, 1e-4, optimizer=OptimizerType.DE, seed=7, max_iterations=500)
+    _add(window, 11, 1e-4, optimizer=OptimizerType.DIRECT_LSQ)
     _add(window, 13, 1e-5)
     table, details = window._run_table, window._run_details
     assert not window._btn_load_run.isEnabled()
@@ -263,7 +257,7 @@ def test_load_settings_button_and_details_spread_with_the_width(window):
 def test_header_drop_down_filters_by_values_and_condition(window):
     for ctrl, error in ((10, 3e-4), (14, 1e-5), (12, 5e-5)):
         _add(window, ctrl, error)
-    _add(window, 8, 2e-3, optimizer=OptimizerType.DE)
+    _add(window, 8, 2e-3, optimizer=OptimizerType.DIRECT_LSQ)
     table = window._run_table
     popup = table.open_filter(_index("Control points"))
     labels = [popup.values.item(i).text() for i in range(popup.values.count())]
@@ -332,7 +326,7 @@ def test_header_drop_down_filters_by_values_and_condition(window):
     # The values offered are those the other filters let through
     popup = table.open_filter(_index("Optimizer"))
     assert [popup.values.item(i).text() for i in range(popup.values.count())] == [
-        "Differential evolution", "VarPro LM"]
+        "Direct LSQ", "VarPro LM"]
     popup.values.item(1).setCheckState(Qt.CheckState.Unchecked)
     popup.close()
     assert _column(window, "Control points") == ["8"]
@@ -386,10 +380,10 @@ def test_drop_down_of_the_last_column_stays_in_the_window(window, monkeypatch):
 def test_pivot_keeps_selection_filters_and_sorting(window):
     for ctrl, error in ((10, 3e-4), (14, 1e-5), (12, 5e-5)):
         _add(window, ctrl, error)
-    _add(window, 8, 2e-3, optimizer=OptimizerType.DE)
+    _add(window, 8, 2e-3, optimizer=OptimizerType.DIRECT_LSQ)
     runs = window._project_manager.project.optimization_runs
     table = window._run_table
-    table.set_column_filter("Optimizer", excluded={"Differential evolution"})
+    table.set_column_filter("Optimizer", excluded={"Direct LSQ"})
     table.sort_by(_index("Error"), Qt.SortOrder.AscendingOrder)
     table.header.moveSection(table.header.visualIndex(_index("Error")), 1)
     table.select_runs([runs[0], runs[2]])

@@ -134,25 +134,12 @@ def _tolerance_goal(run: OptimizationRun) -> bool:
     return _varpro(run) and run.optimization_config.tolerance is not None
 
 
-def _uses_metric(run: OptimizationRun) -> bool:
-    return run.optimization_config.optimizer.uses_error_metric
-
-
-def _iterates(run: OptimizationRun) -> bool:
-    opt = run.optimization_config.optimizer
-    return not opt.is_algebraic and opt != OptimizerType.GN_VARPRO
-
-
 def _has_junctions(run: OptimizationRun) -> bool:
     return run.spline_config.num_sections > 1
 
 
 def _report(key: str) -> Callable[[OptimizationRun], float | None]:
     return lambda run: (run.result.report or {}).get(key)
-
-
-def _fairness(name: str) -> Callable[[OptimizationRun], float]:
-    return lambda run: getattr(run.fairness_weights, name)
 
 
 def _cfg(run):
@@ -176,7 +163,6 @@ COLUMNS: tuple[Column, ...] = (
            lambda run: _opt(run).parameterization.replace("_", " ").capitalize(),
            applies=lambda run: _opt(run).optimizer == OptimizerType.DIRECT_LSQ),
     Column("Grow points", lambda run: _opt(run).grow_control_points, applies=_varpro),
-    Column("Error metric", lambda run: _opt(run).metric.display_name, applies=_uses_metric),
     # Curve
     Column("Degree", lambda run: _cfg(run).degree),
     Column("Control points", lambda run: _cfg(run).num_control_points,
@@ -192,19 +178,8 @@ COLUMNS: tuple[Column, ...] = (
            tip="Points per section of the subsample; blank when every point is used"),
     Column("Smoothing", lambda run: _opt(run).smoothing_weight, ".3g", log=True,
            applies=lambda run: _varpro(run) and not _tolerance_goal(run)),
-    Column("Iteration limit", lambda run: _opt(run).max_iterations, applies=_iterates),
-    Column("Seed", lambda run: _opt(run).seed,
-           applies=lambda run: _opt(run).optimizer.is_global),
-    Column("Search scale", lambda run: _cfg(run).bbox_scale, ".3g", applies=_uses_metric),
     Column("Optimize junctions", lambda run: _opt(run).optimize_le_position,
            applies=_has_junctions),
-    # Regularization
-    Column("Even edges", _fairness("length_variance"), ".4g", applies=_uses_metric),
-    Column("Polygon bend", _fairness("polygon_bend"), ".4g", applies=_uses_metric),
-    Column("Bunching", _fairness("anti_bunching"), ".4g", applies=_uses_metric),
-    Column("End handles", _fairness("end_handles"), ".4g", applies=_uses_metric),
-    Column("Bending", _fairness("curvature_squared"), ".4g", applies=_uses_metric),
-    Column("Wiggle", _fairness("curvature_gradient"), ".4g", applies=_uses_metric),
     # Fit metrics
     Column("Error", lambda run: run.result.final_error, ".3e", log=True, metric=True),
     Column("Max deviation", _report("max_deviation"), ".3e", log=True, metric=True),
