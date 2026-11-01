@@ -460,7 +460,7 @@ def compute_optimization_bounds(
     Args:
         airfoil: The airfoil data being fitted
         config: Spline configuration specifying continuity mode, etc.
-        optimize_le_position: If True, add bounds for LE (x, y) at end of variable vector
+        optimize_le_position: If True, add bounds for every junction (x, y) at the end
         
     Returns:
         List of (lower, upper) bounds for each optimization variable
@@ -522,13 +522,11 @@ def compute_optimization_bounds(
                 bounds.append((-limit, limit))  # Dk x
                 bounds.append((-limit, limit))  # Dk y
 
-    # Optional junction positions (appended at end): each near its split point
+    # Optional junction positions (appended at end): anywhere a free control
+    # point may go. The chain is fitted to all points as a whole, so a junction
+    # is not tied to its split point, which is only where it starts
     if optimize_le_position and num_sections >= 2:
-        reach = 0.02 * base_w  # 2% of chord
-        for section in airfoil.sections[:-1]:
-            jx, jy = section[-1]
-            bounds.append((jx - reach, jx + reach))
-            bounds.append((jy - reach, jy + reach))
+        add_point_bounds(num_sections - 1)
 
     return bounds
 

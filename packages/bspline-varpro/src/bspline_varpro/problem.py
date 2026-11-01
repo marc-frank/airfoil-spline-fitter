@@ -14,6 +14,10 @@ for every (t, theta), leaving a reduced problem in the outer variables alone.
 Its residual is ``[N(t) P*(t) - D ; R P*(t)]`` with ``R'R = lambda S + reg I``,
 so the outer objective equals the inner one exactly.
 
+Every data point has a chain parameter t in [0, S] for S sections
+(:mod:`~bspline_varpro.chain`): its row of N belongs to the section the
+parameter lies on, so points are not assigned to sections for good.
+
 The exact reduced Jacobian w.r.t. t has a direct term (moving t_j moves point j
 along the curve) and a coupling term through dP*/dt_j, obtained by
 differentiating the KKT system. Because t_j only affects row j of N, all n
@@ -41,6 +45,7 @@ import numpy as np
 from scipy.linalg import block_diag, lu_factor, lu_solve
 
 from .basis import basis_derivative_matrix, basis_matrix, bending_energy_matrix, matrix_root, validate_knots
+from .chain import chain_data, groups
 from .constraints import ChainConstraints, ContinuitySpec, End, parse_junctions
 
 
@@ -79,7 +84,9 @@ class VarProProblem:
     """Reduced residual and exact Jacobian as functions of t and shape parameters.
 
     Args:
-        sections: Ordered data points per section, each shaped (n_s, dim).
+        sections: Ordered data points per section, each shaped (n_s, dim). They
+            give the starting split and the junction and end positions; the
+            chain is fitted to all points (:func:`~bspline_varpro.chain.chain_data`).
         knots: Clamped knot vector on [0, 1] shared by all sections, or one per section.
         degree: Spline degree.
         continuity: Junction continuity, one spec for all junctions or a list:
@@ -105,7 +112,7 @@ class VarProProblem:
         end: End = End(),
     ):
         self.sections = [np.asarray(sec, dtype=np.float64) for sec in sections]
-        self.data = np.vstack(self.sections)
+        self.data = chain_data(self.sections)
         self.num_sections = len(self.sections)
         if np.ndim(knots[0]) == 0:
             knots = [knots] * self.num_sections
@@ -116,7 +123,6 @@ class VarProProblem:
         self.n_ctrl = [len(k) - degree - 1 for k in self.knots]
         self.offsets = np.concatenate([[0], np.cumsum(self.n_ctrl)]).astype(int)
         self.dim = self.data.shape[1]
-        self.section_sizes = [len(sec) for sec in self.sections]
         self.total_pts = len(self.data)
         self.total_ctrl = int(self.offsets[-1])
         self.smoothing = smoothing
@@ -149,10 +155,6 @@ class VarProProblem:
     def d(self) -> np.ndarray:
         return self._constraints(self.theta)[1]
 
-    def split(self, t_flat: np.ndarray) -> List[np.ndarray]:
-        """Split a flat parameter vector into per-section arrays."""
-        return np.split(t_flat, np.cumsum(self.section_sizes)[:-1])
-
     def split_control_points(self, P: np.ndarray) -> List[np.ndarray]:
         """Split stacked control points into per-section arrays."""
         return [P[a:b] for a, b in zip(self.offsets[:-1], self.offsets[1:])]
@@ -166,13 +168,12 @@ class VarProProblem:
 
     def _block_matrix(self, t_flat: np.ndarray, derivative: bool) -> np.ndarray:
         M = np.zeros((self.total_pts, self.total_ctrl))
-        row = 0
-        for s, t_sec in enumerate(self.split(t_flat)):
-            col = self.offsets[s]
-            block = (basis_derivative_matrix(t_sec, self.knots[s], self.degree) if derivative
-                     else basis_matrix(t_sec, self.knots[s], self.degree))
-            M[row:row + len(t_sec), col:col + self.n_ctrl[s]] = block
-            row += len(t_sec)
+        for s, (rows, local) in enumerate(groups(t_flat, self.num_sections)):
+            if len(rows) == 0:
+                continue
+            block = (basis_derivative_matrix(local, self.knots[s], self.degree) if derivative
+                     else basis_matrix(local, self.knots[s], self.degree))
+            M[rows, self.offsets[s]:self.offsets[s + 1]] = block
         return M
 
     def solve(

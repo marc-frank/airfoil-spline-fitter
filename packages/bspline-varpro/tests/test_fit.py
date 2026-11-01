@@ -24,7 +24,7 @@ def test_reduced_jacobian_matches_finite_differences(smoothing, continuity, fix_
     sections = two_sections()
     problem = bv.VarProProblem(sections, bv.open_uniform_knots(3, 6), 3, continuity=continuity,
                                fix_junctions=fix_junctions, smoothing=smoothing)
-    t = np.tile(np.linspace(0, 1, 19), 2)
+    t = bv.chain.chain_parameters([np.linspace(0, 1, 19)] * 2, sections)
     jac = problem.jacobian(t)
     for j in [2, 12, 23, 35]:
         step = np.zeros_like(t)
@@ -37,7 +37,7 @@ def test_residual_norm_equals_penalized_objective_and_constraints_hold():
     sections = two_sections()
     problem = bv.VarProProblem(sections, bv.open_uniform_knots(3, 6), 3, continuity=2,
                                smoothing=0.03)
-    t = np.tile(np.linspace(0, 1, 19), 2)
+    t = bv.chain.chain_parameters([np.linspace(0, 1, 19)] * 2, sections)
     r = problem.residual(t)
     N, P, _, _ = problem.solve(t)
     energy = (np.sum((N @ P - problem.data) ** 2) + problem.regularization * np.sum(P ** 2)
@@ -49,11 +49,12 @@ def test_residual_norm_equals_penalized_objective_and_constraints_hold():
 def test_three_dimensional_jacobian():
     s = np.linspace(0, 1, 15)
     helix = np.column_stack((np.cos(4 * s), np.sin(4 * s), s))
-    problem = bv.VarProProblem([helix[:8], helix[7:]], bv.open_uniform_knots(3, 6), 3,
-                               continuity=2, smoothing=0.01)
-    t = np.concatenate([np.linspace(0, 1, 8), np.linspace(0, 1, 8)])
+    sections = [helix[:8], helix[7:]]
+    problem = bv.VarProProblem(sections, bv.open_uniform_knots(3, 6), 3, continuity=2, smoothing=0.01)
+    t = bv.chain.chain_parameters([np.linspace(0, 1, 8), np.linspace(0, 1, 8)], sections)
     jac = problem.jacobian(t)
-    assert jac.shape == (3 * (16 + 12), 16)
+    # The shared junction point is one data point
+    assert jac.shape == (3 * (15 + 12), 15)
     for j in [1, 6, 10]:
         step = np.zeros_like(t)
         step[j] = 1e-6
@@ -99,11 +100,13 @@ def test_recovers_a_known_curve_from_a_nearby_parameterization():
 def test_reported_error_is_data_only():
     sections = two_sections(0.003)
     result = bv.fit(sections, 6, 3, smoothing=0.1, max_nfev=500)
-    errors = [np.sum((curve(t) - sec) ** 2, axis=1)
-              for curve, t, sec in zip(result.curves(), result.parameters, sections)]
-    assert result.rms_error == pytest.approx(np.sqrt(np.mean(np.concatenate(errors))))
-    assert all(np.all(np.diff(t) >= 0) and t[0] == 0 and t[-1] == pytest.approx(1)
-               for t in result.parameters)
+    data = bv.chain.chain_data(sections)
+    section, local = bv.chain.locate(result.parameters, len(sections))
+    curves = result.curves()
+    on_chain = np.array([curves[s](t) for s, t in zip(section, local)])
+    assert result.rms_error == pytest.approx(np.sqrt(np.mean(np.sum((on_chain - data) ** 2, axis=1))))
+    u = result.parameters
+    assert np.all(np.diff(u) >= 0) and u[0] == 0 and u[-1] == pytest.approx(len(sections))
 
 
 def test_callback_can_stop_the_fit():

@@ -3,7 +3,8 @@
 Unlike variable projection, the control points are kept as unknowns. The
 constraints ``C P = d`` (with junction shape parameters frozen) are eliminated
 by a null-space parameterization ``P = P0 + Z z``, and the data parameters t
-are free per point. Each data residual depends on one t_i only, so the normal
+are free per point: chain parameters in [0, S] (:mod:`~bspline_varpro.chain`),
+so a point can move across a junction. Each data residual depends on one t_i only, so the normal
 equations have a diagonal t-block that is eliminated by a Schur complement:
 one Levenberg-Marquardt step costs O(n * k^2) for n points and k free control
 coordinates, which handles dense data.
@@ -17,13 +18,15 @@ import numpy as np
 from scipy.linalg import block_diag
 
 from .basis import basis_derivative_matrix, basis_matrix, bending_energy_matrix, matrix_root
+from .chain import chain_data, groups
 
 
 class JointProblem:
     """Residual and Jacobian blocks of the joint (t, z) problem.
 
     Args:
-        sections: Data points per section.
+        sections: Data points per section (the starting split; the chain is
+            fitted to all of them).
         knots: Knot vector per section.
         degree: Spline degree.
         C, d: Linear constraints on the stacked control points.
@@ -42,11 +45,11 @@ class JointProblem:
         regularization: float = 1e-12,
     ):
         self.sections = [np.asarray(s, dtype=np.float64) for s in sections]
-        self.data = np.vstack(self.sections)
+        self.data = chain_data(self.sections)
+        self.num_sections = len(self.sections)
         self.knots = [np.asarray(k, dtype=np.float64) for k in knots]
         self.degree = degree
         self.dim = self.data.shape[1]
-        self.sizes = [len(s) for s in self.sections]
         self.n_ctrl = [len(k) - degree - 1 for k in self.knots]
         self.offsets = np.concatenate([[0], np.cumsum(self.n_ctrl)]).astype(int)
         self.total_ctrl = int(self.offsets[-1])
@@ -63,13 +66,8 @@ class JointProblem:
         self.RZ = root @ self.Z
         self.RP0 = root @ self.P0
 
-        # Interior points of every section carry free parameters; section ends stay at 0 and 1.
-        free = []
-        start = 0
-        for n in self.sizes:
-            free.extend(range(start + 1, start + n - 1))
-            start += n
-        self.free = np.array(free, dtype=int)
+        # Every point but the chain's ends carries a free parameter
+        self.free = np.arange(1, len(self.data) - 1)
 
     @property
     def num_z(self) -> int:
@@ -85,13 +83,12 @@ class JointProblem:
 
     def _basis(self, t_full: np.ndarray, derivative: bool) -> np.ndarray:
         M = np.zeros((len(t_full), self.total_ctrl))
-        row = 0
-        for s, n in enumerate(self.sizes):
-            t = t_full[row:row + n]
-            block = (basis_derivative_matrix(t, self.knots[s], self.degree) if derivative
-                     else basis_matrix(t, self.knots[s], self.degree))
-            M[row:row + n, self.offsets[s]:self.offsets[s + 1]] = block
-            row += n
+        for s, (rows, local) in enumerate(groups(t_full, self.num_sections)):
+            if len(rows) == 0:
+                continue
+            block = (basis_derivative_matrix(local, self.knots[s], self.degree) if derivative
+                     else basis_matrix(local, self.knots[s], self.degree))
+            M[rows, self.offsets[s]:self.offsets[s + 1]] = block
         return M
 
     def evaluate(self, t_full: np.ndarray, z: np.ndarray, with_jacobian: bool = False):
@@ -156,7 +153,7 @@ def solve_joint(
         if gradient_norm < tolerance * max(1.0, cost):
             converged, message = True, "Gradient below tolerance."
             break
-        diag_V = np.maximum(np.diag(V), 1e-12 * max(np.max(np.diag(V)), 1e-300))
+        diag_V = np.maximum(np.diag(V), 1e-12 * max(np.max(np.diag(V), initial=0.0), 1e-300))
         U_floor = np.maximum(U, 1e-12 * max(np.max(U, initial=1.0), 1e-300))
         if mu is None:
             mu = 1e-3
@@ -175,7 +172,7 @@ def solve_joint(
                 continue
             dt = -(g_t + W @ dz) / U_d
             t_new = t.copy()
-            t_new[free] = np.clip(t[free] + dt, 0.0, 1.0)
+            t_new[free] = np.clip(t[free] + dt, 0.0, problem.num_sections)
             z_new = z + dz
             r_new, _ = problem.evaluate(t_new, z_new)
             cost_new = 0.5 * r_new @ r_new

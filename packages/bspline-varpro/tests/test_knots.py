@@ -77,7 +77,7 @@ def test_nonuniform_jacobian_matches_finite_differences(smoothing):
     sections = naca_sections(21)
     knots = [bv.clamped_knots(3, [0.6, 0.85, 0.95]), bv.clamped_knots(3, [0.1, 0.3])]
     problem = bv.VarProProblem(sections, knots, 3, continuity=2, smoothing=smoothing)
-    t = np.concatenate([bv.centripetal_parameters(s) for s in sections])
+    t = bv.chain.chain_parameters([bv.centripetal_parameters(s) for s in sections], sections)
     jac = problem.jacobian(t)
     for j in [3, 15, 25, 38]:
         step = np.zeros_like(t)

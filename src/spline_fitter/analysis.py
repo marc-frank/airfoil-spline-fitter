@@ -16,6 +16,7 @@ from collections.abc import Sequence
 import numpy as np
 from bspline_varpro import airfoil as bv_airfoil
 from bspline_varpro import diagnostics
+from bspline_varpro.chain import chain_data
 from scipy.interpolate import BSpline
 
 from .formatting import number
@@ -50,13 +51,17 @@ def fit_report(
         junction.
     """
     curves = scipy_curves(result)
-    data = [np.asarray(sec, dtype=np.float64) for sec in sections]
-    deviations = diagnostics.section_deviations(data, curves)
-    all_dev = np.concatenate(deviations)
+    # The chain is fitted as a whole: every point once, measured to the
+    # nearest section, which is the section it counts toward
+    data = chain_data([np.asarray(sec, dtype=np.float64) for sec in sections])
+    per_section = np.array([diagnostics.project(data, c)[1] for c in curves])
+    nearest = np.argmin(per_section, axis=0)
+    all_dev = per_section[nearest, np.arange(len(data))]
     report = {
         "max_deviation": float(np.max(all_dev)),
         "rms_deviation": float(np.sqrt(np.mean(all_dev ** 2))),
-        "section_max_deviation": [float(np.max(d)) for d in deviations],
+        "section_max_deviation": [float(np.max(all_dev[nearest == s], initial=0.0))
+                                  for s in range(len(curves))],
         "control_points": result.num_control_points,
         "section_control_points": [len(c) for c in result.section_control_points],
         "section_interior_knots": [

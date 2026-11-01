@@ -41,7 +41,7 @@ def test_shape_parameter_jacobian_matches_finite_differences(order, fixed, smoot
     problem = bv.VarProProblem(sections, bv.open_uniform_knots(5, 9), 5,
                                continuity=f"G{order}", fix_junctions=fixed, smoothing=smoothing)
     assert problem.num_params == order
-    t = np.concatenate([bv.centripetal_parameters(s) for s in sections])
+    t = bv.chain.chain_parameters([bv.centripetal_parameters(s) for s in sections], sections)
     theta = problem.theta + np.array([0.3, -0.7, 1.1][:order])
     _fd_check(problem, t, theta)
 
@@ -52,7 +52,7 @@ def test_tangent_and_mixed_junction_jacobian():
     problem = bv.VarProProblem(sections, bv.open_uniform_knots(4, 9), 4, continuity=continuity,
                                smoothing=0.01, start=End(tangent=(-1.0, 0.1)), end=End(fixed=False))
     assert problem.num_params == 2 + 2
-    t = np.concatenate([bv.centripetal_parameters(s) for s in sections])
+    t = bv.chain.chain_parameters([bv.centripetal_parameters(s) for s in sections], sections)
     theta = problem.theta + np.linspace(-0.4, 0.5, problem.num_params)
     _fd_check(problem, t, theta)
 

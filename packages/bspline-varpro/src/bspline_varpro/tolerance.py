@@ -2,7 +2,9 @@
 
 Starting from the fewest control points the end conditions allow, knots are
 inserted in every knot span that holds a point farther than the tolerance from
-the curve, and the chain is refitted warm-started from the previous parameters.
+the chain, and the chain is refitted warm-started from the previous parameters.
+A point counts toward the section its chain parameter currently lies on
+(:mod:`~bspline_varpro.chain`).
 Once the tolerance is met, interior knot positions are optimized ("free-knot
 polish") and knots whose removal keeps the fit within tolerance are removed.
 """
@@ -14,28 +16,28 @@ from typing import Callable, List, Optional, Sequence, Union
 
 import numpy as np
 
-from .basis import centripetal_parameters, clamped_knots, interior_knots, open_uniform_knots
+from .basis import clamped_knots, interior_knots, open_uniform_knots
+from .chain import chain_data, chain_deviations, groups, project_to_chain, section_ranges
 from .constraints import ContinuitySpec, End, minimum_control_points, parse_junctions
-from .diagnostics import section_deviations
 from .fitting import (
-    STOPPED, ChainOptions, FitResult, _Stop, _validate_parameters, _validate_sections, as_sections,
-    levenberg_marquardt, reduced_jacobian, report, result_from_problem, solve_problem,
-    solve_with_continuation,
+    STOPPED, ChainOptions, FitResult, _Stop, _validate_sections, as_sections,
+    initial_chain_parameters, levenberg_marquardt, reduced_jacobian, report, result_from_problem,
+    solve_problem, solve_with_continuation,
 )
 from .reparam import eta_to_t, inverse_softplus, softplus, t_to_eta
 
 ProgressCallback = Callable[[FitResult, float], Optional[bool]]
 
 
-def _refit(sections, knots, degree, options: ChainOptions, t_sections, theta, max_nfev,
+def _refit(sections, knots, degree, options: ChainOptions, params, theta, max_nfev,
            max_points: Optional[int] = None, callback=None) -> FitResult:
     if max_points is not None and any(len(s) > max_points for s in sections):
-        return fit_subsampled(sections, knots, degree, options, t_sections, theta, max_nfev, max_points,
+        return fit_subsampled(sections, knots, degree, options, params, theta, max_nfev, max_points,
                               callback)
     problem = options.problem(sections, knots, degree)
     if theta is None or len(theta) != problem.num_params:
-        return solve_with_continuation(problem, options, t_sections, max_nfev=max_nfev, callback=callback)
-    return solve_problem(problem, t_sections, theta, max_nfev=max_nfev, callback=callback)
+        return solve_with_continuation(problem, options, params, max_nfev=max_nfev, callback=callback)
+    return solve_problem(problem, params, theta, max_nfev=max_nfev, callback=callback)
 
 
 def subsample_indices(n: int, max_points: int) -> np.ndarray:
@@ -45,7 +47,7 @@ def subsample_indices(n: int, max_points: int) -> np.ndarray:
     return np.unique(np.round(np.linspace(0, n - 1, max_points)).astype(int))
 
 
-def fit_subsampled(sections, knots, degree, options: ChainOptions, t_sections, theta, max_nfev,
+def fit_subsampled(sections, knots, degree, options: ChainOptions, params, theta, max_nfev,
                    max_points: int, callback=None) -> FitResult:
     """Variable projection on a subsample, then joint refinement on all points.
 
@@ -55,19 +57,18 @@ def fit_subsampled(sections, knots, degree, options: ChainOptions, t_sections, t
     subsample fit and the refinement; if it stops the subsample fit, the
     refinement is skipped.
     """
-    from .diagnostics import project
     from .refinement import refine
 
-    indices = [subsample_indices(len(s), max_points) for s in sections]
-    subsets = [s[i] for s, i in zip(sections, indices)]
-    t_sub = [np.asarray(t)[i] for t, i in zip(t_sections, indices)]
-    coarse = _refit(subsets, knots, degree, options, t_sub, theta, max_nfev, callback=callback)
-    t_all = []
-    for sec, curve in zip(sections, coarse.curves()):
-        t = np.maximum.accumulate(np.clip(project(sec, curve)[0], 0.0, 1.0))
-        t[0], t[-1] = 0.0, 1.0
-        t_all.append(t)
-    coarse.parameters = t_all
+    # Each section's subsample keeps its end points, so shared junction points
+    # stay shared and the subsets chain the same way
+    data = chain_data(sections)
+    indices = [first + subsample_indices(last - first + 1, max_points)
+               for first, last in section_ranges(sections)]
+    subsets = [data[i] for i in indices]
+    chosen = np.unique(np.concatenate(indices))
+    coarse = _refit(subsets, knots, degree, options, np.asarray(params)[chosen], theta, max_nfev,
+                    callback=callback)
+    coarse.parameters = project_to_chain(data, coarse.curves(), chosen, coarse.parameters)
     coarse.options = options
     if coarse.message == STOPPED:
         return coarse
@@ -114,7 +115,7 @@ def _removal_order(knots, degree, t, dev, tol) -> List[float]:
 
 
 def _max_deviation(sections, result: FitResult) -> float:
-    return float(max(np.max(d) for d in section_deviations(sections, result.curves())))
+    return float(np.max(chain_deviations(chain_data(sections), result.curves())))
 
 
 def polish_knots(
@@ -141,8 +142,8 @@ def polish_knots(
     counts = [len(interior_knots(k, degree)) for k in result.knots]
     if sum(counts) == 0:
         return result
-    sizes = [len(s) for s in sections]
-    n_eta = sum(n - 1 for n in sizes)
+    span = len(sections)
+    n_eta = len(chain_data(sections)) - 1
     n_theta = len(result.theta)
 
     def to_xi(knots):
@@ -177,7 +178,7 @@ def polish_knots(
             raise _Stop
         eta, theta, xi = split(x)
         problem = problem_for(xi)
-        r = problem.residual(eta_to_t(eta, sizes)[0], theta)
+        r = problem.residual(eta_to_t(eta, span), theta)
         if report(callback, problem.split_control_points(problem.last_control_points),
                   problem.last_rms_error, problem.knots):
             raise _Stop
@@ -187,7 +188,7 @@ def polish_knots(
         eta, theta, xi = split(x)
         J = np.empty((len(residual_at(x)), len(x)))
         J[:, :n_eta + n_theta] = reduced_jacobian(problem_for(xi), eta, theta)
-        t_flat = eta_to_t(eta, sizes)[0]
+        t_flat = eta_to_t(eta, span)
         base = problem_for(xi).residual(t_flat, theta)
         for i in range(len(xi)):
             h = 1e-7 * (1.0 + abs(xi[i]))
@@ -207,7 +208,7 @@ def polish_knots(
         return result
     eta, theta, xi = split(solution.x)
     problem = options.problem(sections, to_knots(xi), degree)
-    return result_from_problem(problem, eta_to_t(eta, sizes)[0], theta, solution.nfev,
+    return result_from_problem(problem, eta_to_t(eta, span), theta, solution.nfev,
                                bool(solution.success), str(solution.message))
 
 
@@ -241,8 +242,8 @@ def fit_to_tolerance(
 
     Args:
         points: One (n, dim) array or a sequence of sections (see :func:`fit`).
-        tolerance: Maximum allowed orthogonal distance of any point to its
-            section's curve, in data units.
+        tolerance: Maximum allowed orthogonal distance of any point to the
+            chain, in data units.
         degree: Spline degree (5 recommended for CAD).
         continuity, fix_junctions, fix_ends, start_tangent, end_tangent,
             smoothing, regularization: As for :func:`fit`.
@@ -251,7 +252,7 @@ def fit_to_tolerance(
         initial_control_points: Instead of ``initial_knots``, start from this
             many control points per section (an int or one per section) with
             uniform knots, raised to the fewest the end conditions allow.
-        initial_parameters: Starting data parameters per section.
+        initial_parameters: Starting data parameters (as for :func:`fit`).
         max_control_points: Upper limit per section.
         optimize_knots: Polish interior knot positions once the tolerance is met.
         remove_knots: Try to remove knots once the tolerance is met.
@@ -306,10 +307,8 @@ def fit_to_tolerance(
     limits = [min(len(sec) - 1, max_control_points or len(sec)) for sec in sections]
     if any(n > limit for n, limit in zip(need, limits)):
         raise ValueError("Sections have too few points for the requested end conditions.")
-    if initial_parameters is None:
-        t_sections = [centripetal_parameters(sec) for sec in sections]
-    else:
-        t_sections = _validate_parameters(initial_parameters, sections)
+    params = initial_chain_parameters(initial_parameters, sections)
+    data = chain_data(sections)
 
     history: List[dict] = []
     theta = None
@@ -348,22 +347,22 @@ def fit_to_tolerance(
 
     result = None
     for _ in range(max_iterations):
-        result = _refit(sections, knots, degree, options, t_sections, theta, max_nfev,
+        result = _refit(sections, knots, degree, options, params, theta, max_nfev,
                         max_points_per_section, step)
-        t_sections, theta = result.parameters, result.theta
-        devs = section_deviations(sections, result.curves())
-        deviation = float(max(np.max(d) for d in devs))
+        params, theta = result.parameters, result.theta
+        devs = chain_deviations(data, result.curves())
+        deviation = float(np.max(devs))
         if halted(result) or record("insert", result, deviation):
             return finish(result, deviation, False, STOPPED)
         if deviation <= tolerance:
             break
         inserted = False
-        for s in range(len(sections)):
-            if np.max(devs[s]) <= tolerance:
+        for s, (rows, local) in enumerate(groups(params, len(sections))):
+            if np.max(devs[rows], initial=0.0) <= tolerance:
                 continue
             count = len(knots[s]) - degree - 1
             room = limits[s] - count
-            new = _new_knots(knots[s], t_sections[s], devs[s], tolerance, min_span)[:max(room, 0)]
+            new = _new_knots(knots[s], local, devs[rows], tolerance, min_span)[:max(room, 0)]
             if uniform and room > 0:
                 # Grow by as many knots as free insertion would add, spaced uniformly.
                 knots[s] = open_uniform_knots(degree, count + max(len(new), 1))
@@ -422,8 +421,9 @@ def fit_to_tolerance(
             removed = True
             while removed and len(result.knots[s]) - degree - 1 > need[s]:
                 removed = False
-                devs = section_deviations(sections, result.curves())
-                for k in _removal_order(result.knots[s], degree, result.parameters[s], devs[s], tolerance):
+                devs = chain_deviations(data, result.curves())
+                rows, local = groups(result.parameters, len(sections))[s]
+                for k in _removal_order(result.knots[s], degree, local, devs[rows], tolerance):
                     trial_knots = list(result.knots)
                     inner = interior_knots(result.knots[s], degree)
                     trial_knots[s] = clamped_knots(degree, np.delete(inner, np.argmin(np.abs(inner - k))))
@@ -450,7 +450,7 @@ def fit_to_tolerance(
     return finish(result, deviation, True, f"Within tolerance {tolerance:g}.")
 
 
-def grow_to_counts(sections, counts, degree, options: ChainOptions, t_sections, theta, max_nfev,
+def grow_to_counts(sections, counts, degree, options: ChainOptions, params, theta, max_nfev,
                    max_points: Optional[int] = None, callback=None,
                    knot_placement: str = "free") -> FitResult:
     """Grow from the fewest control points to the given counts, refitting each step.
@@ -467,24 +467,26 @@ def grow_to_counts(sections, counts, degree, options: ChainOptions, t_sections, 
     end = End(options.fix_ends, None if options.end_tangent is None else tuple(options.end_tangent))
     need = minimum_control_points(junctions, degree, start, end)
     knots = [open_uniform_knots(degree, min(n, c)) for n, c in zip(need, counts)]
+    data = chain_data(sections)
     while True:
-        result = _refit(sections, knots, degree, options, t_sections, theta, max_nfev, max_points, callback)
+        result = _refit(sections, knots, degree, options, params, theta, max_nfev, max_points, callback)
         if result.message == STOPPED:
             return result
-        t_sections, theta = result.parameters, result.theta
+        params, theta = result.parameters, result.theta
         missing = [c - (len(k) - degree - 1) for c, k in zip(counts, knots)]
         if max(missing) <= 0:
             break
-        devs = section_deviations(sections, result.curves())
+        devs = chain_deviations(data, result.curves())
         inserted = False
-        for s, room in enumerate(missing):
+        for s, (room, (rows, local)) in enumerate(zip(missing, groups(params, len(sections)))):
             if room <= 0:
                 continue
-            new = _new_knots(knots[s], t_sections[s], devs[s], 0.5 * float(np.max(devs[s])), 1e-4)[:room]
+            dev = devs[rows]
+            new = _new_knots(knots[s], local, dev, 0.5 * float(np.max(dev, initial=0.0)), 1e-4)[:room]
             if not new:
                 # The worst points can sit alone in their spans, which cannot be
                 # split; any span holding two points can, worst first
-                new = _new_knots(knots[s], t_sections[s], devs[s], -1.0, 1e-4)[:room]
+                new = _new_knots(knots[s], local, dev, -1.0, 1e-4)[:room]
             if knot_placement == "uniform":
                 knots[s] = open_uniform_knots(degree, len(knots[s]) - degree - 1 + max(len(new), 1))
                 inserted = True

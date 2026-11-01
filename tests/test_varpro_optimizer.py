@@ -2,6 +2,7 @@
 import bspline_varpro
 import numpy as np
 import pytest
+from bspline_varpro.chain import chain_data, locate
 from scipy.interpolate import BSpline
 
 from spline_fitter.optimization.models import (
@@ -34,12 +35,14 @@ def test_adapter_returns_app_result_with_data_only_error():
     assert result.success
     assert [len(cp) for cp in result.section_control_points] == [6, 6]
     assert result.x.shape == (2 * 6 * 2,)
-    error = []
-    for sec, cp, t, knots in zip(airfoil.sections, result.section_control_points, result.parameters,
-                                 result.section_knots, strict=False):
-        curve = BSpline(knots, cp, 3)
-        error.extend(np.sum((curve(t) - sec) ** 2, axis=1))
-    assert result.fun == pytest.approx(np.sqrt(np.mean(error)))
+    # The chain is fitted as a whole: every point once, on the section its
+    # chain parameter lies on
+    data = chain_data([np.asarray(sec) for sec in airfoil.sections])
+    section, local = locate(result.parameters, 2)
+    curves = [BSpline(knots, cp, 3) for cp, knots in zip(result.section_control_points,
+                                                         result.section_knots, strict=True)]
+    on_chain = np.array([curves[s](t) for s, t in zip(section, local, strict=True)])
+    assert result.fun == pytest.approx(np.sqrt(np.mean(np.sum((on_chain - data) ** 2, axis=1))))
 
 
 def test_adapter_passes_settings_through_to_library(monkeypatch):

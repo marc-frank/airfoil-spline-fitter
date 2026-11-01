@@ -53,21 +53,26 @@ def project(
         hi = grid[np.minimum(j + 1, len(grid) - 1)]
         u = grid[j].copy()
         target = q[rows]
+        # Only candidates at a sampled local minimum are refined (the others
+        # are discarded below), each until its own step vanishes
+        active = valid.ravel().copy()
         for _ in range(40):
-            c0, c1, c2 = curve(u), curve(u, nu=1), curve(u, nu=2)
-            diff = c0 - target
+            idx = np.flatnonzero(active)
+            if len(idx) == 0:
+                break
+            ua = u[idx]
+            c0, c1, c2 = curve(ua), curve(ua, nu=1), curve(ua, nu=2)
+            diff = c0 - target[idx]
             g = np.sum(diff * c1, axis=1)
             h = np.sum(c1 * c1, axis=1) + np.sum(diff * c2, axis=1)
-            hi = np.where(g > 0, u, hi)
-            lo = np.where(g < 0, u, lo)
+            hi[idx] = np.where(g > 0, ua, hi[idx])
+            lo[idx] = np.where(g < 0, ua, lo[idx])
             with np.errstate(divide="ignore", invalid="ignore"):
-                newton = u - g / h
-            ok = (h > 0) & (newton > lo) & (newton < hi)
-            u_new = np.where(ok, newton, 0.5 * (lo + hi))
-            if np.all(np.abs(u_new - u) <= 1e-15 * (1 + np.abs(u))):
-                u = u_new
-                break
-            u = u_new
+                newton = ua - g / h
+            ok = (h > 0) & (newton > lo[idx]) & (newton < hi[idx])
+            u_new = np.where(ok, newton, 0.5 * (lo[idx] + hi[idx]))
+            u[idx] = u_new
+            active[idx[np.abs(u_new - ua) <= 1e-15 * (1 + np.abs(ua))]] = False
         u = np.clip(u, lo_domain, hi_domain)
         dist2 = np.sum((curve(u) - target) ** 2, axis=1)
         dist2 = np.where(valid.ravel(), dist2, np.inf).reshape(ranked.shape)

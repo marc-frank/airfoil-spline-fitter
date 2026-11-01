@@ -23,17 +23,17 @@ def test_dense_tolerance_fit_checks_every_point():
     sections = dense_sections()
     result = bv.fit_to_tolerance(sections, 1e-5, 5, max_points_per_section=80)
     assert result.success
-    assert [len(t) for t in result.parameters] == [len(s) for s in sections]
+    assert len(result.parameters) == len(bv.chain.chain_data(sections))
     assert dg.max_deviation(sections, result.curves()) <= 1e-5 * (1 + 1e-9)
 
 
 def test_fit_with_subsampling_returns_all_parameters():
     sections = dense_sections(401)
     result = bv.fit(sections, 10, 5, continuity="G2", max_points_per_section=60)
-    assert [len(t) for t in result.parameters] == [401, 401]
+    assert len(result.parameters) == len(bv.chain.chain_data(sections))
     full = bv.fit(sections, 10, 5, continuity="G2")
     assert result.rms_error == pytest.approx(full.rms_error, rel=0.1)
-    assert all(np.all(np.diff(t) >= 0) for t in result.parameters)
+    assert np.all(np.diff(result.parameters) >= 0)
 
 
 def test_subsampled_fit_reports_progress_and_can_be_stopped():
@@ -47,14 +47,15 @@ def test_subsampled_fit_reports_progress_and_can_be_stopped():
     result = bv.fit(sections, 10, 5, continuity="G2", max_points_per_section=60, callback=stop_after_three)
     assert len(seen) == 3
     assert not result.success and result.message == "Stopped by callback."
-    assert [len(t) for t in result.parameters] == [401, 401]
+    assert len(result.parameters) == len(bv.chain.chain_data(sections))
 
 
 def test_refinement_reports_every_iteration_and_can_be_stopped():
     sections = dense_sections(401)
     # A subsample fit with uniform parameters on all points: far from converged
     coarse = bv.fit([s[::20] for s in sections], 10, 5, continuity="G2")
-    coarse.parameters = [np.linspace(0, 1, len(s)) for s in sections]
+    coarse.parameters = bv.chain.chain_parameters([np.linspace(0, 1, len(s)) for s in sections],
+                                                  sections)
     seen = []
     refined = bv.refine(sections, coarse, max_iterations=20, callback=lambda cp, rms: seen.append(rms))
     assert len(seen) == refined.nfev == 20

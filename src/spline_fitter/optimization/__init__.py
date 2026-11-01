@@ -6,7 +6,6 @@ Optimization infrastructure for spline fitting.
 
 This package provides:
     - models: Data structures (AirfoilData, SplineConfig, etc.)
-    - parallel: Multiprocessing utilities for orthogonal distance computation
     - objective_functions: Optimizer wrappers and objective functions
     - optimizers: Individual optimizer implementations
 """
@@ -50,13 +49,6 @@ from .optimizers import (
     RawOptimResult,
     get_optimizer,
 )
-from .parallel import (
-    OrthogonalDistanceArgs,
-    get_pool,
-    orthogonal_distance_worker,
-    run_parallel,
-    shutdown_pool,
-)
 
 __all__ = [
     # Type aliases
@@ -79,12 +71,6 @@ __all__ = [
     "OptimizationRun",
     "ProjectFile",
     "ProjectMetadata",
-    # Parallel utilities
-    "get_pool",
-    "shutdown_pool",
-    "run_parallel",
-    "orthogonal_distance_worker",
-    "OrthogonalDistanceArgs",
     # Optimization functions
     "run_optimization",
     "OptimizerErrorLogger",

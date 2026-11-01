@@ -12,9 +12,10 @@ from scipy.linalg import cho_factor, cho_solve
 from scipy.optimize import OptimizeResult
 
 from .basis import centripetal_parameters, open_uniform_knots
+from .chain import chain_data, chain_deviations, chain_parameters, validate_chain_parameters
 from .constraints import ContinuitySpec, End, Junction
 from .problem import VarProProblem
-from .reparam import eta_jacobian_block, eta_to_t, t_to_eta
+from .reparam import eta_jacobian, eta_to_t, t_to_eta
 
 Callback = Callable[[List[np.ndarray], float], Optional[bool]]
 
@@ -50,11 +51,14 @@ class FitResult:
 
     Attributes:
         control_points: One (n_ctrl_s, dim) array per section.
-        parameters: Fitted parameter value of every data point, one array per section.
+        parameters: Fitted chain parameter of every data point, in [0, S] for S
+            sections (:mod:`~bspline_varpro.chain`): the point lies on section
+            ``floor(u)``. The points are those of
+            :func:`~bspline_varpro.chain.chain_data`, a shared junction point once.
         knots: Clamped knot vector on [0, 1], one per section.
         degree: Spline degree.
         rms_error: sqrt(mean squared distance) between each data point and its
-            curve point. Excludes the smoothing penalty.
+            point on the chain. Excludes the smoothing penalty.
         max_residual: Largest distance between a data point and its curve point
             (an upper bound of the orthogonal deviation).
         nfev: Number of residual evaluations.
@@ -65,8 +69,8 @@ class FitResult:
             linking each junction ((1, 0, 0) for parametric joins).
         theta: Raw constraint parameters (shape and tangent magnitudes), usable
             as ``initial_theta`` to warm start another fit.
-        max_deviation: Largest orthogonal distance of a data point to its
-            section's curve, when computed (tolerance fits and refinement).
+        max_deviation: Largest orthogonal distance of a data point to the
+            chain, when computed (tolerance fits and refinement).
         history: Progress records of multi-stage procedures.
         options: Constraint settings the fit was made with (reused by
             :func:`~bspline_varpro.refinement.refine` and knot polishing).
@@ -96,10 +100,9 @@ class FitResult:
         """One :class:`scipy.interpolate.BSpline` per section, defined on [0, 1]."""
         return [BSpline(k, cp, self.degree) for k, cp in zip(self.knots, self.control_points)]
 
-    def deviations(self, sections: Sequence[np.ndarray]) -> List[np.ndarray]:
-        """Orthogonal distance of every point to its section's curve."""
-        from .diagnostics import section_deviations
-        return section_deviations(sections, self.curves())
+    def deviations(self, sections: Sequence[np.ndarray]) -> np.ndarray:
+        """Orthogonal distance of every point of the chain to the nearest curve."""
+        return chain_deviations(chain_data(sections), self.curves())
 
 
 @dataclass(frozen=True)
@@ -149,15 +152,11 @@ def _validate_sections(sections: List[np.ndarray]) -> None:
         raise ValueError("All sections must have the same dimension.")
 
 
-def _validate_parameters(t_sections, sections) -> List[np.ndarray]:
-    t_sections = [np.array(t, dtype=np.float64) for t in t_sections]
-    if len(t_sections) != len(sections) or any(
-        t.ndim != 1 or len(t) != len(sec) or not np.all(np.isfinite(t))
-        or np.any(np.diff(t) < 0) or not np.isclose(t[0], 0) or not np.isclose(t[-1], 1)
-        for t, sec in zip(t_sections, sections)
-    ):
-        raise ValueError("Parameters must match each section and increase from 0 to 1.")
-    return t_sections
+def initial_chain_parameters(initial_parameters, sections) -> np.ndarray:
+    """Chain parameters to start from: the given ones, or centripetal per section."""
+    if initial_parameters is None:
+        return chain_parameters([centripetal_parameters(sec) for sec in sections], sections)
+    return validate_chain_parameters(initial_parameters, sections)
 
 
 def fit(
@@ -190,8 +189,10 @@ def fit(
     jointly. Control points are eliminated by variable projection, and the
     parameters (plus the shape parameters of geometric junctions and tangent
     magnitudes) are optimized with Levenberg-Marquardt using the exact reduced
-    Jacobian. The parameters stay strictly increasing within each section
-    through a softplus reparameterization.
+    Jacobian. The chain is fitted to all points as a whole: the sections only
+    give the starting split, and a point's parameter slides along the chain,
+    across junctions, staying strictly increasing through a softplus
+    reparameterization.
 
     Args:
         points: Ordered points, shape (n, dim), for a single curve, or a sequence
@@ -213,8 +214,9 @@ def fit(
         smoothing: Weight of the integrated squared second derivative penalty
             (bending energy, normalized to trace = control-point count). 0 disables it.
         regularization: Small ridge term keeping the linear solve well posed.
-        initial_parameters: Starting parameter values, one increasing array from
-            0 to 1 per section. Defaults to centripetal parameterization.
+        initial_parameters: Starting parameter values: chain parameters
+            (``FitResult.parameters``), or one increasing array from 0 to 1 per
+            section. Defaults to centripetal parameterization per section.
         initial_theta: Starting raw constraint parameters (``FitResult.theta``).
         max_points_per_section: For dense data: sections with more points are
             fitted on an evenly spaced subsample, then refined jointly on all
@@ -268,10 +270,7 @@ def fit(
     if grow and knots is not None:
         raise ValueError("Growing the control-point count needs num_control_points, not knots.")
 
-    if initial_parameters is None:
-        t_sections = [centripetal_parameters(sec) for sec in sections]
-    else:
-        t_sections = _validate_parameters(initial_parameters, sections)
+    params = initial_chain_parameters(initial_parameters, sections)
 
     options = ChainOptions(continuity, fix_junctions, fix_ends, start_tangent, end_tangent,
                            smoothing, regularization)
@@ -280,14 +279,14 @@ def fit(
     dense = max_points_per_section is not None and any(len(s) > max_points_per_section for s in sections)
     if grow:
         from .tolerance import grow_to_counts
-        result = grow_to_counts(sections, counts, degree, options, t_sections, initial_theta,
+        result = grow_to_counts(sections, counts, degree, options, params, initial_theta,
                                 max_nfev, max_points_per_section, callback, knot_placement)
     elif dense:
         from .tolerance import fit_subsampled
-        result = fit_subsampled(sections, knot_vectors, degree, options, t_sections, initial_theta,
+        result = fit_subsampled(sections, knot_vectors, degree, options, params, initial_theta,
                                 max_nfev, max_points_per_section, callback)
     else:
-        result = _fit_once(sections, knot_vectors, degree, options, t_sections, initial_theta,
+        result = _fit_once(sections, knot_vectors, degree, options, params, initial_theta,
                            max_nfev, tolerance, exact_jacobian, verbose, callback)
     result.options = options
     if knot_placement == "free" and not grow and not dense and result.message != STOPPED:
@@ -304,7 +303,7 @@ def fit(
     return result
 
 
-def _fit_once(sections, knot_vectors, degree, options: ChainOptions, t_sections, initial_theta,
+def _fit_once(sections, knot_vectors, degree, options: ChainOptions, params, initial_theta,
               max_nfev, tolerance, exact_jacobian, verbose, callback) -> FitResult:
     problem = options.problem(sections, knot_vectors, degree)
     theta0 = problem.theta
@@ -312,10 +311,10 @@ def _fit_once(sections, knot_vectors, degree, options: ChainOptions, t_sections,
         theta0 = np.asarray(initial_theta, dtype=np.float64)
         if theta0.shape != (problem.num_params,):
             raise ValueError(f"initial_theta must have {problem.num_params} entries.")
-        result = solve_problem(problem, t_sections, theta0, max_nfev=max_nfev, tolerance=tolerance,
+        result = solve_problem(problem, params, theta0, max_nfev=max_nfev, tolerance=tolerance,
                                exact_jacobian=exact_jacobian, verbose=verbose, callback=callback)
     else:
-        result = solve_with_continuation(problem, options, t_sections, max_nfev=max_nfev,
+        result = solve_with_continuation(problem, options, params, max_nfev=max_nfev,
                                          tolerance=tolerance, exact_jacobian=exact_jacobian,
                                          verbose=verbose, callback=callback)
     return result
@@ -329,7 +328,7 @@ def parametric_options(options: ChainOptions, problem: VarProProblem) -> ChainOp
 
 
 def solve_with_continuation(
-    problem: VarProProblem, options: ChainOptions, t_sections, **kwargs,
+    problem: VarProProblem, options: ChainOptions, params, **kwargs,
 ) -> FitResult:
     """Solve geometric junctions starting from the converged parametric solution.
 
@@ -338,10 +337,10 @@ def solve_with_continuation(
     parametric C^k fit is a feasible, well-determined starting point.
     """
     if not problem.constraints.has_shape_parameters:
-        return solve_problem(problem, t_sections, problem.theta, **kwargs)
+        return solve_problem(problem, params, problem.theta, **kwargs)
     base_problem = parametric_options(options, problem).problem(
         problem.sections, problem.knots, problem.degree)
-    base = solve_problem(base_problem, t_sections, base_problem.theta, **kwargs)
+    base = solve_problem(base_problem, params, base_problem.theta, **kwargs)
     if base.message == STOPPED:
         return base
     theta0 = problem.constraints.theta_from_parametric(base.theta)
@@ -352,7 +351,7 @@ def solve_with_continuation(
 
 def solve_problem(
     problem: VarProProblem,
-    t_sections: Sequence[np.ndarray],
+    params: np.ndarray,
     theta0: np.ndarray,
     *,
     max_nfev: int = 200,
@@ -362,17 +361,16 @@ def solve_problem(
     callback: Optional[Callback] = None,
 ) -> FitResult:
     """Run Levenberg-Marquardt on a prepared :class:`VarProProblem`."""
-    sizes = problem.section_sizes
-    n_eta = sum(n - 1 for n in sizes)
+    n_eta = problem.total_pts - 1
     nfev = 0
     last_x: Optional[np.ndarray] = None
 
     def unpack(x):
-        return eta_to_t(x[:n_eta], sizes), x[n_eta:]
+        return eta_to_t(x[:n_eta], problem.num_sections), x[n_eta:]
 
     def residual(x: np.ndarray) -> np.ndarray:
         nonlocal nfev, last_x
-        (t_flat, _), theta = unpack(x)
+        t_flat, theta = unpack(x)
         r = problem.residual(t_flat, theta)
         nfev += 1
         last_x = x.copy()
@@ -384,7 +382,7 @@ def solve_problem(
     def jacobian(x: np.ndarray) -> np.ndarray:
         return reduced_jacobian(problem, x[:n_eta], x[n_eta:])
 
-    x0 = np.concatenate([t_to_eta(t_sections), theta0])
+    x0 = np.concatenate([t_to_eta(params), theta0])
     try:
         solution = levenberg_marquardt(residual, jacobian if exact_jacobian else "2-point", x0,
                                        max_nfev=max_nfev, tolerance=tolerance, verbose=verbose)
@@ -396,7 +394,7 @@ def solve_problem(
     except (ValueError, np.linalg.LinAlgError) as exc:
         raise ValueError(f"VarPro fit failed: {exc}") from exc
 
-    (t_final, _), theta = unpack(x_final)
+    t_final, theta = unpack(x_final)
     return result_from_problem(problem, t_final, theta, nfev, success, message)
 
 
@@ -525,16 +523,10 @@ def levenberg_marquardt(residual, jacobian, x0, *, max_nfev=200, tolerance=1e-10
 
 def reduced_jacobian(problem: VarProProblem, eta: np.ndarray, theta: np.ndarray) -> np.ndarray:
     """Jacobian of the reduced residual w.r.t. ``[eta, theta]``."""
-    sizes = problem.section_sizes
-    t_flat, t_secs = eta_to_t(eta, sizes)
+    t_flat = eta_to_t(eta, problem.num_sections)
     J_t = problem.jacobian(t_flat, theta)
     J = np.empty((J_t.shape[0], len(eta) + len(theta)))
-    t_off = eta_off = 0
-    for n_s, t_sec in zip(sizes, t_secs):
-        G = eta_jacobian_block(eta[eta_off:eta_off + n_s - 1], t_sec)
-        J[:, eta_off:eta_off + n_s - 1] = J_t[:, t_off:t_off + n_s] @ G
-        t_off += n_s
-        eta_off += n_s - 1
+    J[:, :len(eta)] = J_t @ eta_jacobian(eta, t_flat, problem.num_sections)
     J[:, len(eta):] = problem.parameter_jacobian(t_flat, theta)
     return J
 
@@ -550,7 +542,7 @@ def result_from_problem(
     N = problem.solve(t_final, theta=theta)[0]
     return FitResult(
         control_points=[cp.copy() for cp in problem.split_control_points(P)],
-        parameters=problem.split(t_final),
+        parameters=np.array(t_final, dtype=np.float64),
         knots=[k.copy() for k in problem.knots],
         degree=problem.degree,
         rms_error=problem.last_rms_error,

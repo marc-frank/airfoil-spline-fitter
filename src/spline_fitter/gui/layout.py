@@ -700,16 +700,19 @@ class WindowLayoutMixin:
         for metric, text, tip in (
             (ErrorMetric.PARAMETRIC, "Pointwise",
              "Average distance from each data point to the curve point at its parameter.\n"
+             "Each point keeps its place along the curve, in its starting section.\n"
              "Fast."),
             (ErrorMetric.ORTHOGONAL, "Orthogonal",
-             "Average distance from each data point to the nearest curve point.\n"
-             "Accurate but slower."),
+             "Average distance from each data point to the nearest point of the whole\n"
+             "curve, on any section. Accurate but slower."),
             (ErrorMetric.ORTHOGONAL_LOCAL, "Local",
-             "Orthogonal distance, searching only near each point's parameter.\n"
+             "Orthogonal distance, searching only between the neighbouring data\n"
+             "points' places along the curve, across a junction where they span one.\n"
              "A balance of the two."),
         ):
             self._seg_err.addItem(text, userData=metric)
             self._seg_err.setItemToolTip(self._seg_err.count() - 1, tip)
+        self._seg_err.setCurrentIndex(self._seg_err.findData(ErrorMetric.ORTHOGONAL))
         self._lbl_err = _add_row(form, "Error metric", self._seg_err)
 
         section.add_layout(form)
@@ -858,8 +861,10 @@ class WindowLayoutMixin:
         self._check_optimize_le = QCheckBox("Optimize positions")
         self._check_optimize_le.setChecked(False)
         self._check_optimize_le.setToolTip(
-            "Optimize the position of every junction along the data,\n"
-            "instead of keeping the section split points fixed."
+            "Optimize the position of every junction anywhere within the search\n"
+            "bounds, instead of keeping the section split points fixed. The split\n"
+            "points are where the junctions start; the data is fitted by the\n"
+            "whole curve, so points move between sections with them."
         )
         self._lbl_optimize_le = _add_row(form, "Junctions", self._check_optimize_le)
 

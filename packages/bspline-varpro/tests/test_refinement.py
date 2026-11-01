@@ -23,7 +23,7 @@ def test_joint_jacobian_matches_finite_differences():
     sections = naca_sections(21)
     result = bv.fit(sections, 8, 5, continuity="G2", max_nfev=200)
     problem = _joint(result, sections)
-    t = np.concatenate(result.parameters)
+    t = np.array(result.parameters)
     z = problem.z_from(np.vstack(result.control_points)) + 1e-3
     r, (tangent, Jz) = problem.evaluate(t, z, with_jacobian=True)
     h = 1e-7

@@ -26,7 +26,7 @@ from dataclasses import replace
 import numpy as np
 
 from ..geometry import compute_arc_length_parameters
-from ..spline.fairness import compute_fairness_penalty, compute_penalty_scales
+from ..spline.fairness import compute_penalty_scales
 from ..spline.spline import BSplineCurve2D
 from .control_points import (
     construct_control_points,
@@ -43,8 +43,9 @@ from .models import (
     PointList,
     SplineConfig,
 )
-from .objective_functions.orthogonal import compute_orthogonal_error
-from .objective_functions.parametric import compute_parametric_error
+from .objective_functions.chain import ChainPoints
+from .objective_functions.fitting_error import compute_data_error
+from .objective_functions.fitting_error import compute_fitting_error as _fitting_error
 from .optimizers import (
     RawOptimResult,
     get_optimizer,
@@ -69,90 +70,35 @@ def compute_fitting_error(
     config: SplineConfig,
     opt_config: OptimizationConfig,
     sections: list[PointList],
-    t_params: list[list[float]],
+    chain: ChainPoints,
     fairness_weights: FairnessWeights,
     optimize_le_position: bool = False,
     penalty_scales: FairnessWeights | None = None,
 ) -> float:
     """
     Compute the spline fitting objective function for n sections.
-    
-    This is the generalized objective function for n curve sections.
-    It combines:
-        1. Data fitting error (distance from data points to curves)
-        2. Fairness regularization (optional smoothness penalties)
-    
+
+    The data error is measured over the whole chain, every data point once
+    (objective_functions.fitting_error), plus the optional fairness penalties.
+
     Args:
         variables: Current optimization variable vector
         config: Spline configuration
         opt_config: Optimization configuration (metric selection)
-        sections: List of n section point lists
-        t_params: Parameter values for each section
+        sections: List of n section point lists (the split and junction points)
+        chain: Data points of the whole chain with their chain parameters
         fairness_weights: Weights for regularization terms
-        optimize_le_position: If True, LE position is in variables
+        optimize_le_position: If True, junction positions are in variables
         penalty_scales: Multiplier per penalty term (compute_penalty_scales)
-        
+
     Returns:
         Total objective function value
     """
-    increment_evaluation()
-
-    try:
-        # Build curves from current variables
-        section_ctrl_pts = construct_control_points(
-            variables, config, sections,
-            optimize_le_position=optimize_le_position,
-        )
-
-        # Create BSpline curves for each section
-        curves = [BSplineCurve2D(config.degree, ctrl_pts) for ctrl_pts in section_ctrl_pts]
-
-        # Compute data fitting error for each section
-        metric = opt_config.metric
-        section_errors = []
-        total_points = 0
-
-        for section_idx, (section, t_sec, curve) in enumerate(zip(sections, t_params, curves, strict=False)):
-            section_arr = np.array(section, dtype=np.float64)
-            t_arr = np.array(t_sec, dtype=np.float64)
-            n_pts = len(section_arr)
-            total_points += n_pts
-
-            if metric in (ErrorMetric.ORTHOGONAL, ErrorMetric.ORTHOGONAL_LOCAL):
-                # Orthogonal (closest-point) distance
-                local_search = (metric == ErrorMetric.ORTHOGONAL_LOCAL)
-                error_sum, _ = compute_orthogonal_error(
-                    curve, section_arr, t_arr if local_search else None, local_search
-                )
-                section_errors.append((error_sum, n_pts))
-            else:
-                # Parametric (corresponding-point) distance
-                error_sum, _ = compute_parametric_error(curve, section_arr, t_arr)
-                section_errors.append((error_sum, n_pts))
-
-        # Compute weighted average error
-        if total_points > 0:
-            total_error_sum = sum(e[0] for e in section_errors)
-            data_error = total_error_sum / total_points
-        else:
-            data_error = 1e6
-
-        # Compute fairness regularization
-        regularization = 0.0
-        if fairness_weights.is_enabled:
-            try:
-                regularization = compute_fairness_penalty(
-                    section_ctrl_pts, curves, fairness_weights, penalty_scales
-                )
-            except Exception:
-                regularization = 0.0
-
-        result = float(data_error) + float(regularization)
-
-        return result
-
-    except Exception:
-        return 1e6
+    return _fitting_error(
+        variables, config, opt_config, sections, chain, fairness_weights,
+        construct_control_points, optimize_le_position=optimize_le_position,
+        penalty_scales=penalty_scales,
+    )
 
 
 # =============================================================================
@@ -215,28 +161,35 @@ def run_optimization(
     # Iterative Optimizers (Global and Local)
     # -------------------------------------------------------------------------
 
-    # Convert sections to lists and compute arc-length parameters
+    # The chain is fitted as a whole: every data point once, with a chain
+    # parameter from arc length within its starting section
     sections = [list(sec) for sec in airfoil.sections]
     t_params = [compute_arc_length_parameters(sec) for sec in sections]
+    chain = ChainPoints.from_sections(sections, t_params)
 
     optimize_le = opt_config.optimize_le_position
 
     # Start from the plain least-squares fit: it already follows the shape and
-    # meets the junction conditions, and it costs one linear solve. On the
-    # objective's own parameters it is the best fit the parametric metric can
-    # reach without penalties. It is also the yardstick for the fairness
-    # penalties, so their weights mean the same for every shape, unit and
-    # degree. The polyline guess stands in when it fails.
+    # meets the junction conditions. For the parametric metric it is solved on
+    # the objective's own parameters, the best fit that metric can reach
+    # without penalties; for the orthogonal metrics the points' parameters move
+    # to their closest chain points between solves, so no point stays tied to
+    # a section. It is also the yardstick for the fairness penalties, so their
+    # weights mean the same for every shape, unit and degree. The polyline
+    # guess stands in when it fails.
     penalty_scales = None
     try:
+        reference_parameters = (chain.parameters if opt_config.metric == ErrorMetric.PARAMETRIC
+                                else None)
         reference = get_optimizer(OptimizerType.DIRECT_LSQ).fit(
-            config, replace(opt_config, custom_parameters=t_params), airfoil)
+            config, replace(opt_config, custom_parameters=reference_parameters), airfoil)
         reference_pts = reference.section_control_points
         x0 = initial_guess_from_fit(config, reference_pts, bounds, optimize_le_position=optimize_le)
         if fairness_weights.is_enabled:
+            reference_curves = [BSplineCurve2D(config.degree, pts) for pts in reference_pts]
             penalty_scales = compute_penalty_scales(
-                reference_pts, [BSplineCurve2D(config.degree, pts) for pts in reference_pts],
-                reference.fun)
+                reference_pts, reference_curves,
+                compute_data_error(reference_curves, chain, opt_config.metric))
     except Exception:
         x0 = generate_initial_guess(
             config, sections, t_params, bounds,
@@ -250,7 +203,7 @@ def run_optimization(
     def objective(x):
         value = compute_fitting_error(
             x, config, opt_config,
-            sections, t_params,
+            sections, chain,
             fairness_weights,
             optimize_le_position=optimize_le,
             penalty_scales=penalty_scales,

@@ -22,7 +22,6 @@ The package is organized into focused modules:
     geometry        Coordinate processing and geometric utilities
     optimization    Optimizer wrappers, objectives, and error logging
     fairness        Smoothness metrics and regularization terms
-    parallel        Multiprocessing utilities for orthogonal distance computation
     analysis        Deviation, curvature and junction reports of a fit
     ui              PyQt6-based graphical user interface
     formatting      Display formatting utilities

@@ -278,9 +278,11 @@ class ErrorMetric(Enum):
     Distance metric for measuring spline fit quality.
     
     Attributes:
-        PARAMETRIC: Average distance at corresponding parameter values (fast)
-        ORTHOGONAL: Average closest-point distance (accurate but slower)
-        ORTHOGONAL_LOCAL: Orthogonal within local parameter neighborhood (balanced)
+        PARAMETRIC: Average distance at each point's fixed chain parameter (fast)
+        ORTHOGONAL: Average distance to the closest point of the whole chain
+            (accurate but slower; the default)
+        ORTHOGONAL_LOCAL: Orthogonal between the neighbouring points' chain
+            parameters, across junctions (balanced)
     """
     PARAMETRIC = "avg_point"
     ORTHOGONAL = "orthogonal"
@@ -423,17 +425,21 @@ class OptimizationConfig:
         seed: Random seed for reproducibility (-1 for random)
         early_stop_patience: Iterations without improvement before stopping
         relative_tolerance: Relative improvement threshold for early stopping
-        optimize_le_position: If True, LE point (x, y) becomes optimization variables
+        optimize_le_position: If True, every junction's (x, y) becomes optimization
+            variables, free within the search bounds (the split points are
+            only where they start)
         smoothing_factor: Smoothing parameter for algebraic methods (0 = interpolation)
         smoothing_weight: Bending energy smoothing weight for VarPro LM (0 = disabled).
             Weight of the integrated squared parameter second derivative.
             The same penalty is included in the inner solve and outer objective.
-        custom_parameters: Optional per-section parameter values for data points.
-            If provided, must be a list with one array per section, each array
-            having same length as data points in that section. Values should
-            be in [0, 1] range. If None, `parameterization` is used.
-        parameterization: Direct LSQ only. How data points get their curve
-            parameters: "centripetal" (default) or "arc_length".
+        custom_parameters: Optional parameter values for the data points, kept
+            fixed by Direct LSQ: chain parameters (one array from 0 to the
+            section count, a shared junction point once; see
+            bspline_varpro.chain) or one array from 0 to 1 per section. If
+            None, `parameterization` is used.
+        parameterization: Direct LSQ only. Where the data points' curve
+            parameters start, within each section: "centripetal" (default) or
+            "arc_length". They then move to the closest chain points.
         tolerance: Maximum orthogonal deviation for VarPro LM tolerance mode,
             which picks the number of control points and the knots itself.
             None fits the configured number of control points.
@@ -448,7 +454,7 @@ class OptimizationConfig:
             it can still grow or shrink from there).
     """
     optimizer: OptimizerType = OptimizerType.DE
-    metric: ErrorMetric = ErrorMetric.PARAMETRIC
+    metric: ErrorMetric = ErrorMetric.ORTHOGONAL
     max_iterations: int = 10000
     smoothing_factor: float | None = None
     seed: int = -1
