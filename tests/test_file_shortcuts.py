@@ -164,3 +164,26 @@ def test_ctrl_z_in_a_focused_spin_box_undoes_the_setting(window):
     event.ignore()
     QApplication.sendEvent(window._spin_degree.lineEdit(), event)
     assert not event.isAccepted()  # left to the Edit > Undo shortcut
+
+
+def test_ctrl_v_pastes_an_airfoil_only_when_no_input_field_has_focus(window):
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtTest import QTest
+    from PyQt6.QtWidgets import QApplication
+
+    pts = np.round(NACA4("0012").points(31), 6)
+    QApplication.clipboard().setText("\n".join(f"{x:.6f} {y:.6f}" for x, y in pts))
+    window.show()
+    window.activateWindow()
+
+    for field in (window._spin_degree, window._edit_junctions):
+        field.setFocus()
+        QApplication.processEvents()
+        QTest.keyClick(QApplication.focusWidget(), Qt.Key.Key_V,
+                       Qt.KeyboardModifier.ControlModifier)
+        assert window._airfoil is None, field
+
+    window._plot.setFocus()
+    QApplication.processEvents()
+    QTest.keyClick(QApplication.focusWidget(), Qt.Key.Key_V, Qt.KeyboardModifier.ControlModifier)
+    assert window._airfoil is not None and window._airfoil.num_points == len(pts)
