@@ -37,3 +37,26 @@ def test_formats_load_the_same_contour(tmp_path, lines, name):
     assert coords.shape == PTS.shape
     assert np.allclose(coords, PTS, atol=1e-6)
     assert precision == 6  # the point counts do not count as coordinates
+
+
+def test_import_keeps_unit_chord_coordinates_as_written():
+    from spline_fitter.io import normalize_coords
+    pts = [tuple(p) for p in np.round(NACA4("2412").points(41), 6)]
+    assert normalize_coords(pts) == pts
+
+
+def test_import_moves_and_scales_without_turning():
+    """In millimetres, trailing edge 3 degrees down: the chord is scaled to
+    1 and the leading edge moved to x = 0, but the airfoil is not turned
+    back level."""
+    from spline_fitter.io import normalize_coords
+    pts = np.round(NACA4("2412").points(41), 6)
+    angle = np.radians(-3.0)
+    turn = 250.0 * np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]])
+    moved = [tuple(turn @ p + (50.0, 7.0)) for p in pts]
+    out = np.array(normalize_coords(moved))
+    te = 0.5 * (out[0] + out[-1])
+    assert np.min(out[:, 0]) == pytest.approx(0.0, abs=1e-12)
+    assert te == pytest.approx([1.0, 0.0], abs=1e-12)
+    # Still turned: the leading edge stays above the trailing edge
+    assert out[np.argmin(out[:, 0]), 1] > 0.04

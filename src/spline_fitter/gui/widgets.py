@@ -728,8 +728,10 @@ def add_form_row(form: QFormLayout, text: str, field) -> QLabel:
     return label
 
 
-def show_document(parent: QWidget, title: str, html: str, width: int, height: int) -> None:
-    """Show rich text (a report) in a dialog with a Close button."""
+def show_document(parent: QWidget, title: str, html: str, width: int, height: int,
+                  extra: QWidget | None = None) -> None:
+    """Show rich text (a report) in a dialog with a Close button, and below
+    it ``extra`` (a chart), if given."""
     dialog = QDialog(parent)
     dialog.setWindowTitle(title)
     dialog.resize(width, height)
@@ -739,7 +741,13 @@ def show_document(parent: QWidget, title: str, html: str, width: int, height: in
     browser = text_browser()
     browser.setOpenExternalLinks(True)
     browser.setHtml(html)
-    layout.addWidget(browser)
+    layout.addWidget(browser, stretch=1)
+    if extra is not None:
+        holder = QWidget()
+        inner = QVBoxLayout(holder)
+        inner.setContentsMargins(Size.PAD_LARGE, 0, Size.PAD_LARGE, 0)
+        inner.addWidget(extra)
+        layout.addWidget(holder, stretch=1)
     buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
     buttons.rejected.connect(dialog.accept)
     buttons.setContentsMargins(Size.PAD_LARGE, 0, Size.PAD_LARGE, 0)

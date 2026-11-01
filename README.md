@@ -15,8 +15,15 @@ Professional B-spline curve fitting tool for airfoil coordinate data.
   or merged into one B-spline, optionally with a closing line at a blunt
   trailing edge
 - **Fit report**: maximum and RMS deviation, control points and knots,
-  curvature extrema, junction continuity, and leading-edge radius, with a
-  warning when the tolerance is below the data's rounding error
+  curvature extrema, junction continuity, leading-edge radius, and the
+  maximum thickness and camber with their chord positions (measured between
+  the surfaces at the same x, as airfoil databases do), with a chart of both
+  along the chord and a warning when the tolerance is below the data's
+  rounding error
+- **Import keeps the file's axes**: coordinates already in chords are used as
+  written; others are moved and scaled (never turned) so the leading edge is
+  at x = 0 and the trailing-edge midpoint at (1, 0), so the file's x axis
+  stays the chord line
 - **Knot display**, an interactive curvature comb, and the **deviation** of
   every data point from the curve, magnified along the normal with the
   tolerance band
@@ -77,8 +84,9 @@ Typical workflow:
    control-point count. **Show Knots** marks the knots on the curve, and
    **Deviation** shows where the fit departs from the data, also while it
    fits (its arrow sets the height: 5% of the chord at the tolerance).
-4. **View > Fit Report** (Ctrl+R) shows deviation, fairness, and junction
-   measurements.
+4. **View > Fit Report** (Ctrl+R) shows deviation, fairness, junction,
+   thickness and camber measurements, with thickness and camber charted
+   along the chord.
 5. **File > Export CAD** (Ctrl+E) writes STEP, IGES, or DXF with units and a
    scale (for example the chord length). **Save Fitted** writes a resampled
    `.dat` with cosine spacing, and **Save Spline** writes control points with

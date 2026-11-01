@@ -82,7 +82,28 @@ def fit_report(
             report["leading_edge_radius"] = bv_airfoil.leading_edge_radius(curves)
         except Exception:
             report["leading_edge_radius"] = None
+    report.update(shape_report(result))
     return report
+
+
+SHAPE_KEYS = ("max_thickness", "max_thickness_x", "max_camber", "max_camber_x")
+
+
+def airfoil_shape(result: FitResult) -> dict | None:
+    """Thickness and camber of a fit along its chord, in fractions of the
+    chord (see :func:`bspline_varpro.airfoil.thickness_and_camber`), or
+    None for a chain that is not an airfoil."""
+    try:
+        return bv_airfoil.thickness_and_camber(scipy_curves(result))
+    except Exception:
+        return None
+
+
+def shape_report(result: FitResult) -> dict:
+    """The maximum thickness and camber of a fit and where they are, for
+    the report (None where the chain is not an airfoil)."""
+    shape = airfoil_shape(result)
+    return {key: None if shape is None else float(shape[key]) for key in SHAPE_KEYS}
 
 
 # Newton steps that refine the foot points of a fit from those of the fit
@@ -221,6 +242,14 @@ def format_report_html(report: dict, title: str = "Fit report") -> str:
         ]
         if report.get("leading_edge_radius"):
             rows.append(row("Leading-edge radius", number(report["leading_edge_radius"], ".6g")))
+    if report.get("max_thickness") is not None:
+        def at_chord(value: float, x: float) -> str:
+            return f"{number(100 * value, '.3f')}% at {number(100 * x, '.1f')}% chord"
+
+        rows += [
+            row("Max thickness", at_chord(report["max_thickness"], report["max_thickness_x"])),
+            row("Max camber", at_chord(report["max_camber"], report["max_camber_x"])),
+        ]
     body = "<table>" + "".join(rows) + "</table>"
     if report.get("junctions"):
         body += ("<h4>Junctions</h4><table><tr><th align='left'>Junction</th>"
