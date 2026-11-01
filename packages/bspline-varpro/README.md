@@ -120,11 +120,11 @@ result = bv.fit(points, knots=[my_knots], degree=5)
 | `num_control_points` / `knots` | required | Control-point count with uniform knots, or clamped knot vectors on [0, 1] |
 | `degree` | 3 | Spline degree |
 | `continuity` | `"G1"` | One spec for all junctions or a list with one per junction |
-| `fix_junctions` | True | Interpolate the junction data point instead of fitting its position |
+| `fix_junctions` | True | Pin each junction to its split point instead of fitting its position (points still move between sections) |
 | `fix_ends` | True | Interpolate the first and last point of the chain |
 | `start_tangent`, `end_tangent` | None | Prescribed directions of travel at the chain ends |
 | `smoothing` | 1e-3 | Bending-energy weight (normalized to trace = control-point count) |
-| `initial_parameters`, `initial_theta` | centripetal | Warm starts from a previous fit |
+| `initial_parameters`, `initial_theta` | centripetal | Warm starts from a previous fit (chain parameters, or 0 to 1 per section) |
 | `max_points_per_section` | None | Subsample dense sections, then refine on all points |
 | `knot_placement` | `"uniform"` | `"free"`: afterwards move the interior knots to where they reduce the error most |
 | `grow` | False | Start from the fewest control points and add knots where the fit is worst until the counts are reached |
@@ -133,7 +133,7 @@ result = bv.fit(points, knots=[my_knots], degree=5)
 
 ## `FitResult`
 
-`control_points`, `knots`, `parameters` (fitted parameter of every point),
+`control_points`, `knots`, `parameters` (fitted chain parameter of every point),
 `degree`, `rms_error`, `max_residual`, `max_deviation` (exact orthogonal, for
 tolerance fits and refinement), `continuity` labels, `shape_parameters` per
 junction, `theta` (for warm starts), `history`, `success`, and `message`.
@@ -267,8 +267,15 @@ derivatives, and `C P = d` encodes the end, junction, and continuity conditions.
   separable, and they join `t` as outer variables. Geometric fits start from the
   converged parametric solution, because the shape parameters and the data
   parameterization can trade off along nearly flat directions.
-- **Monotone parameters.** Each section's parameters are normalized cumulative
-  sums of `softplus(eta)`, so they stay ordered and the section ends stay at 0 and 1.
+- **Whole chain.** The chain is fitted to all points as one ordered sequence;
+  the sections only give the starting split (and the junction positions when
+  they are fixed). Every point has a chain parameter `u` in `[0, S]` for `S`
+  sections and lies on section `floor(u)`, so a point moves across a junction
+  when its parameter does. A point shared by consecutive sections is one data
+  point (`bspline_varpro.chain`).
+- **Monotone parameters.** The chain parameters are cumulative sums of
+  `softplus(eta)` scaled to end at `S`, so they stay ordered and the chain's
+  ends stay at 0 and `S`.
 - **Solver.** Levenberg-Marquardt on the normal equations (Cholesky), with
   Marquardt scaling, Nielsen damping updates, MINPACK stopping tests, and
   restarts when the damping stalls in curved valleys.

@@ -9,6 +9,7 @@ and airfoils generated from a NACA code.
 
 from __future__ import annotations
 
+import math
 import os
 import threading
 
@@ -31,7 +32,14 @@ from ..analysis import fit_report, format_report_html, scipy_curves
 from ..geometry import create_airfoil_data
 from ..io import export_airfoil_data, export_spline_data, parse_airfoil_data, parse_airfoil_text
 from .background import run_in_background
-from .widgets import ScientificSpinBox, SegmentedControl, add_form_row, dialog_form, show_document
+from .widgets import (
+    UNLIMITED,
+    ScientificSpinBox,
+    SegmentedControl,
+    add_form_row,
+    dialog_form,
+    show_document,
+)
 
 # Files the window opens: dropped, recent, or copied to the clipboard
 AIRFOIL_SUFFIX = ".dat"
@@ -113,6 +121,7 @@ class FileActionsMixin:
         the NACA generator; whether it worked."""
         try:
             # Create airfoil data object with current section count
+            self._limit_sections(len(coords))
             self._airfoil = create_airfoil_data(
                 coords,
                 filename=filename,
@@ -251,7 +260,7 @@ class FileActionsMixin:
             "of the chord and is 12% thick; 0012 is symmetric.")
         add_form_row(form, "Digits", edit_code)
         spin_points = QSpinBox()
-        spin_points.setRange(10, 5000)
+        spin_points.setRange(10, UNLIMITED)
         spin_points.setValue(self._settings.value("naca_points", 81, type=int))
         spin_points.setToolTip("Spaced closer toward the leading and trailing edge")
         add_form_row(form, "Points per side", spin_points)
@@ -415,7 +424,7 @@ class FileActionsMixin:
         seg_units.setCurrentIndex(max(0, seg_units.findData(units)))
         add_form_row(form, "Units", seg_units)
         spin_scale = ScientificSpinBox()
-        spin_scale.setRange(1e-6, 1e9)
+        spin_scale.setRange(1e-6, math.inf)
         spin_scale.setValue(self._settings.value("cad_scale", 1.0, type=float))
         spin_scale.setToolTip(
             "Coordinates are multiplied by this factor, for example the chord length.")

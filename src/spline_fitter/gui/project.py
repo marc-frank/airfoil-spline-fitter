@@ -104,6 +104,7 @@ class ProjectManager:
 
             # Load airfoil from project
             self._window._airfoil = project.airfoil
+            self._window._limit_sections(project.airfoil.num_points)
 
             # Update UI state
             self._window._show_file_info(project.airfoil, file_path)

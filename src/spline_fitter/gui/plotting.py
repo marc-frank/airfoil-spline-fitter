@@ -33,8 +33,7 @@ def _cumulative_trapezoid(f: np.ndarray, t: np.ndarray) -> np.ndarray:
 def _curvature_and_slope(derivs: dict) -> tuple[np.ndarray, np.ndarray]:
     """Signed curvature and its arc-length derivative dκ/ds from curve derivatives."""
     dx, dy, d2x, d2y = derivs['dx'], derivs['dy'], derivs['d2x'], derivs['d2y']
-    d3x = derivs.get('d3x', np.zeros_like(dx))
-    d3y = derivs.get('d3y', np.zeros_like(dy))
+    d3x, d3y = derivs['d3x'], derivs['d3y']
     v = dx * dx + dy * dy
     a = dx * d2y - dy * d2x
     b = dx * d3y - dy * d3x
@@ -655,7 +654,8 @@ class PlotManager:
                 self._comb_items[side, False].setData(*_joined([c[0] for c in combs]))
                 self._comb_items[side, True].setData(*_joined([c[1] for c in combs]))
         except Exception:
-            pass
+            # No comb rather than the last fit's
+            self.clear_comb_items()
 
     @staticmethod
     def _curvature_comb(

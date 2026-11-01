@@ -11,6 +11,10 @@ Professional B-spline curve fitting tool for airfoil coordinate data.
   scans).
 - **Continuity per junction**: parametric C0-C3 or geometric G1-G3, one setting
   for all junctions or a list such as `G2, C1, G3` for any number of sections
+- **Whole-chain fitting**: the chain of sections is fitted to all points at
+  once. The split only sets where the junctions start, and points move between
+  sections as the curve fits them; with Optimize positions the junctions are
+  fitted too, anywhere
 - **CAD export**: exact STEP AP214, IGES 5.3, and DXF R2000 curves, per section
   or merged into one B-spline, optionally with a closing line at a blunt
   trailing edge

@@ -13,7 +13,7 @@ from typing import Optional, Sequence, Union
 
 import numpy as np
 
-from .diagnostics import section_deviations
+from .chain import chain_deviations
 from .fitting import ChainOptions, FitResult, as_sections, report
 from .joint import JointProblem, solve_joint
 
@@ -41,7 +41,7 @@ def _to_result(problem: JointProblem, t, z, template: FitResult, iterations, suc
     misfit = np.linalg.norm(N @ P - problem.data, axis=1)
     return FitResult(
         control_points=[P[a:b].copy() for a, b in zip(problem.offsets[:-1], problem.offsets[1:])],
-        parameters=np.split(t.copy(), np.cumsum(problem.sizes)[:-1]),
+        parameters=t.copy(),
         knots=[k.copy() for k in template.knots],
         degree=template.degree,
         rms_error=float(np.sqrt(np.mean(misfit ** 2))),
@@ -73,7 +73,7 @@ def refine(
     sections = as_sections(points)
     options = _options(result, options)
     problem = _joint_problem(sections, result, options)
-    t0 = np.concatenate(result.parameters)
+    t0 = np.array(result.parameters, dtype=np.float64)
     z0 = problem.z_from(np.vstack(result.control_points))
     on_step = None
     if callback is not None:
@@ -82,5 +82,5 @@ def refine(
             return report(callback, step.control_points, step.rms_error, step.knots)
     t, z, iterations, converged, message = solve_joint(problem, t0, z0, max_iterations, on_step=on_step)
     refined = _to_result(problem, t, z, result, iterations, converged, message, options)
-    refined.max_deviation = float(max(np.max(d) for d in section_deviations(sections, refined.curves())))
+    refined.max_deviation = float(np.max(chain_deviations(problem.data, refined.curves())))
     return refined

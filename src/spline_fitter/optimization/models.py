@@ -13,6 +13,7 @@ clear documentation, and automatic comparison/hashing support.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum, auto
 
@@ -79,20 +80,21 @@ class ContinuityMode(Enum):
             ContinuityMode.G3: 4,  # LE + 3 curvature-rate control points per side
         }[self]
 
-    def minimum_control_points(self, degree: int) -> int:
-        """
-        Calculate minimum control points needed for given degree and continuity.
-        
-        Args:
-            degree: The B-spline degree
-            
-        Returns:
-            Minimum number of control points per curve segment
-        """
-        # Need at least degree+1 for a valid B-spline
-        base_minimum = degree + 1
-        # Plus enough for the constrained LE points
-        return max(base_minimum, self.constrained_control_points + 1)
+    @property
+    def order(self) -> int:
+        """The number of derivatives linked at a junction (0 to 3)."""
+        return int(self.name[1])
+
+
+def minimum_control_points(junction_orders: Sequence[int], degree: int) -> int:
+    """Fewest control points per section for a chain of sections joined
+    with the given continuity orders (one per junction): more than the
+    degree, and enough that the conditions at both ends of a section do not
+    overlap. A section between two junctions of order k needs 2k + 2, an end
+    section k + 2. The rule of ``bspline_varpro.constraints``; the other
+    optimizers lay the control points out the same way."""
+    ends = [0, *junction_orders, 0]
+    return max(degree + 1, *(a + b + 2 for a, b in zip(ends, ends[1:])))
 
 
 class OptimizerType(Enum):
@@ -246,6 +248,12 @@ class SplineConfig:
         return [f"{kind}{self.continuity.name[1]}"] * (self.num_sections - 1)
 
     @property
+    def minimum_control_points(self) -> int:
+        """Fewest control points per section the degree and the continuity
+        of every junction allow."""
+        return minimum_control_points([int(s[1]) for s in self.junction_specs()], self.degree)
+
+    @property
     def free_control_points_per_section(self) -> int:
         """
         Calculate the number of free (optimizable) control points per section.
@@ -266,17 +274,20 @@ class OptimizationConfig:
         max_iterations: VarPro LM residual evaluation limit (0 = its own default)
         early_stop_patience: Iterations without improvement before stopping
         relative_tolerance: Relative improvement threshold for early stopping
-        optimize_le_position: If True, LE point (x, y) becomes optimization variables
+        optimize_le_position: If True, every junction's (x, y) is fitted too,
+            anywhere (the split points are only where they start)
         smoothing_factor: Smoothing parameter for algebraic methods (0 = interpolation)
         smoothing_weight: Bending energy smoothing weight for VarPro LM (0 = disabled).
             Weight of the integrated squared parameter second derivative.
             The same penalty is included in the inner solve and outer objective.
-        custom_parameters: Optional per-section parameter values for data points.
-            If provided, must be a list with one array per section, each array
-            having same length as data points in that section. Values should
-            be in [0, 1] range. If None, `parameterization` is used.
-        parameterization: Direct LSQ only. How data points get their curve
-            parameters: "centripetal" (default) or "arc_length".
+        custom_parameters: Optional parameter values for the data points, kept
+            fixed by Direct LSQ: chain parameters (one array from 0 to the
+            section count, a shared junction point once; see
+            bspline_varpro.chain) or one array from 0 to 1 per section. If
+            None, `parameterization` is used.
+        parameterization: Direct LSQ only. Where the data points' curve
+            parameters start, within each section: "centripetal" (default) or
+            "arc_length". They then move to the closest chain points.
         tolerance: Maximum orthogonal deviation for VarPro LM tolerance mode,
             which picks the number of control points and the knots itself.
             None fits the configured number of control points.

@@ -28,6 +28,7 @@ from ..optimization.models import (
     OptimizationRun,
     OptimizerType,
     SplineConfig,
+    minimum_control_points,
 )
 from .batch import BatchController
 from .file_actions import FileActionsMixin
@@ -75,6 +76,9 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
 
         # Sweep group (mutual exclusion for parameter sweep toggles)
         self._sweep_group: list = []
+        # Set while the curve settings are made to fit each other (and until
+        # the signals are connected)
+        self._resolving_curve = True
 
         # Build UI
         self._build_ui()
@@ -151,7 +155,6 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
 
         # Method. With a tolerance goal the control point count is only the
         # starting count, and only when the points are not grown
-        start_count = tolerance_mode and not self._check_grow.isChecked()
         show(is_gn_varpro, self._lbl_goal, self._seg_goal,
              self._lbl_tolerance, self._tolerance_row,
              self._lbl_knot_placement, self._combo_knot_placement,
@@ -162,7 +165,7 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._spin_tolerance.setEnabled(
             editable and tolerance_mode and not self._check_auto_tolerance.isChecked())
         self._check_auto_tolerance.setEnabled(editable and tolerance_mode)
-        uses_count = not tolerance_mode or start_count
+        uses_count = self._count_is_used()
         self._lbl_ctrl.setText("Start count" if tolerance_mode else "Control points")
         enable(uses_count, self._lbl_ctrl)
         if tolerance_mode:
@@ -191,6 +194,8 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         enable(has_junctions, self._lbl_optimize_le, self._check_optimize_le)
 
         self._update_advanced_badge()
+        # The count may have become used, and Per junction entries may apply
+        self._keep_curve_valid()
 
     def _tolerance_mode_selected(self) -> bool:
         """Whether the Goal is a tolerance (VarPro) rather than a fixed count."""
@@ -256,8 +261,17 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._check_subsample.toggled.connect(self._spin_subsample.setEnabled)
 
         # Spline configuration
-        self._spin_degree.valueChanged.connect(self._update_ctrl_minimum)
-        self._combo_cont.currentIndexChanged.connect(self._update_ctrl_minimum)
+        for changed, signals in (
+            ("degree", (self._spin_degree.valueChanged, self._sweep_degree.sweep_changed)),
+            ("count", (self._spin_ctrl.valueChanged, self._sweep_ctrl.sweep_changed)),
+            ("sections", (self._spin_sections.valueChanged, self._sweep_sections.sweep_changed)),
+            ("continuity", (self._combo_cont.currentIndexChanged,)),
+        ):
+            for signal in signals:
+                signal.connect(lambda *_, changed=changed: self._keep_curve_valid(changed))
+        self._edit_junctions.editingFinished.connect(self._keep_curve_valid)
+        self._resolving_curve = False
+        self._keep_curve_valid()
         self._combo_cont_kind.currentIndexChanged.connect(self._update_continuity_labels)
 
         # Display options
@@ -383,12 +397,12 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         choose(self._seg_parameterization, opt.parameterization)
         self._check_grow.setChecked(opt.grow_control_points)
 
-        # Curve; degree and continuity before the count, whose minimum they set
+        # Curve; continuity before the degree and both before the count, as
+        # each sets the minimum of the next
         self._spin_sections.setValue(cfg.num_sections)
-        self._spin_degree.setValue(cfg.degree)
         choose(self._combo_cont, cfg.continuity)
+        self._spin_degree.setValue(cfg.degree)
         choose(self._combo_cont_kind, cfg.geometric_continuity)
-        self._spin_ctrl.setMaximum(max(self._spin_ctrl.maximum(), cfg.num_control_points))
         self._spin_ctrl.setValue(cfg.num_control_points)
 
         # Advanced
@@ -400,6 +414,11 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._check_optimize_le.setChecked(opt.optimize_le_position)
 
         self._on_optimizer_changed(self._combo_opt.currentIndex())
+
+    def _limit_sections(self, num_points: int) -> None:
+        """Allow at most one section fewer than the airfoil's points, the
+        most it can be split into."""
+        self._spin_sections.setMaximum(max(1, num_points - 1))
 
     def _on_sections_changed(self):
         """Handle section count change - re-split the loaded airfoil."""
@@ -436,21 +455,119 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
             self.statusBar().showMessage(f"Failed to re-split airfoil: {e}")
             self._play_error_chime()
 
-    def _update_ctrl_minimum(self):
-        """Update minimum control points based on degree and continuity."""
+    def _junction_orders(self, sections: int) -> tuple[list[int], bool]:
+        """The continuity order of each junction of *sections* sections, and
+        whether the Per junction entries set them (VarPro LM, when they suit
+        the section count) rather than the Continuity setting, which can yield
+        to the degree and the control points; the entries cannot."""
+        if self._combo_opt.currentData() == OptimizerType.GN_VARPRO:
+            specs = self._edit_junctions.text().replace(",", " ").replace(";", " ").split()
+            if specs and len(specs) == sections - 1 and all(
+                    len(s) == 2 and s[0].upper() in "CG" and s[1] in "0123" for s in specs):
+                return [int(s[1]) for s in specs], True
+        return [self._combo_cont.currentData().order] * (sections - 1), False
+
+    def _count_is_used(self) -> bool:
+        """Whether the fit reads the control point count: not with a tolerance
+        goal that grows the count from the fewest."""
+        tolerance_mode = (self._combo_opt.currentData() == OptimizerType.GN_VARPRO
+                          and self._tolerance_mode_selected())
+        return not tolerance_mode or not self._check_grow.isChecked()
+
+    def _keep_curve_valid(self, changed: str = "") -> None:
+        """Keep degree, control points, sections and continuity a combination
+        that can be fitted, after the user *changed* one of them ("degree",
+        "count", "sections", "continuity"; "" for anything else).
+
+        The setting just changed wins and the others follow: a higher degree,
+        continuity or section count raises the control points; fewer control
+        points lower the degree, then a swept section count, then the
+        continuity; a lower degree lowers the continuity. Per junction entries
+        do not yield, so they set hard minimums instead.
+
+        A swept degree or section count with a fixed count must fit it at
+        every swept value, so the sweep's upper end stops where the count
+        does. With the count swept as well, the sweep leaves out the
+        combinations that do not fit, and the settings only need one that
+        does: the lowest degree and sections with the highest count."""
+        if self._resolving_curve or self._combo_cont.currentData() is None:
+            return
+        self._resolving_curve = True
         try:
-            degree = self._spin_degree.value()
-            mode = self._combo_cont.currentData()
-            if mode is None:
-                return
+            self._resolve_curve(changed)
+        finally:
+            self._resolving_curve = False
 
-            min_ctrl = mode.minimum_control_points(degree)
-            self._spin_ctrl.setMinimum(min_ctrl)
+    def _resolve_curve(self, changed: str) -> None:
+        degree, count, sections = self._sweep_degree, self._sweep_ctrl, self._sweep_sections
+        open_sweep = count.is_sweep_active and (degree.is_sweep_active or sections.is_sweep_active)
 
-            if self._spin_ctrl.value() < min_ctrl:
-                self._spin_ctrl.setValue(min_ctrl)
-        except Exception:
-            pass
+        def low_end(box):
+            """The degree or sections ends that must fit: all of them, or
+            with an open sweep the lowest."""
+            ends = box.ends()
+            return [min(ends, key=lambda s: s.value())] if open_sweep else ends
+
+        def high_end(box):
+            """The count ends they must fit: all, or with an open sweep the highest."""
+            ends = box.ends()
+            return [max(ends, key=lambda s: s.value())] if open_sweep else ends
+
+        def move(spins, limit: int, up: bool) -> None:
+            for spin in spins:
+                if spin.value() < limit if up else spin.value() > limit:
+                    spin.setValue(limit)
+
+        def orders() -> tuple[list[int], bool]:
+            return self._junction_orders(max(s.value() for s in low_end(sections)))
+
+        def need() -> int:
+            return minimum_control_points(orders()[0], max(s.value() for s in low_end(degree)))
+
+        def lower_continuity(order: int) -> None:
+            self._combo_cont.setCurrentIndex(min(order, self._combo_cont.currentData().order))
+
+        # Degree and continuity: every degree must carry every junction's order
+        lowest_degree = min(s.value() for s in degree.ends())
+        if max(orders()[0], default=0) > lowest_degree:
+            if changed in ("degree", "count") and not orders()[1]:
+                lower_continuity(lowest_degree)
+            else:
+                move(degree.ends(), max(orders()[0]), up=True)
+
+        # Control points: enough for the degree and the junctions
+        if self._count_is_used():
+            have = min(s.value() for s in high_end(count))
+            if need() > have:
+                if changed == "count":
+                    move(low_end(degree), have - 1, up=False)
+                    if need() > have and sections.is_sweep_active:
+                        move(sections.ends()[-1:], max(self._spin_sections.value(), 2), up=False)
+                    while (need() > have and not orders()[1]
+                           and self._combo_cont.currentData().order):
+                        lower_continuity(self._combo_cont.currentData().order - 1)
+                else:
+                    move(high_end(count), need(), up=True)
+
+        # Hard minimums from Per junction entries, and the sweep caps
+        fixed_orders, fixed = self._junction_orders(self._spin_sections.value())
+        lowest_degree = max(fixed_orders, default=1) if fixed else 1
+        degree.set_minimum(lowest_degree)
+        count.set_minimum(minimum_control_points(fixed_orders, lowest_degree) if fixed else 2)
+        degree_cap, sections_cap = self._spin_degree.maximum(), self._spin_sections.maximum()
+        if self._count_is_used() and not count.is_sweep_active:
+            have = self._spin_ctrl.value()
+            degree_cap = max(have - 1, degree.spinbox.minimum())
+            order = self._combo_cont.currentData().order
+            fitting = [n for n in range(1, min(sections_cap, 3) + 1)
+                       if minimum_control_points([order] * (n - 1), 1) <= have]
+            # From three sections on, the need no longer grows: the middle
+            # sections all have two junctions
+            if fitting[-1] < 3:
+                sections_cap = fitting[-1]
+            sections_cap = max(sections_cap, self._spin_sections.value())
+        degree.set_sweep_maximum(degree_cap)
+        sections.set_sweep_maximum(sections_cap)
 
     def _update_loss_plot_axis(self):
         """Update loss plot X-axis based on combo selection."""

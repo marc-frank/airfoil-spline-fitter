@@ -16,7 +16,7 @@ from .basis import (
     open_uniform_knots,
     validate_knots,
 )
-from . import airfoil, diagnostics, export
+from . import airfoil, chain, diagnostics, export
 from .constraints import (
     ChainConstraints,
     End,
@@ -31,10 +31,11 @@ from .joint import JointProblem
 from .problem import KKTSolver, VarProProblem
 from .tolerance import fit_to_tolerance, polish_knots
 
-__version__ = "2.2.0"
+__version__ = "3.0.0"
 
 __all__ = [
     "airfoil",
+    "chain",
     "diagnostics",
     "export",
     "fit",

@@ -48,6 +48,7 @@ from .widgets import (
     SidebarSection,
     SweepableDoubleSpinBox,
     SweepableSpinBox,
+    UNLIMITED,
 )
 
 # Default widths of the sidebar (at least: size_sidebar widens it to fit
@@ -55,10 +56,6 @@ from .widgets import (
 # table scrolls sideways through its columns
 SIDEBAR_WIDTH = 330
 EXPLORER_WIDTH = 570
-
-# Most sections the curve can be split into; each needs enough points
-# for its own spline, which airfoil files of 50 or more points give.
-MAX_SECTIONS = 20
 
 # Width of the label column in every sidebar form, so fields line up
 # across sections.
@@ -690,7 +687,7 @@ class WindowLayoutMixin:
         self._lbl_goal = _add_row(form, "Goal", self._seg_goal)
 
         self._spin_tolerance = ScientificSpinBox()
-        self._spin_tolerance.setRange(1e-9, 1.0)
+        self._spin_tolerance.setRange(1e-9, math.inf)
         self._spin_tolerance.setSingleStep(1e-6)
         self._spin_tolerance.setValue(1e-5)
         self._spin_tolerance.setToolTip("Maximum orthogonal distance of any data point to the curve.")
@@ -746,7 +743,7 @@ class WindowLayoutMixin:
 
         # Degree (sweepable)
         self._spin_degree = QSpinBox()
-        self._spin_degree.setRange(1, 10)
+        self._spin_degree.setRange(1, UNLIMITED)
         self._spin_degree.setValue(5)
         self._spin_degree.setToolTip(
             "Polynomial degree of B-spline basis functions.\n"
@@ -758,7 +755,7 @@ class WindowLayoutMixin:
         # Control points (sweepable); with a tolerance goal only the starting
         # count, and only when not growing from the fewest
         self._spin_ctrl = QSpinBox()
-        self._spin_ctrl.setRange(2, 200)
+        self._spin_ctrl.setRange(2, UNLIMITED)
         self._spin_ctrl.setValue(25)
         self._spin_ctrl.setToolTip(
             "Control points per section.\n"
@@ -769,7 +766,8 @@ class WindowLayoutMixin:
 
         # Sections
         self._spin_sections = QSpinBox()
-        self._spin_sections.setRange(1, MAX_SECTIONS)
+        # At most one fewer than the airfoil's points (see _limit_sections)
+        self._spin_sections.setRange(1, UNLIMITED)
         self._spin_sections.setValue(2)
         self._spin_sections.setToolTip(
             "Number of sections, each its own spline, joined at junctions.\n"
@@ -831,7 +829,7 @@ class WindowLayoutMixin:
             "Off: every point is used throughout."
         )
         self._spin_subsample = QSpinBox()
-        self._spin_subsample.setRange(20, 100000)
+        self._spin_subsample.setRange(20, UNLIMITED)
         self._spin_subsample.setValue(200)
         self._spin_subsample.setSuffix(" points")
         self._spin_subsample.setEnabled(False)
@@ -843,7 +841,7 @@ class WindowLayoutMixin:
 
         # Bending energy weight (VarPro LM fixed count, sweepable)
         self._spin_smoothing_weight = ScientificSpinBox()
-        self._spin_smoothing_weight.setRange(0.0, 1e12)
+        self._spin_smoothing_weight.setRange(0.0, math.inf)
         self._spin_smoothing_weight.setSingleStep(0.001)
         self._spin_smoothing_weight.setValue(0.001)
         self._spin_smoothing_weight.setToolTip(
@@ -857,8 +855,10 @@ class WindowLayoutMixin:
         self._check_optimize_le = QCheckBox("Optimize positions")
         self._check_optimize_le.setChecked(False)
         self._check_optimize_le.setToolTip(
-            "Optimize the position of every junction along the data,\n"
-            "instead of keeping the section split points fixed."
+            "Optimize the position of every junction, instead of keeping the\n"
+            "section split points fixed. The split points are where the junctions\n"
+            "start; the data is fitted by the whole curve, so points move between\n"
+            "sections with them."
         )
         self._lbl_optimize_le = _add_row(form, "Junctions", self._check_optimize_le)
 

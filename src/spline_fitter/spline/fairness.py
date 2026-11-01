@@ -243,12 +243,13 @@ def compute_curve_energy(
             # Curvature squared integral: ∫κ² |v| dt
             curvature_integral += float(np.sum(w * (kappa ** 2) * speed))
 
-            if not has_third_deriv:
-                continue
-
-            # Third derivatives (jerk)
-            jx = d3x_spline(t_values)
-            jy = d3y_spline(t_values)
+            # Third derivatives (jerk); zero for a quadratic, whose curvature
+            # still changes along it
+            if has_third_deriv:
+                jx = d3x_spline(t_values)
+                jy = d3y_spline(t_values)
+            else:
+                jx = jy = np.zeros_like(t_values)
 
             # Curvature derivative with respect to arc length
             cross_prime = vx * jy - vy * jx

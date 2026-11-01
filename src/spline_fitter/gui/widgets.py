@@ -62,6 +62,10 @@ from .theme import (
 # Maximum number of points to plot in the loss graph (to prevent UI freeze)
 MAX_PLOT_POINTS = 100_000
 
+# Upper end of an integer setting with no limit of its own (Qt's largest int);
+# a float setting with none takes math.inf
+UNLIMITED = 2**31 - 1
+
 
 # =============================================================================
 # Sidebar Sections
@@ -542,6 +546,21 @@ class SweepableSpinBox(QWidget):
         if not allowed and self._sweep_active:
             self.stop_sweep()
         self._btn_sweep.setEnabled(allowed)
+
+    def set_minimum(self, minimum: int) -> None:
+        """Set the lowest allowed value, of the value and the sweep's upper end
+        alike; either one below it is raised to it."""
+        self._spin.setMinimum(minimum)
+        self._spin_max.setMinimum(minimum)
+
+    def ends(self) -> list[QSpinBox]:
+        """The value, and the sweep's upper end while sweeping."""
+        return [self._spin, self._spin_max] if self._sweep_active else [self._spin]
+
+    def set_sweep_maximum(self, maximum: int) -> None:
+        """Set the highest allowed upper end of the sweep; one above it is
+        lowered to it. The value itself keeps its own maximum."""
+        self._spin_max.setMaximum(maximum)
 
     @property
     def is_sweep_active(self) -> bool:

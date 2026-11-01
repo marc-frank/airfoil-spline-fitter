@@ -7,7 +7,7 @@ Algebraic (non-iterative) spline fitting using constrained LSQ.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 from scipy.interpolate import BSpline as ScipyBSpline
@@ -29,7 +29,7 @@ class ConstrainedLSQOptimizer(AlgebraicOptimizer):
     """
     Constrained Least-Squares spline fitting.
     
-    Solves for control points algebraically (non-iterative) that:
+    Solves for control points algebraically that:
     1. Minimize least-squares fitting error
     2. Fix TE endpoints (first CP of first section, last CP of last section)
     3. Satisfy continuity constraints at junctions (G0/G1/G2)
@@ -38,9 +38,18 @@ class ConstrainedLSQOptimizer(AlgebraicOptimizer):
     - Fixed to data points (optimize_le_position=False)
     - Free to optimize (optimize_le_position=True)
     
-    Data points get their parameters from opt_config.custom_parameters, or
-    else by opt_config.parameterization (centripetal or arc length).
+    The chain is fitted as a whole: every data point once, on the section its
+    chain parameter lies on (bspline_varpro.chain). Points get their
+    parameters from opt_config.custom_parameters, kept fixed (one linear
+    solve), or else start from opt_config.parameterization (centripetal or
+    arc length) within each section; after the linear solve the parameters
+    and control points are refined together by Gauss-Newton
+    (bspline_varpro.joint), so a point slides to its closest chain point and
+    can cross a junction.
     """
+
+    # Gauss-Newton iterations of the joint refinement
+    MAX_ITERATIONS = 100
 
     @property
     def name(self) -> str:
@@ -61,84 +70,58 @@ class ConstrainedLSQOptimizer(AlgebraicOptimizer):
             airfoil: Airfoil data with sections
             
         Returns:
-            RawOptimResult with computed control points
+            RawOptimResult with computed control points and the points' chain
+            parameters
         """
+        from bspline_varpro.chain import (
+            chain_data,
+            chain_parameters,
+            evaluate_chain,
+            validate_chain_parameters,
+        )
+        from bspline_varpro.joint import JointProblem, solve_joint
+
         from ...geometry import centripetal_parametrize, compute_arc_length_parameters
         from ...spline.spline import create_open_uniform_knots
 
         sections = [list(sec) for sec in airfoil.sections]
+        arrays = [np.array(sec, dtype=np.float64) for sec in sections]
         degree = config.degree
         n_ctrl = config.num_control_points
         num_sections = len(sections)
-        free_junctions = opt_config.optimize_le_position
-
-        # Create knot vector (same for all sections)
         knots = create_open_uniform_knots(degree, n_ctrl)
+        data = chain_data(arrays)
 
-        # Precompute basis functions for each section
-        section_data = []
-        for section_idx, section in enumerate(sections):
-            pts = np.array(section, dtype=np.float64)
-            n_pts = len(pts)
-
-            # Parameterization: custom, centripetal, or arc-length
-            if opt_config.custom_parameters is not None:
-                if section_idx >= len(opt_config.custom_parameters):
-                    raise ValueError(
-                        f"custom_parameters has {len(opt_config.custom_parameters)} sections, "
-                        f"but section {section_idx} requested"
-                    )
-                custom_t = opt_config.custom_parameters[section_idx]
-                if len(custom_t) != n_pts:
-                    raise ValueError(
-                        f"custom_parameters[{section_idx}] has {len(custom_t)} values, "
-                        f"but section has {n_pts} points"
-                    )
-                u = np.array(custom_t, dtype=np.float64)
-            elif opt_config.parameterization == "centripetal":
-                t_params = centripetal_parametrize(section, alpha=0.5)
-                u = np.array(t_params, dtype=np.float64)
-            else:
-                t_params = compute_arc_length_parameters(section)
-                u = np.array(t_params, dtype=np.float64)
-
-            # Build basis matrix N[j,i] = N_i(u_j)
-            N = ScipyBSpline.design_matrix(u, knots, degree).toarray()
-
-            section_data.append({
-                'pts': pts,
-                'u': u,
-                'N': N,
-                'n_pts': n_pts,
-            })
-
-        # Solve based on number of sections
-        if num_sections == 1:
-            section_control_points = self._solve_single_section(
-                section_data[0], sections[0], n_ctrl
-            )
+        fixed_parameters = opt_config.custom_parameters is not None
+        if fixed_parameters:
+            u = validate_chain_parameters(opt_config.custom_parameters, arrays, data)
+        elif opt_config.parameterization == "centripetal":
+            u = chain_parameters([centripetal_parametrize(sec, alpha=0.5) for sec in sections], arrays)
         else:
-            section_control_points = self._solve_coupled_sections(
-                section_data, sections, config, knots, free_junctions
-            )
+            u = chain_parameters([compute_arc_length_parameters(sec) for sec in sections], arrays)
 
-        # Compute final error
-        total_error = 0.0
-        total_points = 0
+        free = opt_config.optimize_le_position and num_sections > 1
+        C, d = self._constraints(sections, config, knots, free)
+        if fixed_parameters:
+            P = self._solve(self._basis(u, knots, degree, n_ctrl, num_sections), data, C, d)
+        else:
+            # Free junctions start from the refined fit with pinned ones, which
+            # meets their constraints too: freeing them can only lower the error
+            stages = [self._constraints(sections, config, knots, False)] if free else []
+            C0, d0 = stages[0] if free else (C, d)
+            P = self._solve(self._basis(u, knots, degree, n_ctrl, num_sections), data, C0, d0)
+            for C_stage, d_stage in stages + [(C, d)]:
+                problem = JointProblem(arrays, [knots] * num_sections, degree, C_stage, d_stage,
+                                       regularization=0.0)
+                u, z, _, _, _ = solve_joint(problem, u, problem.z_from(P), self.MAX_ITERATIONS)
+                P = problem.control_points(z)
 
-        for section_idx, (section, ctrl_pts) in enumerate(zip(sections, section_control_points, strict=False)):
-            pts = np.array(section, dtype=np.float64)
-            N = section_data[section_idx]['N']
-
-            ctrl_arr = np.array(ctrl_pts)
-            pred_x = N @ ctrl_arr[:, 0]
-            pred_y = N @ ctrl_arr[:, 1]
-
-            err = np.hypot(pred_x - pts[:, 0], pred_y - pts[:, 1])
-            total_error += float(np.sum(err))
-            total_points += len(pts)
-
-        final_error = total_error / total_points if total_points > 0 else 0.0
+        section_control_points = [
+            [(float(x), float(y)) for x, y in P[s * n_ctrl:(s + 1) * n_ctrl]]
+            for s in range(num_sections)
+        ]
+        splines = [ScipyBSpline(knots, np.asarray(c), degree) for c in section_control_points]
+        final_error = float(np.mean(np.linalg.norm(evaluate_chain(splines, u) - data, axis=1)))
 
         # Flatten control points to variable vector for logging compatibility
         flat_vars = []
@@ -151,59 +134,48 @@ class ConstrainedLSQOptimizer(AlgebraicOptimizer):
             fun=final_error,
             nit=1,  # Single "iteration" for algebraic solve
             section_control_points=section_control_points,
+            parameters=u,
         )
 
-    def _solve_single_section(
+    @staticmethod
+    def _basis(u: np.ndarray, knots: np.ndarray, degree: int, n_ctrl: int,
+               num_sections: int) -> np.ndarray:
+        """Basis matrix of the chain: each point's row in its section's block."""
+        from bspline_varpro.chain import groups
+
+        N = np.zeros((len(u), n_ctrl * num_sections))
+        for s, (rows, local) in enumerate(groups(u, num_sections)):
+            if len(rows):
+                N[rows, s * n_ctrl:(s + 1) * n_ctrl] = ScipyBSpline.design_matrix(
+                    local, knots, degree).toarray()
+        return N
+
+    @staticmethod
+    def _solve(N_full: np.ndarray, all_pts: np.ndarray, C: np.ndarray, d: np.ndarray) -> np.ndarray:
+        """Stacked control points minimizing |N P - D| subject to C P = d (KKT)."""
+        total_ctrl = N_full.shape[1]
+        n_c = len(C)
+        KKT = np.zeros((total_ctrl + n_c, total_ctrl + n_c))
+        KKT[:total_ctrl, :total_ctrl] = N_full.T @ N_full + 1e-10 * np.eye(total_ctrl)
+        KKT[:total_ctrl, total_ctrl:] = C.T
+        KKT[total_ctrl:, :total_ctrl] = C
+        rhs = np.vstack([N_full.T @ all_pts, d])
+        return solve(KKT, rhs)[:total_ctrl]
+
+    def _constraints(
         self,
-        data: dict[str, Any],
-        section: PointList,
-        n_ctrl: int,
-    ) -> list[PointList]:
-        """Solve single section with fixed endpoints."""
-        pts = data['pts']
-        N = data['N']
-
-        # Endpoint constraints: P[0] = pts[0], P[-1] = pts[-1]
-        C = np.zeros((2, n_ctrl))
-        C[0, 0] = 1.0
-        C[1, -1] = 1.0
-
-        c_vals_x = np.array([pts[0, 0], pts[-1, 0]])
-        c_vals_y = np.array([pts[0, 1], pts[-1, 1]])
-
-        # Build KKT system
-        NtN = N.T @ N + 1e-10 * np.eye(n_ctrl)
-        n_c = 2
-
-        KKT = np.zeros((n_ctrl + n_c, n_ctrl + n_c))
-        KKT[:n_ctrl, :n_ctrl] = NtN
-        KKT[:n_ctrl, n_ctrl:] = C.T
-        KKT[n_ctrl:, :n_ctrl] = C
-
-        rhs_x = np.concatenate([N.T @ pts[:, 0], c_vals_x])
-        rhs_y = np.concatenate([N.T @ pts[:, 1], c_vals_y])
-
-        sol_x = solve(KKT, rhs_x)
-        sol_y = solve(KKT, rhs_y)
-
-        ctrl_x = sol_x[:n_ctrl]
-        ctrl_y = sol_y[:n_ctrl]
-
-        ctrl_pts = [(float(ctrl_x[i]), float(ctrl_y[i])) for i in range(n_ctrl)]
-        return [ctrl_pts]
-
-    def _solve_coupled_sections(
-        self,
-        section_data: list[dict[str, Any]],
         sections: list[PointList],
         config: SplineConfig,
         knots: np.ndarray,
         free_junctions: bool,
-    ) -> list[PointList]:
+    ) -> tuple[np.ndarray, np.ndarray]:
         """
-        Solve all sections as a coupled system with continuity constraints.
-        
-        Uses parametric (C^n) continuity where derivatives match exactly.
+        Constraints C P = d on the stacked control points of all sections.
+
+        Fixes the chain's end points, joins the sections, pins each junction
+        to its split point unless free_junctions, and uses parametric (C^n)
+        continuity where derivatives match exactly. d has one (x, y) row per
+        constraint.
         """
         from ..models import ContinuityMode
 
@@ -214,20 +186,6 @@ class ConstrainedLSQOptimizer(AlgebraicOptimizer):
 
         # Total unknowns: n_ctrl per section
         total_ctrl = n_ctrl * num_sections
-
-        # Build block-diagonal basis matrix
-        total_pts = sum(d['n_pts'] for d in section_data)
-        N_full = np.zeros((total_pts, total_ctrl))
-
-        pts_offset = 0
-        for section_idx, data in enumerate(section_data):
-            n_pts = data['n_pts']
-            ctrl_offset = section_idx * n_ctrl
-            N_full[pts_offset:pts_offset + n_pts, ctrl_offset:ctrl_offset + n_ctrl] = data['N']
-            pts_offset += n_pts
-
-        # Collect all data points
-        all_pts = np.vstack([d['pts'] for d in section_data])
 
         # Build constraint equations
         C_rows = []
@@ -330,32 +288,4 @@ class ConstrainedLSQOptimizer(AlgebraicOptimizer):
                     c_x.append(0.0)
                     c_y.append(0.0)
 
-        # Solve standard system
-        C = np.array(C_rows)
-        c_x_arr = np.array(c_x)
-        c_y_arr = np.array(c_y)
-        n_c = len(C_rows)
-
-        NtN = N_full.T @ N_full + 1e-10 * np.eye(total_ctrl)
-
-        KKT = np.zeros((total_ctrl + n_c, total_ctrl + n_c))
-        KKT[:total_ctrl, :total_ctrl] = NtN
-        KKT[:total_ctrl, total_ctrl:] = C.T
-        KKT[total_ctrl:, :total_ctrl] = C
-
-        rhs_x = np.concatenate([N_full.T @ all_pts[:, 0], c_x_arr])
-        rhs_y = np.concatenate([N_full.T @ all_pts[:, 1], c_y_arr])
-
-        sol_x = solve(KKT, rhs_x)
-        sol_y = solve(KKT, rhs_y)
-
-        # Extract control points per section
-        section_control_points = []
-        for section_idx in range(num_sections):
-            ctrl_offset = section_idx * n_ctrl
-            ctrl_x = sol_x[ctrl_offset:ctrl_offset + n_ctrl]
-            ctrl_y = sol_y[ctrl_offset:ctrl_offset + n_ctrl]
-            ctrl_pts = [(float(ctrl_x[i]), float(ctrl_y[i])) for i in range(n_ctrl)]
-            section_control_points.append(ctrl_pts)
-
-        return section_control_points
+        return np.array(C_rows), np.column_stack([c_x, c_y])

@@ -1,14 +1,14 @@
-"""Monotone softplus reparameterization of per-section data parameters.
+"""Monotone softplus reparameterization of the chain parameters.
 
-Each section's parameters t_0 = 0 < t_1 < ... < t_{n-1} = 1 are written as
-normalized cumulative sums of softplus(eta), so any unconstrained eta vector
-yields strictly increasing parameters with fixed end values. This lets an
-unconstrained Levenberg-Marquardt solver optimize the parameters.
+The chain parameters u_0 = 0 < u_1 < ... < u_{n-1} = S of all data points are
+written as cumulative sums of softplus(eta) scaled to end at S, so any
+unconstrained eta vector yields strictly increasing parameters with fixed end
+values. This lets an unconstrained Levenberg-Marquardt solver optimize the
+parameters, and lets a point cross a junction (an integer u) as it slides
+along the chain.
 """
 
 from __future__ import annotations
-
-from typing import List, Sequence, Tuple
 
 import numpy as np
 
@@ -30,37 +30,28 @@ def inverse_softplus(y: np.ndarray) -> np.ndarray:
     return np.where(y_safe > 20.0, y_safe, np.log(np.expm1(np.clip(y_safe, 1e-15, 20.0))))
 
 
-def t_to_eta(t_sections: Sequence[np.ndarray]) -> np.ndarray:
-    """Flat eta vector (length ``sum(n_s - 1)``) reproducing the given parameters."""
-    return np.concatenate([
-        inverse_softplus(np.maximum(np.diff(t_sec), 1e-15)) for t_sec in t_sections
-    ])
+def t_to_eta(u: np.ndarray) -> np.ndarray:
+    """Eta vector (one shorter than ``u``) reproducing the given chain parameters."""
+    return inverse_softplus(np.maximum(np.diff(np.asarray(u, dtype=np.float64)), 1e-15))
 
 
-def eta_to_t(
-    eta: np.ndarray, section_sizes: Sequence[int],
-) -> Tuple[np.ndarray, List[np.ndarray]]:
-    """Map a flat eta vector to ``(t_flat, t_sections)``."""
-    t_sections = []
-    offset = 0
+def eta_to_t(eta: np.ndarray, span: float) -> np.ndarray:
+    """Chain parameters from 0 to ``span`` for an eta vector."""
     # Huge LM steps must not overflow the cumulative sum.
     eta = np.clip(np.nan_to_num(eta, nan=0.0), -700.0, 700.0)
-    for n_s in section_sizes:
-        cumsum = np.cumsum(softplus(eta[offset:offset + n_s - 1]))
-        offset += n_s - 1
-        t_sec = np.empty(n_s)
-        t_sec[0] = 0.0
-        t_sec[1:] = cumsum / cumsum[-1]
-        t_sections.append(t_sec)
-    return np.concatenate(t_sections), t_sections
+    cumsum = np.cumsum(softplus(eta))
+    u = np.empty(len(eta) + 1)
+    u[0] = 0.0
+    u[1:] = span * cumsum / cumsum[-1]
+    return u
 
 
-def eta_jacobian_block(eta_sec: np.ndarray, t_sec: np.ndarray) -> np.ndarray:
-    """``dt/deta`` for one section, shape (n_s, n_s - 1).
+def eta_jacobian(eta: np.ndarray, u: np.ndarray, span: float) -> np.ndarray:
+    """``du/deta``, shape (n, n - 1).
 
-    With t_k = cumsum(softplus(eta))_k / S:
-    ``dt_k/deta_j = sigmoid(eta_j) / S * ([j < k] - t_k)``.
+    With u_k = span * cumsum(softplus(eta))_k / T:
+    ``du_k/deta_j = span * sigmoid(eta_j) / T * ([j < k] - u_k / span)``.
     """
-    total = np.sum(softplus(eta_sec))
-    indicator = np.tri(len(t_sec), len(eta_sec), k=-1)
-    return (sigmoid(eta_sec) / total)[np.newaxis, :] * (indicator - t_sec[:, np.newaxis])
+    total = np.sum(softplus(eta))
+    indicator = np.tri(len(u), len(eta), k=-1)
+    return (span * sigmoid(eta) / total)[np.newaxis, :] * (indicator - u[:, np.newaxis] / span)
