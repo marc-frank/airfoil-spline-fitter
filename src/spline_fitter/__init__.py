@@ -6,11 +6,9 @@ A professional-grade tool for fitting B-spline curves to airfoil coordinate data
 
 This package provides:
     - Interactive GUI for airfoil spline fitting with real-time visualization
-    - Multiple optimizer backends (VarPro Levenberg-Marquardt via bspline-varpro,
-      Differential Evolution, Basin-hopping, local methods)
+    - VarPro Levenberg-Marquardt (via bspline-varpro) and Direct LSQ fitting
     - Tolerance mode: fewest control points (non-uniform knots) within a maximum deviation
     - Parametric (C0-C3) or geometric (G1-G3) continuity, selectable per junction
-    - Fairness regularization for aesthetically pleasing control point distributions
     - Fit reports, STEP/IGES/DXF export and batch conversion of airfoil libraries
 
 Architecture
@@ -20,9 +18,8 @@ The package is organized into focused modules:
     models          Data structures (AirfoilData, SplineConfig, etc.)
     spline          Core B-spline mathematics and curve evaluation
     geometry        Coordinate processing and geometric utilities
-    optimization    Optimizer wrappers, objectives, and error logging
-    fairness        Smoothness metrics and regularization terms
-    parallel        Multiprocessing utilities for orthogonal distance computation
+    optimization    Optimizer wrappers and error logging
+    fairness        Smoothness metrics
     analysis        Deviation, curvature and junction reports of a fit
     ui              PyQt6-based graphical user interface
     formatting      Display formatting utilities
@@ -65,7 +62,6 @@ from .analysis import fit_report, scipy_curves
 from .geometry import (
     compute_arc_length_parameters,
     compute_bounding_box,
-    compute_optimization_bounds,
     create_airfoil_data,
     find_leading_edge_index,
     interpolate_along_polyline,
@@ -79,18 +75,13 @@ from .gui import SplineFitterWindow
 # Optimization engine
 from .optimization import (
     OptimizerErrorLogger,
-    compute_fitting_error,
-    construct_control_points,
-    generate_initial_guess,
     run_optimization,
 )
 from .optimization.models import (
     AirfoilData,
     BoundingBox,
     ContinuityMode,
-    ErrorMetric,
     EvaluationRecord,  # Backwards compatibility alias
-    FairnessWeights,
     FitResult,
     IterationRecord,
     OptimizationConfig,
@@ -118,7 +109,6 @@ from .spline import (
     compute_arc_length,
     compute_curvature_derivative,
     compute_curve_energy,
-    compute_fairness_penalty,
     compute_polygon_metrics,
     compute_signed_curvature,
     create_open_uniform_knots,
@@ -131,11 +121,9 @@ __all__ = [
     # Data models
     "ContinuityMode",
     "OptimizerType",
-    "ErrorMetric",
     "AirfoilData",
     "SplineConfig",
     "OptimizationConfig",
-    "FairnessWeights",
     "FitResult",
     "BoundingBox",
     "IterationRecord",
@@ -157,17 +145,12 @@ __all__ = [
     "compute_arc_length_parameters",
     "interpolate_along_polyline",
     "compute_bounding_box",
-    "compute_optimization_bounds",
     # Optimization
     "run_optimization",
     "OptimizerErrorLogger",
-    "construct_control_points",
-    "generate_initial_guess",
-    "compute_fitting_error",
     # Fairness
     "compute_polygon_metrics",
     "compute_curve_energy",
-    "compute_fairness_penalty",
     # Analysis
     "fit_report",
     "scipy_curves",

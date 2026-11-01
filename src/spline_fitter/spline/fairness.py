@@ -32,7 +32,7 @@ from collections.abc import Sequence
 
 import numpy as np
 
-from ..optimization.models import FairnessWeights, Point2D, PointList
+from ..optimization.models import Point2D
 from .spline import BSplineCurve2D
 
 # =============================================================================
@@ -277,94 +277,3 @@ def compute_curve_energy(
 
     except Exception:
         return defaults
-
-
-# =============================================================================
-# Combined Regularizer
-# =============================================================================
-
-def compute_fairness_penalty(
-    section_control_points: Sequence[PointList],
-    section_curves: Sequence[BSplineCurve2D | None],
-    weights: FairnessWeights,
-) -> float:
-    """
-    Compute the total fairness regularization penalty for n sections.
-    
-    Generalizes compute_fairness_penalty for arbitrary number of curve sections.
-    Computes metrics for each section and averages them.
-    
-    Args:
-        section_control_points: List of control point lists for each section
-        section_curves: List of B-spline curves (for energy terms)
-        weights: Weights for each regularization term
-        
-    Returns:
-        Total weighted regularization penalty (averaged over sections)
-    """
-    if not weights.is_enabled:
-        return 0.0
-
-    num_sections = len(section_control_points)
-    if num_sections == 0:
-        return 0.0
-
-    # Compute metrics for each section
-    polygon_metrics_list = [compute_polygon_metrics(ctrl_pts) for ctrl_pts in section_control_points]
-    energy_metrics_list = [compute_curve_energy(curve) for curve in section_curves]
-
-    # Compute scale factor for normalizing energy terms
-    all_points = []
-    for ctrl_pts in section_control_points:
-        all_points.extend(ctrl_pts)
-
-    scale = 1.0
-
-    # Use arc length average
-    lengths = [e.get('length', 0.0) for e in energy_metrics_list]
-    valid_lengths = [L for L in lengths if L > 1e-12 and math.isfinite(L)]
-    if valid_lengths:
-        scale = max(scale, float(np.mean(valid_lengths)))
-
-    # Also consider bounding box
-    if all_points:
-        arr = np.asarray(all_points, dtype=np.float64)
-        if arr.size >= 2 and np.all(np.isfinite(arr)):
-            x_span = float(np.max(arr[:, 0]) - np.min(arr[:, 0]))
-            y_span = float(np.max(arr[:, 1]) - np.min(arr[:, 1]))
-            scale = max(scale, x_span, y_span)
-
-    scale = max(scale, 1e-6)
-
-    # Average polygon metrics across all sections
-    length_variance = float(np.mean([m['length_variance'] for m in polygon_metrics_list]))
-    polygon_bend = float(np.mean([m['polygon_bend'] for m in polygon_metrics_list]))
-    anti_bunching = float(np.mean([m['anti_bunching'] for m in polygon_metrics_list]))
-    end_handles = float(np.mean([m['end_handles'] for m in polygon_metrics_list]))
-
-    # Average energy terms (scaled for dimensionlessness)
-    curvature_sq_values = [e.get('curvature_squared', 0.0) for e in energy_metrics_list]
-    curvature_grad_values = [e.get('curvature_gradient', 0.0) for e in energy_metrics_list]
-
-    curvature_sq = float(np.mean(curvature_sq_values)) * (scale ** 2)
-    curvature_grad = float(np.mean(curvature_grad_values)) * (scale ** 4)
-
-    # Sanitize values
-    terms = [length_variance, polygon_bend, anti_bunching,
-             end_handles, curvature_sq, curvature_grad]
-    for i, val in enumerate(terms):
-        if not math.isfinite(val) or val < 0.0:
-            terms[i] = 0.0
-
-    length_variance, polygon_bend, anti_bunching, end_handles, curvature_sq, curvature_grad = terms
-
-    # Compute weighted sum
-    penalty = 0.0
-    penalty += weights.length_variance * length_variance
-    penalty += weights.polygon_bend * polygon_bend
-    penalty += weights.anti_bunching * anti_bunching
-    penalty += weights.end_handles * end_handles
-    penalty += weights.curvature_squared * curvature_sq
-    penalty += weights.curvature_gradient * curvature_grad
-
-    return float(penalty)

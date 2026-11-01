@@ -6,14 +6,13 @@ Individual optimizer implementations for spline fitting.
 
 This package provides:
     - Base classes for optimizer interface
-    - Global optimizers (DE, DA, Basin-Hopping)
-    - Local optimizers (BFGS, L-BFGS-B, CG, SLSQP, etc.)
+    - VarPro LM (bspline-varpro)
     - Algebraic methods (Direct LSQ)
 
 Usage:
     >>> from spline_fitter.optimization.optimizers import get_optimizer, OptimizerType
-    >>> optimizer = get_optimizer(OptimizerType.BFGS)
-    >>> result = optimizer.optimize(objective, x0, bounds, max_iter)
+    >>> optimizer = get_optimizer(OptimizerType.DIRECT_LSQ)
+    >>> result = optimizer.fit(config, opt_config, airfoil)
 """
 
 from __future__ import annotations
@@ -23,31 +22,16 @@ from typing import TYPE_CHECKING
 from .base import (
     AlgebraicOptimizer,
     BaseOptimizer,
-    EarlyStopException,
     RawOptimResult,
 )
-from .basin_hopping import BasinHoppingOptimizer
 from .constrained_lsq import ConstrainedLSQOptimizer
-from .differential_evolution import DifferentialEvolutionOptimizer
-from .dual_annealing import DualAnnealingOptimizer
 from .gn_varpro import GNVarProOptimizer
-from .local import (
-    BFGSOptimizer,
-    CGOptimizer,
-    COBYLAOptimizer,
-    LBFGSBOptimizer,
-    LocalOptimizer,
-    NelderMeadOptimizer,
-    PowellOptimizer,
-    SLSQPOptimizer,
-    TNCOptimizer,
-)
 
 if TYPE_CHECKING:
     from ..models import OptimizerType
 
 
-# Module-level state for iteration tracking (used by local optimizers)
+# Module-level state for iteration tracking
 _evaluation_count: int = 0
 _iteration_count: int = 0
 
@@ -94,20 +78,6 @@ def get_optimizer(optimizer_type: OptimizerType) -> BaseOptimizer:
     from ..models import OptimizerType
 
     optimizer_map = {
-        # Global optimizers
-        OptimizerType.DE: DifferentialEvolutionOptimizer,
-        OptimizerType.DA: DualAnnealingOptimizer,
-        OptimizerType.BH: BasinHoppingOptimizer,
-        # Local optimizers
-        OptimizerType.BFGS: BFGSOptimizer,
-        OptimizerType.L_BFGS_B: LBFGSBOptimizer,
-        OptimizerType.CG: CGOptimizer,
-        OptimizerType.SLSQP: SLSQPOptimizer,
-        OptimizerType.TNC: TNCOptimizer,
-        OptimizerType.POWELL: PowellOptimizer,
-        OptimizerType.NELDER_MEAD: NelderMeadOptimizer,
-        OptimizerType.COBYLA: COBYLAOptimizer,
-        # Algebraic
         OptimizerType.DIRECT_LSQ: ConstrainedLSQOptimizer,
         OptimizerType.GN_VARPRO: GNVarProOptimizer,
     }
@@ -124,25 +94,9 @@ __all__ = [
     "BaseOptimizer",
     "AlgebraicOptimizer",
     "RawOptimResult",
-    "EarlyStopException",
-    # Global optimizers
-    "DifferentialEvolutionOptimizer",
-    "DualAnnealingOptimizer",
-    "BasinHoppingOptimizer",
-    # Local optimizers
-    "LocalOptimizer",
-    "BFGSOptimizer",
-    "LBFGSBOptimizer",
-    "CGOptimizer",
-    "SLSQPOptimizer",
-    "TNCOptimizer",
-    "PowellOptimizer",
-    "NelderMeadOptimizer",
-    "COBYLAOptimizer",
-    # Algebraic
+    # Optimizers
     "ConstrainedLSQOptimizer",
     "GNVarProOptimizer",
-    # Two-stage parameterization
     # Factory function
     "get_optimizer",
     # Iteration tracking

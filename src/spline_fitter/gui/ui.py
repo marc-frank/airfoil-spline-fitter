@@ -23,7 +23,6 @@ from ..formatting import format_duration, format_error, number
 from ..geometry import create_airfoil_data
 from ..optimization.models import (
     AirfoilData,
-    FairnessWeights,
     FitResult,
     OptimizationConfig,
     OptimizationRun,
@@ -90,7 +89,6 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._batch_controller = BatchController(self)
 
         self._connect_signals()
-        self._restore_settings()
         self._set_advanced_baseline()
 
     def showEvent(self, event):
@@ -119,7 +117,6 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         if opt_type is None:
             return
         is_gn_varpro = opt_type == OptimizerType.GN_VARPRO
-        uses_metric = opt_type.uses_error_metric
         tolerance_mode = is_gn_varpro and self._tolerance_mode_selected()
         has_junctions = self._spin_sections.value() > 1
         editable = not self._is_fitting
@@ -154,7 +151,6 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
                     sweep_box.stop_sweep()
         self._sweep_ctrl.setEnabled(editable and uses_count)
         self._sweep_ctrl.set_sweep_allowed(not tolerance_mode)
-        show(uses_metric, self._lbl_err, self._seg_err)
 
         # Curve. Continuity applies at junctions, which one section lacks;
         # geometric continuity is VarPro only
@@ -171,33 +167,10 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         # Tolerance mode uses its own fixed smoothing weight
         enable(not tolerance_mode, self._lbl_smoothing_weight, self._sweep_smoothing_weight)
 
-        # VarPro runs until it converges (Cancel stops it); the algebraic
-        # methods do not iterate
-        show(not opt_type.is_algebraic and not is_gn_varpro,
-             self._lbl_maxiter, self._spin_maxiter)
-
-        # Seed: the stochastic global optimizers
-        show(opt_type.is_global, self._lbl_seed, self._spin_seed)
-
-        # Search scale: the bounds, which only bounded optimizers receive
-        show(uses_metric and self._optimizer_takes_bounds(opt_type),
-             self._lbl_bbox, self._spin_bbox)
-
         # Junction position: every method can move it
         enable(has_junctions, self._lbl_optimize_le, self._check_optimize_le)
 
-        # Fairness penalties: the objective of the general-purpose optimizers
-        show(uses_metric, self._regularization_box)
         self._update_advanced_badge()
-
-    @staticmethod
-    def _optimizer_takes_bounds(opt_type: OptimizerType) -> bool:
-        """Whether the optimizer receives the variable bounds (Search scale)."""
-        from ..optimization.optimizers import get_optimizer
-        try:
-            return get_optimizer(opt_type).supports_bounds
-        except Exception:
-            return False
 
     def _tolerance_mode_selected(self) -> bool:
         """Whether the Goal is a tolerance (VarPro) rather than a fixed count."""
@@ -235,7 +208,6 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._action_save_project.triggered.connect(self._project_manager.on_save_project)
         self._action_save_project_as.triggered.connect(self._project_manager.on_save_project_as)
         self._action_batch.triggered.connect(self._batch_controller.on_batch_dialog)
-        self._action_view_report.triggered.connect(self._on_view_report)
         self._action_export_cad.triggered.connect(self._on_export_cad)
         self._action_fit_report.triggered.connect(self._on_fit_report)
 
@@ -278,17 +250,9 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
             lambda _: self._on_optimizer_changed(self._combo_opt.currentIndex())
         )
 
-        # Fairness
-        self._check_fairness.toggled.connect(
-            lambda checked: self._fairness_container.setEnabled(checked)
-        )
-
         # Run controls
         self._btn_fit.clicked.connect(self._fitting_controller.on_fit)
         self._btn_cancel.clicked.connect(self._fitting_controller.on_cancel)
-
-        # Settings persistence
-        self._spin_bbox.valueChanged.connect(self._save_settings)
 
         # Theme: the stylesheet restyles the widgets, the plots restyle here
         self._action_theme.triggered.connect(lambda: ThemeDialog(self).exec())
@@ -321,26 +285,6 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._plot_manager.restyle()
 
     # -------------------------------------------------------------------------
-    # Settings Persistence
-    # -------------------------------------------------------------------------
-
-    def _restore_settings(self):
-        """Restore settings from persistent storage."""
-        try:
-            bbox = self._settings.value("bbox_scale", 3.0, type=float)
-            if bbox is not None:
-                self._spin_bbox.setValue(float(bbox))
-        except Exception:
-            pass
-
-    def _save_settings(self):
-        """Save current settings to persistent storage."""
-        try:
-            self._settings.setValue("bbox_scale", float(self._spin_bbox.value()))
-        except Exception:
-            pass
-
-    # -------------------------------------------------------------------------
     # Configuration Helpers
     # -------------------------------------------------------------------------
 
@@ -356,7 +300,6 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
             num_control_points=self._spin_ctrl.value(),
             num_sections=self._spin_sections.value(),
             continuity=self._combo_cont.currentData(),
-            bbox_scale=self._spin_bbox.value(),
             geometric_continuity=is_gn_varpro and bool(self._combo_cont_kind.currentData()),
             junction_continuity=junctions,
         )
@@ -373,10 +316,8 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
 
         return OptimizationConfig(
             optimizer=opt_type,
-            metric=self._seg_err.currentData(),
             # 0: VarPro's own limit, a safety stop it does not reach in practice
-            max_iterations=0 if opt_type == OptimizerType.GN_VARPRO else self._spin_maxiter.value(),
-            seed=self._spin_seed.value(),
+            max_iterations=0,
             optimize_le_position=(self._check_optimize_le.isChecked()
                                   and self._spin_sections.value() > 1),
             smoothing_weight=self._spin_smoothing_weight.value(),
@@ -392,7 +333,7 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
     def _apply_run_settings(self, run: OptimizationRun) -> None:
         """Set every sidebar setting to that of a stored run (a double-click
         in the explorer, or opening a project)."""
-        cfg, opt, weights = run.spline_config, run.optimization_config, run.fairness_weights
+        cfg, opt = run.spline_config, run.optimization_config
 
         def choose(control, data) -> None:
             index = control.findData(data)
@@ -408,7 +349,6 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         choose(self._combo_knot_placement, opt.knot_placement)
         choose(self._seg_parameterization, opt.parameterization)
         self._check_grow.setChecked(opt.grow_control_points)
-        choose(self._seg_err, opt.metric)
 
         # Curve; degree and continuity before the count, whose minimum they set
         self._spin_sections.setValue(cfg.num_sections)
@@ -424,36 +364,9 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         if opt.max_points_per_section is not None:
             self._spin_subsample.setValue(opt.max_points_per_section)
         self._spin_smoothing_weight.setValue(opt.smoothing_weight)
-        if opt.max_iterations:  # 0: VarPro's own limit, not a setting
-            self._spin_maxiter.setValue(opt.max_iterations)
-        self._spin_seed.setValue(opt.seed)
-        self._spin_bbox.setValue(cfg.bbox_scale)
         self._check_optimize_le.setChecked(opt.optimize_le_position)
 
-        # Regularization
-        self._check_fairness.setChecked(weights.is_enabled)
-        for spin, weight in ((self._spin_w_lenvar, weights.length_variance),
-                             (self._spin_w_bend, weights.polygon_bend),
-                             (self._spin_w_short, weights.anti_bunching),
-                             (self._spin_w_tangent, weights.end_handles),
-                             (self._spin_w_curv, weights.curvature_squared),
-                             (self._spin_w_grad, weights.curvature_gradient)):
-            spin.setValue(weight)
         self._on_optimizer_changed(self._combo_opt.currentIndex())
-
-    def _get_fairness_weights(self) -> FairnessWeights:
-        """Build FairnessWeights from current UI state."""
-        if not self._check_fairness.isChecked():
-            return FairnessWeights()
-
-        return FairnessWeights(
-            length_variance=self._spin_w_lenvar.value(),
-            polygon_bend=self._spin_w_bend.value(),
-            anti_bunching=self._spin_w_short.value(),
-            end_handles=self._spin_w_tangent.value(),
-            curvature_squared=self._spin_w_curv.value(),
-            curvature_gradient=self._spin_w_grad.value(),
-        )
 
     def _on_sections_changed(self):
         """Handle section count change - re-split the loaded airfoil."""
@@ -609,7 +522,6 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._combo_knot_placement.setEnabled(not fitting)
         self._seg_parameterization.setEnabled(not fitting)
         self._check_grow.setEnabled(not fitting)
-        self._seg_err.setEnabled(not fitting)
         self._advanced_section.content_widget().setEnabled(not fitting)
         self._on_optimizer_changed(self._combo_opt.currentIndex())
 

@@ -9,7 +9,6 @@ This module provides:
     - Arc-length parameterization
     - Bounding box computation
     - Polyline interpolation
-    - Control point bounds generation for optimization
 """
 
 from __future__ import annotations
@@ -22,11 +21,8 @@ import numpy as np
 from .optimization.models import (
     AirfoilData,
     BoundingBox,
-    Bounds,
-    ContinuityMode,
     Point2D,
     PointList,
-    SplineConfig,
 )
 
 # =============================================================================
@@ -440,129 +436,3 @@ def compute_bounding_box(points: Sequence[Point2D]) -> BoundingBox:
         y_min=min(y_coords),
         y_max=max(y_coords),
     )
-
-
-# =============================================================================
-# Optimization Bounds
-# =============================================================================
-
-def compute_optimization_bounds(
-    airfoil: AirfoilData,
-    config: SplineConfig,
-    optimize_le_position: bool = False,
-) -> list[Bounds]:
-    """
-    Compute the variable bounds for optimization.
-    
-    The bounds are derived from the airfoil bounding box, scaled by
-    the configuration's bbox_scale factor. Different continuity modes
-    require different variables with different bounds.
-    
-    Args:
-        airfoil: The airfoil data being fitted
-        config: Spline configuration specifying continuity mode, etc.
-        optimize_le_position: If True, add bounds for LE (x, y) at end of variable vector
-        
-    Returns:
-        List of (lower, upper) bounds for each optimization variable
-    """
-    # Compute scaled bounding box
-    bbox = compute_bounding_box(airfoil.coordinates)
-    scaled_bbox = bbox.scaled(config.bbox_scale)
-
-    x_lo, x_hi = scaled_bbox.x_bounds()
-    y_lo, y_hi = scaled_bbox.y_bounds()
-
-    # Ensure positive dimensions for derivative bounds
-    base_w = max(bbox.width, 1e-6)
-    base_h = max(bbox.height, 1e-6)
-
-    bounds: list[Bounds] = []
-
-    def add_point_bounds(count: int) -> None:
-        """Add bounds for control point (x, y) pairs."""
-        for _ in range(count):
-            bounds.append((x_lo, x_hi))
-            bounds.append((y_lo, y_hi))
-
-    # Get parameters for n-section architecture
-    num_sections = config.num_sections
-    n_ctrl = config.num_control_points
-    mode = config.continuity
-    n_constrained = mode.constrained_control_points
-
-    # Compute free control points per section
-    def get_n_free_for_section(section_idx: int) -> int:
-        if num_sections == 1:
-            return n_ctrl - 2  # Just endpoints
-        elif section_idx == 0 or section_idx == num_sections - 1:
-            # End sections: 1 endpoint + n_free + n_constrained junction CPs
-            return max(0, n_ctrl - 1 - n_constrained)
-        else:
-            # Interior: junction both sides (shared points)
-            return max(0, n_ctrl - 2 * n_constrained + 1)
-
-    # Add bounds for free control points in all sections
-    for section_idx in range(num_sections):
-        n_free = get_n_free_for_section(section_idx)
-        add_point_bounds(n_free)
-
-    # Add bounds for junction parameters (n-1 junctions for n sections)
-    num_junctions = max(0, num_sections - 1)
-
-    for _junction_idx in range(num_junctions):
-        if mode == ContinuityMode.G0:
-            # No extra parameters for G0
-            pass
-
-        elif mode == ContinuityMode.G1:
-            # Parametric G1: D1x, D1y (same derivative both sides)
-            bounds.append((-3.0 * base_w, 3.0 * base_w))  # D1x
-            bounds.append((-3.0 * base_h, 3.0 * base_h))  # D1y
-
-        elif mode == ContinuityMode.G2:
-            # Parametric G2: D1x, D1y, D2x, D2y
-            bounds.append((-3.0 * base_w, 3.0 * base_w))    # D1x
-            bounds.append((-3.0 * base_h, 3.0 * base_h))    # D1y
-            bounds.append((-10.0 * base_w, 10.0 * base_w))  # D2x
-            bounds.append((-10.0 * base_h, 10.0 * base_h))  # D2y
-
-        else:  # G3
-            # Parametric G3: D1, D2, D3
-            bounds.append((-3.0 * base_w, 3.0 * base_w))      # D1x
-            bounds.append((-3.0 * base_h, 3.0 * base_h))      # D1y
-            bounds.append((-10.0 * base_w, 10.0 * base_w))    # D2x
-            bounds.append((-10.0 * base_h, 10.0 * base_h))    # D2y
-            bounds.append((-50.0 * base_w, 50.0 * base_w))    # D3x
-            bounds.append((-50.0 * base_h, 50.0 * base_h))    # D3y
-
-    # Optional LE position variables (appended at end)
-    if optimize_le_position and num_sections >= 2:
-        # Allow LE to move within a small range around origin
-        le_range = 0.02  # ±2% of chord
-        bounds.append((-le_range, le_range))  # LE x
-        bounds.append((-le_range, le_range))  # LE y
-
-    return bounds
-
-
-def clamp_to_bounds(
-    values: Sequence[float],
-    bounds: Sequence[Bounds],
-) -> list[float]:
-    """
-    Clamp values to their corresponding bounds.
-    
-    Args:
-        values: The values to clamp
-        bounds: Sequence of (lower, upper) bound pairs
-        
-    Returns:
-        List of clamped values
-    """
-    result = []
-    for value, (lo, hi) in zip(values, bounds, strict=False):
-        lo = lo if lo is not None else float('-inf')
-        hi = hi if hi is not None else float('inf')
-        result.append(min(max(float(value), float(lo)), float(hi)))
-    return result

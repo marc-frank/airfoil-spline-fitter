@@ -5,11 +5,7 @@ Airfoil Spline Fitter - Main Entry Point
 Launch the application with:
     python -m spline_fitter
 
-Or with command-line options:
-    python -m spline_fitter --bbox-scale 5.0
-
 Command Line Arguments:
-    --bbox-scale <float>    Set the bounding box scale factor (default: 3.0)
     --help                  Show this help message
 """
 
@@ -28,28 +24,16 @@ def parse_arguments() -> argparse.Namespace:
         epilog="""
 Examples:
     python -m spline_fitter
-    python -m spline_fitter --bbox-scale 5.0
         """,
-    )
-
-    parser.add_argument(
-        "--bbox-scale",
-        type=float,
-        default=None,
-        metavar="SCALE",
-        help="Bounding box scale factor for control point bounds (default: 3.0)",
     )
 
     return parser.parse_args()
 
 
-def main(bbox_scale: float | None = None) -> int:
+def main() -> int:
     """
     Run the spline fitter application.
-    
-    Args:
-        bbox_scale: Optional bounding box scale override
-        
+
     Returns:
         Exit code (0 for success)
     """
@@ -71,13 +55,6 @@ def main(bbox_scale: float | None = None) -> int:
     # Create and configure main window
     window = SplineFitterWindow()
 
-    # Apply command-line overrides
-    if bbox_scale is not None:
-        try:
-            window._spin_bbox.setValue(float(bbox_scale))
-        except Exception:
-            pass
-
     # Show window
     # window.resize(1000, 600)
     window.showMaximized()
@@ -88,8 +65,8 @@ def main(bbox_scale: float | None = None) -> int:
 
 def cli_entry() -> None:
     """Command-line interface entry point."""
-    args = parse_arguments()
-    sys.exit(main(bbox_scale=args.bbox_scale))
+    parse_arguments()
+    sys.exit(main())
 
 
 if __name__ == "__main__":
