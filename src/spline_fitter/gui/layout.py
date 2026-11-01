@@ -11,6 +11,7 @@ from __future__ import annotations
 import math
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QKeySequence
 from PyQt6.QtWidgets import (
     QAbstractSpinBox,
     QCheckBox,
@@ -283,13 +284,18 @@ class WindowLayoutMixin:
     # -- Menu Bar ----------------------------------------------------------
 
     def _build_menu_bar(self):
-        """Build the application menu bar (File / View / Help)."""
+        """Build the application menu bar (File / Edit / View / Help)."""
         menubar = self.menuBar()
 
         # File menu
         file_menu = menubar.addMenu("&File")
+        self._action_new_naca = file_menu.addAction("&New NACA airfoil...")
+        self._action_new_naca.setShortcut("Ctrl+N")
         self._action_open = file_menu.addAction("&Open airfoil...")
         self._action_open.setShortcut("Ctrl+O")
+        # Filled each time it opens, from the list in QSettings
+        self._menu_recent = file_menu.addMenu("Open &recent")
+        self._menu_recent.setToolTipsVisible(True)
 
         file_menu.addSeparator()
         self._action_save_dat = file_menu.addAction("Save fitted airfoil (.dat)...")
@@ -315,6 +321,19 @@ class WindowLayoutMixin:
         exit_action = file_menu.addAction("E&xit")
         exit_action.setShortcut("Alt+F4")
         exit_action.triggered.connect(self.close)
+
+        # Edit menu: undo and redo apply to the sidebar's fit settings
+        edit_menu = menubar.addMenu("&Edit")
+        self._action_undo = edit_menu.addAction("&Undo")
+        self._action_undo.setShortcuts(QKeySequence.keyBindings(QKeySequence.StandardKey.Undo))
+        self._action_redo = edit_menu.addAction("&Redo")
+        self._action_redo.setShortcuts(QKeySequence.keyBindings(QKeySequence.StandardKey.Redo))
+        edit_menu.addSeparator()
+        # Ctrl+V pastes an airfoil only while no input field has focus: a
+        # focused field takes the key for its own text first
+        self._action_paste_airfoil = edit_menu.addAction("&Paste airfoil")
+        self._action_paste_airfoil.setShortcuts(
+            QKeySequence.keyBindings(QKeySequence.StandardKey.Paste))
 
         # View menu
         view_menu = menubar.addMenu("&View")

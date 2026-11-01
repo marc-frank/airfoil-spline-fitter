@@ -480,7 +480,7 @@ class SweepableSpinBox(QWidget):
     combination of their values.
     """
 
-    # Sweep mode turned on or off, or the range's upper end changed
+    # Sweep mode toggled or the range changed (not the value itself)
     sweep_changed = pyqtSignal()
 
     def __init__(self, spin_box: QSpinBox, group: list | None = None, parent=None):
@@ -513,7 +513,7 @@ class SweepableSpinBox(QWidget):
         self._spin_max.setSingleStep(self._spin.singleStep())
         self._spin_max.setValue(min(self._spin.value() * 2, self._spin.maximum()))
         self._spin_max.setVisible(False)
-        self._spin_max.valueChanged.connect(lambda _: self.sweep_changed.emit())
+        self._spin_max.valueChanged.connect(self.sweep_changed)
         lay.addWidget(self._spin_max, stretch=1)
 
     # ------------------------------------------------------------------
@@ -524,6 +524,17 @@ class SweepableSpinBox(QWidget):
             self._spin_max.setMinimum(self._spin.minimum())
             self._spin_max.setValue(min(self._spin.value() * 2, self._spin.maximum()))
         self.sweep_changed.emit()
+
+    def sweep_state(self) -> tuple:
+        """Sweep mode and range end, for set_sweep_state()."""
+        return (self._sweep_active, self._spin_max.value())
+
+    def set_sweep_state(self, state: tuple) -> None:
+        active, maximum = state
+        if active != self._sweep_active:
+            self._btn_sweep.setChecked(active)
+            self._on_toggle_sweep(active)
+        self._spin_max.setValue(maximum)
 
     def stop_sweep(self) -> None:
         """Leave sweep mode."""
@@ -578,6 +589,9 @@ class SweepableDoubleSpinBox(QWidget):
     and SweepableDoubleSpinBox alike).
     """
 
+    # Sweep mode toggled or the range or step changed (not the value itself)
+    sweep_changed = pyqtSignal()
+
     def __init__(
         self,
         spin_box: QDoubleSpinBox,
@@ -627,6 +641,8 @@ class SweepableDoubleSpinBox(QWidget):
         self._spin_step.setToolTip("Distance between the swept values")
         self._spin_step.setVisible(False)
         lay.addWidget(self._spin_step, stretch=1)
+        self._spin_max.valueChanged.connect(self.sweep_changed)
+        self._spin_step.valueChanged.connect(self.sweep_changed)
 
     # ------------------------------------------------------------------
     def _on_toggle_sweep(self, checked: bool):
@@ -639,6 +655,19 @@ class SweepableDoubleSpinBox(QWidget):
             self._spin_max.setMinimum(self._spin.minimum())
             self._spin_max.setValue(min(start * 10, self._spin.maximum()))
             self._spin_step.setValue(start)
+        self.sweep_changed.emit()
+
+    def sweep_state(self) -> tuple:
+        """Sweep mode, range end and step, for set_sweep_state()."""
+        return (self._sweep_active, self._spin_max.value(), self._spin_step.value())
+
+    def set_sweep_state(self, state: tuple) -> None:
+        active, maximum, step = state
+        if active != self._sweep_active:
+            self._btn_sweep.setChecked(active)
+            self._on_toggle_sweep(active)
+        self._spin_max.setValue(maximum)
+        self._spin_step.setValue(step)
 
     def stop_sweep(self) -> None:
         """Leave sweep mode."""

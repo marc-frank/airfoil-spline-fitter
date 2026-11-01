@@ -33,6 +33,7 @@ from ..optimization.models import (
 from .batch import BatchController
 from .file_actions import FileActionsMixin
 from .fitting import FittingController
+from .history import SettingsHistory
 from .layout import WindowLayoutMixin
 from .motion import install_smooth_scrolling
 from .plotting import PlotManager
@@ -94,6 +95,25 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
 
         self._connect_signals()
         self._set_advanced_baseline()
+
+        # Undo and redo of the fit settings, in the order they are applied
+        # (as in _apply_run_settings: what limits a setting comes first)
+        self._settings_history = SettingsHistory(
+            [self._combo_opt, self._seg_goal, self._check_auto_tolerance,
+             self._spin_tolerance, self._combo_knot_placement,
+             self._seg_parameterization, self._check_grow, self._spin_sections,
+             self._spin_degree, self._combo_cont, self._combo_cont_kind, self._spin_ctrl,
+             self._edit_junctions, self._check_subsample, self._spin_subsample,
+             self._spin_smoothing_weight, self._check_optimize_le, *self._sweep_group],
+            is_quiet=lambda: self._is_fitting,
+            after_restore=lambda: self._on_optimizer_changed(self._combo_opt.currentIndex()),
+            parent=self,
+        )
+        self._settings_history.changed.connect(self._update_undo_actions)
+        self._update_undo_actions()
+
+        # Airfoil and project files dropped anywhere on the window open
+        self.setAcceptDrops(True)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -207,6 +227,11 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         """Connect UI signals to handlers."""
         # Menu bar actions
         self._action_open.triggered.connect(self._on_open_file)
+        self._action_new_naca.triggered.connect(self._on_new_naca)
+        self._menu_recent.aboutToShow.connect(self._populate_recent_menu)
+        self._action_paste_airfoil.triggered.connect(self._on_paste_airfoil)
+        self._action_undo.triggered.connect(lambda: self._settings_history.undo())
+        self._action_redo.triggered.connect(lambda: self._settings_history.redo())
         self._action_save_dat.triggered.connect(self._on_save_fitted)
         self._action_save_spline.triggered.connect(self._on_save_spline)
         self._action_open_project.triggered.connect(self._project_manager.on_open_project)
@@ -291,6 +316,12 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
 
         # Initialize optimizer-dependent UI state
         self._on_optimizer_changed(self._combo_opt.currentIndex())
+
+    def _update_undo_actions(self):
+        """Enable Edit > Undo and Redo when there is a settings change to undo or redo."""
+        history = self._settings_history
+        self._action_undo.setEnabled(not self._is_fitting and history.can_undo())
+        self._action_redo.setEnabled(not self._is_fitting and history.can_redo())
 
     def _on_theme_changed(self):
         """Restyle the plots and their items after a theme change."""
@@ -625,7 +656,12 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._btn_cancel.setVisible(fitting)
         self._btn_open.setEnabled(not fitting)
         self._action_open.setEnabled(not fitting)
+        self._action_new_naca.setEnabled(not fitting)
+        self._menu_recent.setEnabled(not fitting)
+        self._action_paste_airfoil.setEnabled(not fitting)
         self._action_batch.setEnabled(not fitting)
+        if hasattr(self, "_settings_history"):
+            self._update_undo_actions()
 
         # Toggle controls
         self._sweep_degree.setEnabled(not fitting)

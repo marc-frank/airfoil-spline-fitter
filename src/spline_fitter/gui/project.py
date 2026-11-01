@@ -89,9 +89,11 @@ class ProjectManager:
             "Spline project (*.asfproj);;All files (*)",
         )
 
-        if not file_path:
-            return
+        if file_path:
+            self.open_project(file_path)
 
+    def open_project(self, file_path: str) -> bool:
+        """Open the project at ``file_path``; whether it opened."""
         try:
             project = load_project(file_path)
 
@@ -137,10 +139,13 @@ class ProjectManager:
             # Fill the explorer and plot its runs
             self._populate_table()
             self.refresh_comparison_plot()
+            self._window._add_recent_file(file_path)
+            return True
 
         except Exception as e:
             self._window.statusBar().showMessage(f"Failed to load project: {e}")
             self._window._play_error_chime()
+            return False
 
     def on_save_project(self):
         """Save project to current path."""
@@ -194,6 +199,7 @@ class ProjectManager:
 
             # Enable save button now that we have a path
             self._window._set_project_save_enabled(True)
+            self._window._add_recent_file(save_path)
 
             self._window.statusBar().showMessage(f"Saved: {save_path}")
         except Exception as e:
