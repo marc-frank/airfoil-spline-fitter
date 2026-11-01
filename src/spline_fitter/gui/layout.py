@@ -447,7 +447,7 @@ class WindowLayoutMixin:
         self._spin_deviation_height.setRange(0.001, 1.0)
         self._spin_deviation_height.setDecimals(3)
         self._spin_deviation_height.setSingleStep(0.01)
-        self._spin_deviation_height.setValue(0.04)
+        self._spin_deviation_height.setValue(0.05)
         self._spin_deviation_height.setToolTip(
             "How far from the curve the tolerance is drawn, as a share of the chord\n"
             "(without a tolerance, the largest deviation).")

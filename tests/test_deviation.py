@@ -27,9 +27,30 @@ def test_deviation_size_is_the_orthogonal_distance(fit):
 
 def test_point_is_its_foot_plus_the_deviation_along_the_normal(fit):
     points, result = fit
-    dev, foot, normal = foot_points(points, result)
+    dev, foot, normal, _ = foot_points(points, result)
     np.testing.assert_allclose(np.hypot(*normal.T), 1.0)
     np.testing.assert_allclose(foot + dev[:, None] * normal, points, atol=1e-12)
+
+
+def test_refining_from_a_nearby_fit_finds_the_same_feet(fit):
+    points, result = fit
+    exact = foot_points(points, result)
+    # The previous step: the same fit, its control points moved a little
+    nearby = FitResult([[(x + 2e-3, y - 1e-3) for x, y in c] for c in result.section_control_points],
+                       5, 0.0, 0, 0, 0.0, section_knots=result.section_knots)
+    start = foot_points(points, nearby)[3]
+    refined = foot_points(points, result, start=start)
+    # Within a thousandth of the data's rounding, far below a pixel; the next
+    # step refines it further
+    np.testing.assert_allclose(refined[0], exact[0], rtol=0, atol=5e-8)
+    np.testing.assert_allclose(refined[1], exact[1], rtol=0, atol=1e-5)  # along the curve
+
+
+def test_a_start_for_another_section_count_is_ignored(fit):
+    points, result = fit
+    start = np.zeros((len(points), 5))
+    np.testing.assert_allclose(foot_points(points, result, start=start)[0],
+                               signed_deviations(points, result))
 
 
 def test_deviation_is_positive_outside(fit):
@@ -78,7 +99,7 @@ def _reach(window, result):
             for side in ("upper", "lower")]
     # The leading edge is on both surfaces
     assert sum(len(t) for t in tips) == len(window._airfoil.coordinates) + 1
-    dev, foot, _ = foot_points(window._airfoil.coordinates, result)
+    dev, foot, _, _ = foot_points(window._airfoil.coordinates, result)
     return dev, np.hypot(*(np.concatenate([tips[0], tips[1][1:]]) - foot).T)
 
 
@@ -116,6 +137,30 @@ def test_without_a_tolerance_the_largest_deviation_reaches_the_height(window):
     chord = np.ptp([p[0] for p in window._airfoil.coordinates])
     assert np.max(reach) == pytest.approx(window._spin_deviation_height.value() * chord)
     assert _empty(window._plot_manager._tolerance_item)
+
+
+def test_live_preview_draws_the_deviation(window, monkeypatch):
+    from spline_fitter.gui.plotting import PlotManager
+    drawn = []
+    update = PlotManager.update_live_plot
+
+    def recording(self, *args, **kwargs):
+        update(self, *args, **kwargs)
+        x, _ = self._deviation_items["upper", True].getData()
+        drawn.append((kwargs.get("tolerance"), None if x is None else len(x)))
+
+    monkeypatch.setattr(PlotManager, "update_live_plot", recording)
+    window._seg_goal.setCurrentIndex(window._seg_goal.findData(True))  # to a tolerance
+    window._combo_live.setCurrentIndex(2)  # every step
+    window._check_deviation.setChecked(True)
+    window._fitting_controller.on_fit()
+    assert len(drawn) > 3
+    le = int(np.argmin(np.hypot(*np.asarray(window._airfoil.coordinates).T)))
+    assert all(tol and n == le + 1 for tol, n in drawn)
+
+
+def test_default_height_is_five_percent_of_the_chord(window):
+    assert window._spin_deviation_height.value() == pytest.approx(0.05)
 
 
 def test_a_new_fit_clears_the_deviation(window):

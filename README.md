@@ -75,8 +75,8 @@ Typical workflow:
    still grow or shrink from there).
 3. **Fit Spline**. The status bar shows the maximum and RMS deviation and the
    control-point count. **Show Knots** marks the knots on the curve, and
-   **Deviation** shows where the fit departs from the data (its arrow sets
-   the height).
+   **Deviation** shows where the fit departs from the data, also while it
+   fits (its arrow sets the height: 5% of the chord at the tolerance).
 4. **View > Fit Report** (Ctrl+R) shows deviation, fairness, and junction
    measurements.
 5. **File > Export CAD** (Ctrl+E) writes STEP, IGES, or DXF with units and a

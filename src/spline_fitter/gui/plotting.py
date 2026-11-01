@@ -169,6 +169,9 @@ class PlotManager:
         # (fit, coords, (distance, foot, normal))
         self._coords: list = []
         self._last_deviations: tuple = (None, None, None)
+        # The foot points of the live preview's last step, which the next
+        # step refines rather than searching the curves again
+        self._live_start = None
         # Height of the deviation (share of the chord the tolerance is drawn
         # away from the curve); None = hidden
         self.deviation_height: float | None = None
@@ -475,6 +478,7 @@ class PlotManager:
         variables: np.ndarray,
         config: SplineConfig,
         preview=None,
+        tolerance: float | None = None,
     ) -> None:
         """Update the live preview during optimization.
 
@@ -484,6 +488,7 @@ class PlotManager:
             preview: Optional ``(section_control_points, section_knots, degree)``
                 from optimizers whose control-point counts and knots change
                 (VarPro tolerance mode); takes precedence over ``variables``.
+            tolerance: The fit's tolerance, if any, for the deviation's scale.
         """
         try:
             section_knots = None
@@ -516,6 +521,11 @@ class PlotManager:
                 self._draw_combs(curves, *self.comb_settings)
             if self.show_knots:
                 self._draw_knots(curves)
+            if self.deviation_height is not None:
+                self._draw_deviation(
+                    FitResult(section_ctrl_pts, degree, 0.0, 0, 0, 0.0,
+                              section_knots=section_knots),
+                    tolerance, live=True)
 
         except Exception:
             pass
@@ -539,29 +549,45 @@ class PlotManager:
     # -----------------------------------------------------------------
 
     def clear_deviation_items(self) -> None:
-        """Clear the deviation whiskers and the tolerance band."""
+        """Clear the deviation whiskers and the tolerance band (and forget the
+        live preview's foot points: the next fit searches anew)."""
+        self._live_start = None
         for item in (*self._deviation_items.values(), self._tolerance_item):
             item.setData([], [])
 
     def refresh_deviation(self, fit_result: FitResult | None) -> None:
-        """Draw the signed deviation of every data point from the fit (if
-        shown): a whisker from the point's foot on the curve along the
-        normal, outward for a point outside, magnified so the tolerance (or,
-        without one, the largest deviation) is ``deviation_height`` of the
-        chord away; the envelope through the tips, by surface; and the
-        tolerance band at the same magnification."""
-        height = self.deviation_height
-        if fit_result is None or height is None or len(self._coords) < 2:
+        """Draw the deviation of the data from a finished fit, if shown."""
+        if fit_result is None or self.deviation_height is None:
             self.clear_deviation_items()
             return
+        self._draw_deviation(fit_result, (fit_result.report or {}).get('tolerance'),
+                             cache=True)
+
+    def _draw_deviation(self, fit_result: FitResult, tolerance: float | None,
+                        cache: bool = False, live: bool = False) -> None:
+        """Draw the signed deviation of every data point from the fit: a
+        whisker from the point's foot on the curve along the normal, outward
+        for a point outside, magnified so the tolerance (or, without one, the
+        largest deviation) is ``deviation_height`` of the chord away; the
+        envelope through the tips, by surface; and the tolerance band at the
+        same magnification. ``cache`` keeps the measurement of a finished
+        fit for the next time it is drawn; ``live`` refines the foot points
+        of the live preview's previous step."""
+        height = self.deviation_height
         coords = self._coords
+        if height is None or len(coords) < 2:
+            self.clear_deviation_items()
+            return
         try:
             fit, measured, found = self._last_deviations
-            if fit is not fit_result or measured is not coords:
+            if live:
+                found = foot_points(coords, fit_result, start=self._live_start)
+                self._live_start = found[3]
+            elif not cache or fit is not fit_result or measured is not coords:
                 found = foot_points(coords, fit_result)
-                self._last_deviations = (fit_result, coords, found)
-            dev, foot, normal = found
-            tolerance = (fit_result.report or {}).get('tolerance')
+                if cache:
+                    self._last_deviations = (fit_result, coords, found)
+            dev, foot, normal, _ = found
             reference = tolerance or float(np.max(np.abs(dev)))
             chord = float(np.ptp([p[0] for p in coords]))
             if reference <= 0 or chord <= 0:
