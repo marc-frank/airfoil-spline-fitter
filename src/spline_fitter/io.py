@@ -156,18 +156,28 @@ def parse_airfoil_data(filepath):
     Handles Selig and Lednicer formats, comments, and 0-100 scaling.
     Returns the airfoil name from filename, name from content, coordinates, and max precision.
     """
-    lines = []
     with open(filepath, encoding='utf-8', errors='ignore') as f:
-        for line in f:
-            # Remove comments and strip whitespace
-            line_content = line.split('#', 1)[0].strip()
-            if line_content:
-                lines.append(line_content)
+        text = f.read()
+    return parse_airfoil_text(text, os.path.splitext(os.path.basename(filepath))[0])
+
+
+def parse_airfoil_text(text, filename_name=None):
+    """
+    Parses airfoil coordinates from text, by the rules of parse_airfoil_data
+    (for example coordinates copied from a web page). ``filename_name`` is
+    returned as the name from the filename, and is the name from content
+    when the text has none.
+    """
+    lines = []
+    for line in text.splitlines():
+        # Remove comments and strip whitespace
+        line_content = line.split('#', 1)[0].strip()
+        if line_content:
+            lines.append(line_content)
 
     if not lines:
         return None, None, None, 0
 
-    filename_name = os.path.splitext(os.path.basename(filepath))[0]
     content_name = filename_name # Default to filename if no name is in the file
 
     # Every line holding a coordinate pair, as floats and as written (for precision)
