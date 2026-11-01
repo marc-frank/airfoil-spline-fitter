@@ -62,6 +62,10 @@ from .theme import (
 # Maximum number of points to plot in the loss graph (to prevent UI freeze)
 MAX_PLOT_POINTS = 100_000
 
+# Upper end of an integer setting with no limit of its own (Qt's largest int);
+# a float setting with none takes math.inf
+UNLIMITED = 2**31 - 1
+
 
 # =============================================================================
 # Sidebar Sections

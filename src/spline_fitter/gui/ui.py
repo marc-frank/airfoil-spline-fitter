@@ -370,7 +370,6 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         choose(self._combo_cont, cfg.continuity)
         self._spin_degree.setValue(cfg.degree)
         choose(self._combo_cont_kind, cfg.geometric_continuity)
-        self._spin_ctrl.setMaximum(max(self._spin_ctrl.maximum(), cfg.num_control_points))
         self._spin_ctrl.setValue(cfg.num_control_points)
 
         # Advanced
@@ -382,6 +381,11 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._check_optimize_le.setChecked(opt.optimize_le_position)
 
         self._on_optimizer_changed(self._combo_opt.currentIndex())
+
+    def _limit_sections(self, num_points: int) -> None:
+        """Allow at most one section fewer than the airfoil's points, the
+        most it can be split into."""
+        self._spin_sections.setMaximum(max(1, num_points - 1))
 
     def _on_sections_changed(self):
         """Handle section count change - re-split the loaded airfoil."""
@@ -522,10 +526,13 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
             have = self._spin_ctrl.value()
             degree_cap = max(have - 1, degree.spinbox.minimum())
             order = self._combo_cont.currentData().order
-            sections_cap = max(
-                [n for n in range(1, sections_cap + 1)
-                 if minimum_control_points([order] * (n - 1), 1) <= have]
-                + [self._spin_sections.value()])
+            fitting = [n for n in range(1, min(sections_cap, 3) + 1)
+                       if minimum_control_points([order] * (n - 1), 1) <= have]
+            # From three sections on, the need no longer grows: the middle
+            # sections all have two junctions
+            if fitting[-1] < 3:
+                sections_cap = fitting[-1]
+            sections_cap = max(sections_cap, self._spin_sections.value())
         degree.set_sweep_maximum(degree_cap)
         sections.set_sweep_maximum(sections_cap)
 

@@ -7,6 +7,7 @@ Open, save, export, and report actions for the main window.
 
 from __future__ import annotations
 
+import math
 import os
 import threading
 
@@ -70,6 +71,7 @@ class FileActionsMixin:
                 return
 
             # Create airfoil data object with current section count
+            self._limit_sections(len(coords))
             num_sections = self._spin_sections.value()
             self._airfoil = create_airfoil_data(
                 coords,
@@ -223,7 +225,7 @@ class FileActionsMixin:
         seg_units.setCurrentIndex(max(0, seg_units.findData(units)))
         add_form_row(form, "Units", seg_units)
         spin_scale = ScientificSpinBox()
-        spin_scale.setRange(1e-6, 1e9)
+        spin_scale.setRange(1e-6, math.inf)
         spin_scale.setValue(self._settings.value("cad_scale", 1.0, type=float))
         spin_scale.setToolTip(
             "Coordinates are multiplied by this factor, for example the chord length.")

@@ -159,3 +159,29 @@ def test_applying_a_stored_run_keeps_its_settings(window):
     run = SimpleNamespace(spline_config=cfg, optimization_config=OptimizationConfig())
     window._apply_run_settings(run)
     assert _state(window) == (ContinuityMode.G2, 2, 4)
+
+
+def test_curve_settings_have_no_fixed_upper_limit(window):
+    _setup(window, degree=3, count=6)
+    window._spin_ctrl.setValue(5000)
+    window._spin_degree.setValue(40)
+    window._spin_sections.setValue(500)
+    assert (window._spin_ctrl.value(), window._spin_degree.value(),
+            window._spin_sections.value()) == (5000, 40, 500)
+
+
+def test_sections_stop_one_short_of_the_airfoil_points(window, tmp_path):
+    path = tmp_path / "five.dat"
+    path.write_text("five\n1 0\n0.5 0.05\n0 0\n0.5 -0.05\n1 0\n")
+    window._spin_sections.setValue(8)
+    window._load_airfoil(str(path))
+    assert window._spin_sections.maximum() == 4
+    assert window._airfoil.num_sections == window._spin_sections.value() == 4
+
+
+def test_a_sweep_of_sections_is_open_above_three(window):
+    # From three sections on, more sections need no more control points
+    _setup(window, mode=ContinuityMode.G1, degree=1, count=4, sections=1)
+    window._sweep_sections._btn_sweep.click()
+    window._sweep_sections._spin_max.setValue(50)
+    assert window._sweep_sections.sweep_range == (1, 50)
