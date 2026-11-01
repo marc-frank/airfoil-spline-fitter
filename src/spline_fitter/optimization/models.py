@@ -46,8 +46,8 @@ class ContinuityMode(Enum):
     Whether they are linked geometrically (G^n: matching tangent direction,
     curvature, curvature rate) or parametrically (C^n: equal derivative
     vectors) is chosen by ``SplineConfig.geometric_continuity``. Only the
-    VarPro LM optimizer supports geometric continuity; the other optimizers
-    always use the parametric form.
+    VarPro LM optimizer supports geometric continuity; Direct LSQ
+    always uses the parametric form.
     
     Attributes:
         G0: Position continuity only (curves meet but may have a corner)
@@ -99,59 +99,17 @@ def minimum_control_points(junction_orders: Sequence[int], degree: int) -> int:
 
 class OptimizerType(Enum):
     """
-    Available optimization algorithms.
-    
-    Ordered by recommended usage based on benchmark testing (41 airfoils):
-    
-    Tier 1 - Production (recommended):
-        - BFGS: Best speed/accuracy tradeoff (~9s, 90% of best accuracy)
-        - SLSQP: Highest accuracy but 26x slower (~220s)
-    
-    Tier 2 - Acceptable alternatives:
-        - L_BFGS_B: Fastest optimizer (~3s), lower accuracy
-        - CG: Conjugate Gradient, moderate performance
-    
-    Tier 3 - Not recommended:
-        - TNC: Truncated Newton
-        - POWELL: High timeout rate (68%)
-        - NELDER_MEAD: Poor accuracy (74x worse)
-        - COBYLA: Poor accuracy (41x worse)
-    
-    Global optimizers (slow but thorough):
-        - DE: Differential Evolution
-        - DA: Dual Annealing
-        - BH: Basin-hopping
+    Available fitting algorithms.
+
+    Attributes:
+        DIRECT_LSQ: One constrained least-squares solve at fixed parameters
+        GN_VARPRO: Levenberg-Marquardt variable projection (bspline-varpro)
     """
-    # Tier 1: Recommended (ordered by speed/accuracy tradeoff)
-    BFGS = "bfgs"
-    SLSQP = "slsqp"
-
-    # Tier 2: Acceptable alternatives
-    L_BFGS_B = "l-bfgs-b"
-    CG = "cg"
-
-    # Tier 3: Not recommended (poor performance in benchmarks)
-    TNC = "tnc"
-    POWELL = "powell"
-    NELDER_MEAD = "nelder-mead"
-    COBYLA = "cobyla"
-
-    # Global optimizers (slow but thorough search)
-    DE = "de"
-    DA = "da"
-    BH = "bh"
-
-
     # Direct LSQ (single-step, no iteration)
     DIRECT_LSQ = "direct-lsq"
 
     # Levenberg-Marquardt variable projection (bspline-varpro library)
     GN_VARPRO = "gn-varpro"
-
-    @property
-    def is_global(self) -> bool:
-        """Return True if this is a global optimizer."""
-        return self in (OptimizerType.DE, OptimizerType.DA, OptimizerType.BH)
 
     @property
     def is_algebraic(self) -> bool:
@@ -164,101 +122,22 @@ class OptimizerType(Enum):
         return self == OptimizerType.GN_VARPRO
 
     @property
-    def uses_error_metric(self) -> bool:
-        """Return True if the optimizer minimizes the configured ErrorMetric.
-
-        Only the general-purpose optimizers do; the algebraic and LSQ-based
-        methods (VarPro LM included) fix their own error measure.
-        """
-        return not (self.is_algebraic or self.is_iterative_algebraic)
-
-    @property
     def display_name(self) -> str:
         """Return a human-readable name for the optimizer."""
         names = {
             OptimizerType.GN_VARPRO: "VarPro LM",
             OptimizerType.DIRECT_LSQ: "Direct LSQ",
-            OptimizerType.BFGS: "BFGS",
-            OptimizerType.SLSQP: "SLSQP",
-            OptimizerType.L_BFGS_B: "L-BFGS-B",
-            OptimizerType.CG: "CG",
-            OptimizerType.TNC: "TNC",
-            OptimizerType.POWELL: "Powell",
-            OptimizerType.NELDER_MEAD: "Nelder-Mead",
-            OptimizerType.COBYLA: "COBYLA",
-            OptimizerType.DE: "Differential evolution",
-            OptimizerType.DA: "Dual annealing",
-            OptimizerType.BH: "Basin-hopping",
         }
         return names.get(self, self.value)
 
     @property
     def tooltip(self) -> str:
-        """Return a tooltip description with benchmark performance info."""
+        """Return a tooltip description of the method."""
         tooltips = {
-            # Tier 1: Recommended
-            OptimizerType.BFGS: (
-                "Quasi-Newton method. Best speed/accuracy tradeoff.\n"
-                "Benchmark: ~9s avg, 7.8×10⁻⁵ error, 100% reliable.\n"
-                "Recommended for interactive use."
-            ),
-            OptimizerType.SLSQP: (
-                "Sequential Least Squares Programming.\n"
-                "Benchmark: ~220s avg, 7.0×10⁻⁵ error (best), 100% reliable.\n"
-                "Use when maximum accuracy is needed."
-            ),
-            # Tier 2: Acceptable
-            OptimizerType.L_BFGS_B: (
-                "Limited-memory BFGS with bounds.\n"
-                "Benchmark: ~3s avg, 1.7×10⁻⁴ error, 100% reliable.\n"
-                "Fastest option, lower accuracy."
-            ),
-            OptimizerType.CG: (
-                "Conjugate Gradient method.\n"
-                "Benchmark: ~10s avg, 1.8×10⁻⁴ error, 100% reliable.\n"
-                "No clear advantage over BFGS."
-            ),
-            # Tier 3: Not recommended
-            OptimizerType.TNC: (
-                "Truncated Newton method.\n"
-                "Not benchmarked. Use BFGS instead."
-            ),
-            OptimizerType.POWELL: (
-                "Powell's direction-set method.\n"
-                "Benchmark: 68% timeout rate (>5 min).\n"
-                "Not recommended for spline fitting."
-            ),
-            OptimizerType.NELDER_MEAD: (
-                "Simplex method (derivative-free).\n"
-                "Benchmark: 74× worse accuracy than SLSQP.\n"
-                "Not recommended for spline fitting."
-            ),
-            OptimizerType.COBYLA: (
-                "Constrained Optimization BY Linear Approximation.\n"
-                "Benchmark: 41× worse accuracy than SLSQP.\n"
-                "Not recommended for spline fitting."
-            ),
-            # Global optimizers
-            OptimizerType.DE: (
-                "Differential Evolution (global optimizer).\n"
-                "Explores entire search space. Very slow but robust.\n"
-                "Use only if local optimizers fail."
-            ),
-            OptimizerType.DA: (
-                "Dual Annealing (global optimizer).\n"
-                "Simulated annealing variant. Very slow.\n"
-                "Use only if local optimizers fail."
-            ),
-            OptimizerType.BH: (
-                "Basin-hopping (global optimizer).\n"
-                "Local optimizer with random restarts. Slow.\n"
-                "Use only if local optimizers fail."
-            ),
-            # New high-performance optimizers
             OptimizerType.DIRECT_LSQ: (
                 "Direct LSQ (single-step, no iteration).\n"
-                "One constrained least-squares solve, with fixed TE endpoints\n"
-                "and junctions fixed or free (Advanced).\n"
+                "One constrained least-squares solve, with fixed trailing-edge\n"
+                "end points and junctions fixed or free (Advanced).\n"
                 "Fastest option (~1ms), moderate accuracy (~1e-4).\n"
                 "Ideal for dense data or real-time preview."
             ),
@@ -271,32 +150,6 @@ class OptimizerType(Enum):
             ),
         }
         return tooltips.get(self, "")
-
-
-class ErrorMetric(Enum):
-    """
-    Distance metric for measuring spline fit quality.
-    
-    Attributes:
-        PARAMETRIC: Average distance at each point's fixed chain parameter (fast)
-        ORTHOGONAL: Average distance to the closest point of the whole chain
-            (accurate but slower; the default)
-        ORTHOGONAL_LOCAL: Orthogonal between the neighbouring points' chain
-            parameters, across junctions (balanced)
-    """
-    PARAMETRIC = "avg_point"
-    ORTHOGONAL = "orthogonal"
-    ORTHOGONAL_LOCAL = "orthogonal_local"
-
-    @property
-    def display_name(self) -> str:
-        """Return a human-readable name for the metric."""
-        names = {
-            ErrorMetric.PARAMETRIC: "Average pointwise",
-            ErrorMetric.ORTHOGONAL: "Average orthogonal",
-            ErrorMetric.ORTHOGONAL_LOCAL: "Average orthogonal (local)",
-        }
-        return names.get(self, self.value)
 
 
 # =============================================================================
@@ -350,7 +203,6 @@ class SplineConfig:
         num_control_points: Number of control points per curve segment
         num_sections: Number of curve sections (1 = single wrap, 2 = upper/lower split)
         continuity: Continuity order at junctions (G0/G1/G2/G3)
-        bbox_scale: Scale factor for control point bounding box (1.0 = data bbox)
         geometric_continuity: Link junction derivatives geometrically (G^n)
             instead of parametrically (C^n). VarPro LM only.
         junction_continuity: Optional per-junction overrides such as
@@ -360,7 +212,6 @@ class SplineConfig:
     num_control_points: int = 25
     num_sections: int = 2
     continuity: ContinuityMode = ContinuityMode.G1
-    bbox_scale: float = 3.0
     geometric_continuity: bool = False
     junction_continuity: tuple[str, ...] = ()
 
@@ -420,14 +271,11 @@ class OptimizationConfig:
 
     Attributes:
         optimizer: Which optimization algorithm to use
-        metric: Distance metric for error computation
-        max_iterations: Maximum optimizer iterations
-        seed: Random seed for reproducibility (-1 for random)
+        max_iterations: VarPro LM residual evaluation limit (0 = its own default)
         early_stop_patience: Iterations without improvement before stopping
         relative_tolerance: Relative improvement threshold for early stopping
-        optimize_le_position: If True, every junction's (x, y) becomes optimization
-            variables, free within the search bounds (the split points are
-            only where they start)
+        optimize_le_position: If True, every junction's (x, y) is fitted too,
+            anywhere (the split points are only where they start)
         smoothing_factor: Smoothing parameter for algebraic methods (0 = interpolation)
         smoothing_weight: Bending energy smoothing weight for VarPro LM (0 = disabled).
             Weight of the integrated squared parameter second derivative.
@@ -453,11 +301,9 @@ class OptimizationConfig:
             start from the configured control-point count (in tolerance mode
             it can still grow or shrink from there).
     """
-    optimizer: OptimizerType = OptimizerType.DE
-    metric: ErrorMetric = ErrorMetric.ORTHOGONAL
+    optimizer: OptimizerType = OptimizerType.GN_VARPRO
     max_iterations: int = 10000
     smoothing_factor: float | None = None
-    seed: int = -1
     early_stop_patience: int = 50
     relative_tolerance: float = 1e-6
     optimize_le_position: bool = False
@@ -481,75 +327,6 @@ class OptimizationConfig:
             raise ValueError(
                 "parameterization must be 'centripetal' or 'arc_length', "
                 f"got {self.parameterization!r}")
-
-    @property
-    def random_seed(self) -> int | None:
-        """Return the seed value, or None if random."""
-        return None if self.seed < 0 else self.seed
-
-
-@dataclass(frozen=True)
-class FairnessWeights:
-    """
-    Weights for fairness regularization terms.
-    
-    Fairness regularization encourages aesthetically pleasing control
-    point distributions and smooth curvature profiles. Each weight
-    controls how strongly to penalize a particular aspect of unfairness.
-    
-    Weights are 0 or more. A value of 0 disables the term;
-    at 1 a term equals the error of the plain least-squares fit (see
-    compute_penalty_scales).
-    
-    Attributes:
-        length_variance: Penalize uneven spacing between control points
-        polygon_bend: Penalize sharp bends in the control polygon
-        anti_bunching: Penalize control points that are too close together
-        end_handles: Penalize unusual tangent handle lengths at endpoints
-        curvature_squared: Penalize high curvature (bending energy)
-        curvature_gradient: Penalize rapid curvature changes (wiggliness)
-    """
-    length_variance: float = 0.0
-    polygon_bend: float = 0.0
-    anti_bunching: float = 0.0
-    end_handles: float = 0.0
-    curvature_squared: float = 0.0
-    curvature_gradient: float = 0.0
-
-    @property
-    def is_enabled(self) -> bool:
-        """Return True if any fairness term has nonzero weight."""
-        return any([
-            self.length_variance > 0,
-            self.polygon_bend > 0,
-            self.anti_bunching > 0,
-            self.end_handles > 0,
-            self.curvature_squared > 0,
-            self.curvature_gradient > 0,
-        ])
-
-    @property
-    def total_weight(self) -> float:
-        """Return the sum of all weights."""
-        return (
-            self.length_variance +
-            self.polygon_bend +
-            self.anti_bunching +
-            self.end_handles +
-            self.curvature_squared +
-            self.curvature_gradient
-        )
-
-    def as_tuple(self) -> tuple[float, ...]:
-        """Return weights as a tuple for passing to optimization."""
-        return (
-            self.length_variance,
-            self.polygon_bend,
-            self.anti_bunching,
-            self.end_handles,
-            self.curvature_squared,
-            self.curvature_gradient,
-        )
 
 
 @dataclass
@@ -740,7 +517,6 @@ class OptimizationRun:
         timestamp: ISO 8601 timestamp when run was executed
         spline_config: Spline configuration used
         optimization_config: Optimizer configuration used
-        fairness_weights: Fairness regularization weights used
         result: Optimization result (errors, timing, convergence)
         loss_history: Complete history of all evaluations
         section_control_points: Final fitted control points per section
@@ -749,7 +525,6 @@ class OptimizationRun:
     timestamp: str
     spline_config: SplineConfig
     optimization_config: OptimizationConfig
-    fairness_weights: FairnessWeights
     result: FitResult
     loss_history: list[IterationRecord]
     section_control_points: list[PointList]

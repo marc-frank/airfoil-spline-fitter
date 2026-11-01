@@ -8,7 +8,6 @@ from scipy.interpolate import BSpline
 from spline_fitter.optimization.models import (
     AirfoilData,
     ContinuityMode,
-    FairnessWeights,
     OptimizationConfig,
     OptimizerType,
     SplineConfig,
@@ -114,16 +113,17 @@ def test_engine_uses_configured_smoothing_weight():
                                                            max_iterations=300, smoothing_weight=w,
                                                            knot_placement="uniform",
                                                            grow_control_points=False),
-                                airfoil, FairnessWeights(), [])
+                                airfoil)
                for w in (0.0, 1.0)]
     assert all(r.success for r in results)
     assert results[0].fun < results[1].fun
 
 
-def test_retired_hierarchical_runs_load_as_varpro():
+@pytest.mark.parametrize("retired", ["hierarchical-lsq", "bfgs", "slsqp", "de", "bh"])
+def test_retired_optimizer_runs_load_as_varpro(retired):
     from spline_fitter.project_io import _decode_optimization_config
-    assert not hasattr(OptimizerType, "HIERARCHICAL_LSQ")
-    options = _decode_optimization_config({"optimizer": "hierarchical-lsq", "metric": "avg_point"})
+    assert retired not in {t.value for t in OptimizerType}
+    options = _decode_optimization_config({"optimizer": retired, "metric": "avg_point", "seed": 7})
     assert options.optimizer == OptimizerType.GN_VARPRO
 
 
@@ -199,7 +199,6 @@ def test_gui_fits_with_varpro(monkeypatch):
     window._combo_opt.setCurrentIndex(window._combo_opt.findData(OptimizerType.GN_VARPRO))
     window._seg_goal.setCurrentIndex(window._seg_goal.findData(False))
     window._combo_cont.setCurrentIndex(window._combo_cont.findData(ContinuityMode.G2))
-    window._spin_maxiter.setValue(300)
     window._combo_live.setCurrentIndex(2)
     assert window._sweep_ctrl.isEnabled()
     assert window._sweep_smoothing_weight.isVisible() or not window.isVisible()

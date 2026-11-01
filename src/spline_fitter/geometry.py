@@ -9,7 +9,6 @@ This module provides:
     - Arc-length parameterization
     - Bounding box computation
     - Polyline interpolation
-    - Control point bounds generation for optimization
 """
 
 from __future__ import annotations
@@ -22,10 +21,8 @@ import numpy as np
 from .optimization.models import (
     AirfoilData,
     BoundingBox,
-    Bounds,
     Point2D,
     PointList,
-    SplineConfig,
 )
 
 # =============================================================================
@@ -439,115 +436,3 @@ def compute_bounding_box(points: Sequence[Point2D]) -> BoundingBox:
         y_min=min(y_coords),
         y_max=max(y_coords),
     )
-
-
-# =============================================================================
-# Optimization Bounds
-# =============================================================================
-
-def compute_optimization_bounds(
-    airfoil: AirfoilData,
-    config: SplineConfig,
-    optimize_le_position: bool = False,
-) -> list[Bounds]:
-    """
-    Compute the variable bounds for optimization.
-    
-    The bounds are derived from the airfoil bounding box, scaled by
-    the configuration's bbox_scale factor. Different continuity modes
-    require different variables with different bounds.
-    
-    Args:
-        airfoil: The airfoil data being fitted
-        config: Spline configuration specifying continuity mode, etc.
-        optimize_le_position: If True, add bounds for every junction (x, y) at the end
-        
-    Returns:
-        List of (lower, upper) bounds for each optimization variable
-    """
-    # Compute scaled bounding box
-    bbox = compute_bounding_box(airfoil.coordinates)
-    scaled_bbox = bbox.scaled(config.bbox_scale)
-
-    x_lo, x_hi = scaled_bbox.x_bounds()
-    y_lo, y_hi = scaled_bbox.y_bounds()
-
-    # Ensure positive dimensions for derivative bounds
-    base_w = max(bbox.width, 1e-6)
-    base_h = max(bbox.height, 1e-6)
-
-    bounds: list[Bounds] = []
-
-    def add_point_bounds(count: int) -> None:
-        """Add bounds for control point (x, y) pairs."""
-        for _ in range(count):
-            bounds.append((x_lo, x_hi))
-            bounds.append((y_lo, y_hi))
-
-    # Get parameters for n-section architecture
-    num_sections = config.num_sections
-    n_ctrl = config.num_control_points
-    mode = config.continuity
-    n_constrained = mode.constrained_control_points
-
-    # Compute free control points per section
-    def get_n_free_for_section(section_idx: int) -> int:
-        if num_sections == 1:
-            return n_ctrl - 2  # Just endpoints
-        elif section_idx == 0 or section_idx == num_sections - 1:
-            # End sections: 1 endpoint + n_free + n_constrained junction CPs
-            return max(0, n_ctrl - 1 - n_constrained)
-        else:
-            # Interior: n_constrained at each junction
-            return max(0, n_ctrl - 2 * n_constrained)
-
-    # Add bounds for free control points in all sections
-    for section_idx in range(num_sections):
-        n_free = get_n_free_for_section(section_idx)
-        add_point_bounds(n_free)
-
-    # Add bounds for junction parameters (n-1 junctions for n sections)
-    num_junctions = max(0, num_sections - 1)
-
-    # Parametric derivatives grow with the knot density: the k-th by about
-    # (n_ctrl - degree)^k times the airfoil's size, along either axis (the
-    # tangent is vertical at the leading edge)
-    span = max(base_w, base_h)
-    density = max(1, n_ctrl - config.degree)
-    order = mode.constrained_control_points - 1
-    for _junction_idx in range(num_junctions):
-        for k, factor in zip((1, 2, 3), (3.0, 10.0, 50.0), strict=False):
-            if k <= order:
-                limit = factor * span * density ** k
-                bounds.append((-limit, limit))  # Dk x
-                bounds.append((-limit, limit))  # Dk y
-
-    # Optional junction positions (appended at end): anywhere a free control
-    # point may go. The chain is fitted to all points as a whole, so a junction
-    # is not tied to its split point, which is only where it starts
-    if optimize_le_position and num_sections >= 2:
-        add_point_bounds(num_sections - 1)
-
-    return bounds
-
-
-def clamp_to_bounds(
-    values: Sequence[float],
-    bounds: Sequence[Bounds],
-) -> list[float]:
-    """
-    Clamp values to their corresponding bounds.
-    
-    Args:
-        values: The values to clamp
-        bounds: Sequence of (lower, upper) bound pairs
-        
-    Returns:
-        List of clamped values
-    """
-    result = []
-    for value, (lo, hi) in zip(values, bounds, strict=False):
-        lo = lo if lo is not None else float('-inf')
-        hi = hi if hi is not None else float('inf')
-        result.append(min(max(float(value), float(lo)), float(hi)))
-    return result

@@ -32,7 +32,6 @@ from PyQt6.QtWidgets import (
 
 from ..optimization.models import (
     ContinuityMode,
-    ErrorMetric,
     OptimizerType,
 )
 from .explorer import COLUMNS, RunTable
@@ -325,7 +324,6 @@ class WindowLayoutMixin:
         self._action_fit_report = view_menu.addAction("&Fit report...")
         self._action_fit_report.setShortcut("Ctrl+R")
         self._action_fit_report.setEnabled(False)
-        self._action_view_report = view_menu.addAction("&Benchmark report...")
         view_menu.addSeparator()
         # Shows and hides the explorer; its own button can only hide it
         self._action_toggle_explorer = view_menu.addAction("Project &explorer")
@@ -609,31 +607,15 @@ class WindowLayoutMixin:
     # -- Method Section ----------------------------------------------------
 
     def _build_method_section(self) -> SidebarSection:
-        """Build the Method section: optimizer, goal, and error metric."""
+        """Build the Method section: optimizer and goal."""
         section = SidebarSection("Method")
         form = _form()
 
-        # Algorithm (decides which other controls apply, so it comes first).
-        # Grouped under captions: the least-squares methods (the default
-        # VarPro LM first), then the general-purpose local and global optimizers
-        self._combo_opt = QComboBox()
-        lsq = [OptimizerType.GN_VARPRO, OptimizerType.DIRECT_LSQ]
-        rest = [t for t in OptimizerType if t not in lsq]
-        groups = (
-            ("LEAST SQUARES", lsq),
-            ("LOCAL", [t for t in rest if not t.is_global]),
-            ("GLOBAL", [t for t in rest if t.is_global]),
-        )
-        for caption, opt_types in groups:
-            if self._combo_opt.count():
-                self._combo_opt.insertSeparator(self._combo_opt.count())
-            self._combo_opt.addItem(caption)
-            # A caption, not a choice: unselectable and skipped by the keys
-            self._combo_opt.model().item(self._combo_opt.count() - 1).setEnabled(False)
-            for opt_type in opt_types:
-                self._combo_opt.addItem(opt_type.display_name, userData=opt_type)
-                self._combo_opt.setItemData(
-                    self._combo_opt.count() - 1, opt_type.tooltip, Qt.ItemDataRole.ToolTipRole)
+        # Algorithm (decides which other controls apply, so it comes first)
+        self._combo_opt = SegmentedControl()
+        for opt_type in (OptimizerType.GN_VARPRO, OptimizerType.DIRECT_LSQ):
+            self._combo_opt.addItem(opt_type.display_name, userData=opt_type)
+            self._combo_opt.setItemToolTip(self._combo_opt.count() - 1, opt_type.tooltip)
         self._combo_opt.setCurrentIndex(self._combo_opt.findData(OptimizerType.GN_VARPRO))
         self._combo_opt.currentIndexChanged.connect(self._on_optimizer_changed)
         _add_row(form, "Optimizer", self._combo_opt)
@@ -694,26 +676,6 @@ class WindowLayoutMixin:
             "goal the count can still grow or shrink from there to meet it."
         )
         self._lbl_grow = _add_row(form, "Grow points", self._check_grow)
-
-        # Error metric
-        self._seg_err = SegmentedControl()
-        for metric, text, tip in (
-            (ErrorMetric.PARAMETRIC, "Pointwise",
-             "Average distance from each data point to the curve point at its parameter.\n"
-             "Each point keeps its place along the curve, in its starting section.\n"
-             "Fast."),
-            (ErrorMetric.ORTHOGONAL, "Orthogonal",
-             "Average distance from each data point to the nearest point of the whole\n"
-             "curve, on any section. Accurate but slower."),
-            (ErrorMetric.ORTHOGONAL_LOCAL, "Local",
-             "Orthogonal distance, searching only between the neighbouring data\n"
-             "points' places along the curve, across a junction where they span one.\n"
-             "A balance of the two."),
-        ):
-            self._seg_err.addItem(text, userData=metric)
-            self._seg_err.setItemToolTip(self._seg_err.count() - 1, tip)
-        self._seg_err.setCurrentIndex(self._seg_err.findData(ErrorMetric.ORTHOGONAL))
-        self._lbl_err = _add_row(form, "Error metric", self._seg_err)
 
         section.add_layout(form)
         return section
@@ -834,42 +796,18 @@ class WindowLayoutMixin:
         )
         self._lbl_smoothing_weight = _add_row(form, "Smoothing", self._sweep_smoothing_weight)
 
-        # Iterative optimizers
-        self._spin_maxiter = QSpinBox()
-        self._spin_maxiter.setRange(10, 1_000_000_000)
-        self._spin_maxiter.setValue(10000)
-        self._spin_maxiter.setToolTip("Maximum optimizer iterations.")
-        self._lbl_maxiter = _add_row(form, "Iteration limit", self._spin_maxiter)
-
-        self._spin_seed = QSpinBox()
-        self._spin_seed.setRange(-1, 2**31 - 1)
-        self._spin_seed.setValue(-1)
-        self._spin_seed.setSpecialValueText("Random")
-        self._spin_seed.setToolTip(
-            "Random seed. Random: a new seed for every fit;\n0 or more: the same result every time.")
-        self._lbl_seed = _add_row(form, "Seed", self._spin_seed)
-
-        # Search bounds and junction
-        self._spin_bbox = QDoubleSpinBox()
-        self._spin_bbox.setRange(1.0, 100.0)
-        self._spin_bbox.setDecimals(2)
-        self._spin_bbox.setSingleStep(0.1)
-        self._spin_bbox.setValue(3.0)
-        self._spin_bbox.setToolTip("Multiplier for optimization search bounds.")
-        self._lbl_bbox = _add_row(form, "Search scale", self._spin_bbox)
-
+        # Junction positions
         self._check_optimize_le = QCheckBox("Optimize positions")
         self._check_optimize_le.setChecked(False)
         self._check_optimize_le.setToolTip(
-            "Optimize the position of every junction anywhere within the search\n"
-            "bounds, instead of keeping the section split points fixed. The split\n"
-            "points are where the junctions start; the data is fitted by the\n"
-            "whole curve, so points move between sections with them."
+            "Optimize the position of every junction, instead of keeping the\n"
+            "section split points fixed. The split points are where the junctions\n"
+            "start; the data is fitted by the whole curve, so points move between\n"
+            "sections with them."
         )
         self._lbl_optimize_le = _add_row(form, "Junctions", self._check_optimize_le)
 
         section.add_layout(form)
-        section.add_widget(self._build_regularization_box())
 
         # "N changed" badge in the header, so settings changed this session
         # stay noticeable while the section is collapsed; its tooltip names them
@@ -878,11 +816,7 @@ class WindowLayoutMixin:
             ("Subsample", self._check_subsample),
             ("Subsample points", self._spin_subsample),
             ("Smoothing", self._spin_smoothing_weight),
-            ("Iteration limit", self._spin_maxiter),
-            ("Seed", self._spin_seed),
-            ("Search scale", self._spin_bbox),
             ("Junctions", self._check_optimize_le),
-            ("Fairness penalties", self._check_fairness),
         )
         self._set_advanced_baseline()
         for _, w in self._advanced_fields:
@@ -905,64 +839,6 @@ class WindowLayoutMixin:
             for name, w in self._advanced_fields
         ]
         self._update_advanced_badge()
-
-    def _build_regularization_box(self) -> QWidget:
-        """Build the fairness penalties (objective-based optimizers only)."""
-        self._regularization_box = QWidget()
-        layout = QVBoxLayout(self._regularization_box)
-        layout.setContentsMargins(0, Size.GAP, 0, 0)
-        layout.setSpacing(Size.GAP)
-
-        caption = QLabel("REGULARIZATION")
-        caption.setObjectName("SectionCaption")
-        layout.addWidget(caption)
-
-        self._check_fairness = QCheckBox("Add fairness penalties")
-        self._check_fairness.setChecked(False)
-        self._check_fairness.setToolTip(
-            "Add fairness penalties to the objective function.\n"
-            "At weight 1, each penalty equals the error of a plain least-squares fit.")
-        layout.addWidget(self._check_fairness)
-
-        self._fairness_container = QWidget()
-        wf = _form()
-        self._fairness_container.setLayout(wf)
-
-        def _ws() -> QDoubleSpinBox:
-            s = ScientificSpinBox(); s.setRange(0.0, 1e4)
-            s.setSingleStep(0.001); s.setValue(0.0); return s
-
-        self._spin_w_lenvar = _ws()
-        self._spin_w_lenvar.setToolTip("Penalize uneven spacing between control points")
-        _add_row(wf, "Even edges", self._spin_w_lenvar)
-
-        self._spin_w_bend = _ws()
-        self._spin_w_bend.setToolTip("Penalize sharp bends in the control polygon")
-        _add_row(wf, "Polygon bend", self._spin_w_bend)
-
-        self._spin_w_short = _ws()
-        self._spin_w_short.setToolTip("Penalize control points that are too close together")
-        _add_row(wf, "Bunching", self._spin_w_short)
-
-        self._spin_w_tangent = _ws()
-        self._spin_w_tangent.setToolTip("Penalize unusual edge lengths at curve endpoints")
-        _add_row(wf, "End handles", self._spin_w_tangent)
-
-        self._spin_w_curv = _ws()
-        self._spin_w_curv.setToolTip(
-            "Penalize bending energy: the integral of \u03BA\u00B2 along the curve.\n"
-            "Degree 2 or more: a degree 1 curve is straight between its knots.")
-        self._lbl_w_curv = _add_row(wf, "Bending", self._spin_w_curv)
-
-        self._spin_w_grad = _ws()
-        self._spin_w_grad.setToolTip(
-            "Penalize wiggles: the integral of (d\u03BA/ds)\u00B2 along the curve.\n"
-            "Degree 2 or more: a degree 1 curve is straight between its knots.")
-        self._lbl_w_grad = _add_row(wf, "Wiggle", self._spin_w_grad)
-
-        layout.addWidget(self._fairness_container)
-        self._fairness_container.setEnabled(False)
-        return self._regularization_box
 
     @staticmethod
     def _widget_value(w):

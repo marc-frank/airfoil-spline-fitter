@@ -152,24 +152,10 @@ def test_a_grown_tolerance_fit_ignores_the_count(window):
 def test_applying_a_stored_run_keeps_its_settings(window):
     from types import SimpleNamespace
 
-    from spline_fitter.optimization.models import (
-        FairnessWeights,
-        OptimizationConfig,
-        SplineConfig,
-    )
+    from spline_fitter.optimization.models import OptimizationConfig, SplineConfig
 
     _continuity(window, ContinuityMode.G3)
     cfg = SplineConfig(degree=2, num_control_points=4, continuity=ContinuityMode.G2)
-    run = SimpleNamespace(spline_config=cfg, optimization_config=OptimizationConfig(),
-                          fairness_weights=FairnessWeights())
+    run = SimpleNamespace(spline_config=cfg, optimization_config=OptimizationConfig())
     window._apply_run_settings(run)
     assert _state(window) == (ContinuityMode.G2, 2, 4)
-
-
-def test_curvature_penalties_need_a_curved_degree(window):
-    window._check_fairness.setChecked(True)
-    _setup(window, degree=1)
-    assert window._spin_w_bend.isEnabled()
-    assert not window._spin_w_curv.isEnabled() and not window._spin_w_grad.isEnabled()
-    window._spin_degree.setValue(2)
-    assert window._spin_w_curv.isEnabled() and window._spin_w_grad.isEnabled()

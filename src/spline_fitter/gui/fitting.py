@@ -19,17 +19,15 @@ from PyQt6.QtWidgets import QApplication
 
 from ..analysis import fit_report, summary_line
 from ..formatting import format_duration, format_error, number
-from ..geometry import compute_optimization_bounds, create_airfoil_data
+from ..geometry import create_airfoil_data
 from ..optimization import (
     OptimizerErrorLogger,
-    construct_control_points,
     get_evaluation_count,
     reset_iteration_tracking,
     run_optimization,
 )
 from ..optimization.models import (
     AirfoilData,
-    FairnessWeights,
     FitResult,
     IterationRecord,
     OptimizationConfig,
@@ -66,7 +64,6 @@ class FittingController:
         try:
             config = w._get_spline_config()
             opt_config = w._get_optimization_config()
-            fairness_weights = w._get_fairness_weights()
         except ValueError as e:
             w.statusBar().showMessage(str(e))
             return
@@ -74,7 +71,7 @@ class FittingController:
         # Check for active parameter sweeps
         active_sweeps = w._get_active_sweeps()
         if active_sweeps:
-            self._run_sweep_fit(config, opt_config, fairness_weights, active_sweeps)
+            self._run_sweep_fit(config, opt_config, active_sweeps)
             return
 
         # Clear sweep state when doing single fit
@@ -92,13 +89,6 @@ class FittingController:
         )
         QApplication.processEvents()
 
-        # Compute bounds
-        bounds = compute_optimization_bounds(
-            w._airfoil, config,
-            optimize_le_position=opt_config.optimize_le_position,
-        )
-        n_vars = len(bounds)
-
         # Reset state
         w._cancel_requested = False
         w._plot_manager.clear_plot_items()
@@ -114,10 +104,7 @@ class FittingController:
 
         # Show initial status
         opt_name = opt_config.optimizer.display_name
-        details = f"{n_vars} variables"
-        if opt_config.optimizer.uses_error_metric:
-            details += f", {opt_config.metric.display_name} error"
-        w.statusBar().showMessage(f"Starting {opt_name} ({details})...")
+        w.statusBar().showMessage(f"Starting {opt_name}...")
 
         live = LiveProgress(w, config, opt_config, error_logger, start_time)
 
@@ -129,13 +116,11 @@ class FittingController:
                 config,
                 opt_config,
                 airfoil,
-                fairness_weights,
-                bounds,
                 callback=live.callback,
                 should_stop=lambda: w._cancel_requested,
             )
             elapsed = time.perf_counter() - start_time
-            fit_result = self._fit_result(result, config, opt_config, airfoil, elapsed, live)
+            fit_result = self._fit_result(result, config, opt_config, airfoil, elapsed)
             return result, fit_result, elapsed
 
         try:
@@ -149,7 +134,6 @@ class FittingController:
                 w._project_manager.add_optimization_run(
                     spline_config=config,
                     opt_config=opt_config,
-                    fairness_weights=fairness_weights,
                     result=w._fit_result,
                     loss_history=self._loss_history(error_logger),
                 )
@@ -180,11 +164,6 @@ class FittingController:
                 msg = (
                     f"Cancelled: {iterations} iterations, {eval_count} evaluations "
                     f"in {format_duration(elapsed)} | Best error {format_error(result.fun)}"
-                )
-            elif live.early_stopped:
-                msg = (
-                    f"Converged ({opt_name}): {iterations} iterations, {eval_count} evaluations "
-                    f"in {format_duration(elapsed)} | Error {format_error(result.fun)}"
                 )
             else:
                 msg = (
@@ -217,28 +196,19 @@ class FittingController:
         w._plot_manager.reset_loss_plot(x_label, scale in ("both", "x"), scale in ("both", "y"))
 
     def _fit_result(self, result, config: SplineConfig, opt_config: OptimizationConfig,
-                    airfoil: AirfoilData, elapsed: float, live: LiveProgress) -> FitResult | None:
+                    airfoil: AirfoilData, elapsed: float) -> FitResult | None:
         """The measured FitResult of an optimizer result (worker thread)."""
         w = self._window
         if result.x is None:
             return None
-        if result.section_control_points is not None:
-            section_ctrl_pts = result.section_control_points
-        else:
-            section_ctrl_pts = construct_control_points(
-                result.x, config,
-                [list(sec) for sec in airfoil.sections],
-                optimize_le_position=opt_config.optimize_le_position,
-            )
         fit_result = FitResult(
-            section_control_points=section_ctrl_pts,
+            section_control_points=result.section_control_points,
             degree=config.degree,
             final_error=result.fun,
             num_iterations=result.nit,
             num_evaluations=get_evaluation_count(),
             elapsed_seconds=elapsed,
-            converged=result.success and not (w._cancel_requested or live.early_stopped),
-            early_stopped=live.early_stopped,
+            converged=result.success and not w._cancel_requested,
             cancelled=w._cancel_requested,
             section_knots=result.section_knots,
         )
@@ -305,7 +275,6 @@ class FittingController:
         self,
         config: SplineConfig,
         opt_config: OptimizationConfig,
-        fairness_weights: FairnessWeights,
         sweep_boxes: list,
     ):
         """Run one fit per combination of the swept parameters' values.
@@ -387,11 +356,6 @@ class FittingController:
                 )
             label = describe(values)
 
-            bounds = compute_optimization_bounds(
-                sweep_airfoil, sweep_config,
-                optimize_le_position=sweep_opt_config.optimize_le_position,
-            )
-
             # The live preview replaces the previous fit, as in a single fit
             w._plot_manager.clear_plot_items()
             reset_iteration_tracking()
@@ -407,20 +371,18 @@ class FittingController:
             )
 
             def sweep_work(sweep_config=sweep_config, sweep_opt_config=sweep_opt_config,
-                           bounds=bounds, fit_start_time=fit_start_time, live=live,
+                           fit_start_time=fit_start_time, live=live,
                            airfoil=sweep_airfoil):
                 """Run one sweep fit and measure it (worker thread)."""
                 result = run_optimization(
                     sweep_config,
                     sweep_opt_config,
                     airfoil,
-                    fairness_weights,
-                    bounds,
                     callback=live.callback,
                     should_stop=lambda: w._cancel_requested,
                 )
                 return self._fit_result(result, sweep_config, sweep_opt_config, airfoil,
-                                        time.perf_counter() - fit_start_time, live)
+                                        time.perf_counter() - fit_start_time)
 
             try:
                 fit_result = run_in_background(sweep_work, live.on_tick)
@@ -433,8 +395,7 @@ class FittingController:
                     w._project_manager.add_optimization_run(
                         spline_config=sweep_config,
                         opt_config=sweep_opt_config,
-                        fairness_weights=fairness_weights,
-                        result=fit_result,
+                            result=fit_result,
                         loss_history=self._loss_history(error_logger),
                         replot=False,
                     )

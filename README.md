@@ -13,8 +13,8 @@ Professional B-spline curve fitting tool for airfoil coordinate data.
   for all junctions or a list such as `G2, C1, G3` for any number of sections
 - **Whole-chain fitting**: the chain of sections is fitted to all points at
   once. The split only sets where the junctions start, and points move between
-  sections as the curve fits them; with Optimize positions the junctions go
-  anywhere within the search bounds
+  sections as the curve fits them; with Optimize positions the junctions are
+  fitted too, anywhere
 - **CAD export**: exact STEP AP214, IGES 5.3, and DXF R2000 curves, per section
   or merged into one B-spline, optionally with a closing line at a blunt
   trailing edge
@@ -22,8 +22,9 @@ Professional B-spline curve fitting tool for airfoil coordinate data.
   curvature extrema, junction continuity, and leading-edge radius, with a
   warning when the tolerance is below the data's rounding error
 - **Knot display** and an interactive curvature comb
-- **Multiple optimizers**: VarPro Levenberg-Marquardt, Differential Evolution,
-  Basin-hopping, Dual Annealing, and local methods
+- **Two fitting methods**: VarPro Levenberg-Marquardt (tolerance mode, free
+  knots, geometric continuity) and Direct LSQ (one constrained least-squares
+  solve)
 - **Batch processing**: convert entire airfoil libraries
 
 VarPro fitting, tolerance search, and the CAD writers come from the
@@ -149,6 +150,16 @@ a Parameterization setting (centripetal or arc length) and the free-junction
 option. Orthogonal LSQ and the two-stage Param Optimizer refined the data
 parameters around an LSQ solve, which VarPro LM does better.
 
+### Retired: general-purpose optimizers
+
+The scipy optimizers (BFGS, SLSQP, L-BFGS-B, CG, TNC, Powell, Nelder-Mead,
+COBYLA) and the global ones (Differential evolution, Dual annealing,
+Basin-hopping) have been removed, with the settings only they read: error
+metric, fairness penalties, iteration limit, seed and search scale. They
+minimized a sampled error over raw control-point coordinates, which VarPro LM
+and Direct LSQ solve directly and much faster. Projects that contain their
+runs still open, and those runs load as VarPro LM runs.
+
 ## Architecture
 
 The package is organized into focused modules:
@@ -156,15 +167,13 @@ The package is organized into focused modules:
 | Module | Purpose |
 | ------ | ------- |
 | `optimization/models.py` | Data structures (AirfoilData, SplineConfig, FitResult, etc.) |
-| `optimization/engine.py` | Objective function and optimizer dispatch (`run_optimization`) |
-| `optimization/control_points.py` | Control points from optimizer variables, junction continuity, initial guess |
+| `optimization/engine.py` | Optimizer dispatch (`run_optimization`) |
 | `optimization/run_log.py` | Optimizer progress CSVs (`optimizer_logs/`, or `SPLINE_FITTER_LOG_DIR`) |
 | `optimization/optimizers/` | Optimizer adapters, including `gn_varpro.py` for bspline-varpro |
 | `spline.py` | B-spline mathematics and curve evaluation |
 | `geometry.py` | Coordinate processing and geometric utilities |
 | `analysis.py` | Fit report: deviation, curvature, junctions, leading-edge radius |
 | `fairness.py` | Smoothness metrics and regularization |
-| `optimization/objective_functions/` | Error metrics over the whole chain (pointwise, orthogonal, local) |
 | `gui/` | PyQt6 graphical user interface (`ui.py` window, `layout.py` widgets, `file_actions.py` file menu and export, `theme.py` colors and styles) |
 | `io.py` | Airfoil and spline file parsing and export |
 | `project_io.py` | Project files (`.splineproj`) |

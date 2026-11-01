@@ -31,8 +31,6 @@ from typing import Any
 from .optimization.models import (
     AirfoilData,
     ContinuityMode,
-    ErrorMetric,
-    FairnessWeights,
     FitResult,
     IterationRecord,
     OptimizationConfig,
@@ -84,6 +82,9 @@ _RETIRED_OPTIMIZERS = {
     "constrained-lsq": OptimizerType.DIRECT_LSQ,
     "orthogonal-lsq": OptimizerType.GN_VARPRO,
     "param-opt": OptimizerType.GN_VARPRO,
+    # The general-purpose scipy optimizers, local and global.
+    **dict.fromkeys(("bfgs", "slsqp", "l-bfgs-b", "cg", "tnc", "powell", "nelder-mead",
+                     "cobyla", "de", "da", "bh"), OptimizerType.GN_VARPRO),
 }
 
 
@@ -96,15 +97,7 @@ def _optimizer_type_from_str(s: str) -> OptimizerType:
         _logger.warning("Optimizer %r was retired; showing the run as %s.", s,
                         _RETIRED_OPTIMIZERS[s.lower()].display_name)
         return _RETIRED_OPTIMIZERS[s.lower()]
-    return OptimizerType.BFGS
-
-
-def _error_metric_from_str(s: str) -> ErrorMetric:
-    """Convert string to ErrorMetric enum."""
-    for metric in ErrorMetric:
-        if metric.value == s:
-            return metric
-    return ErrorMetric.PARAMETRIC
+    return OptimizerType.GN_VARPRO
 
 
 # =============================================================================
@@ -131,7 +124,6 @@ def _encode_spline_config(config: SplineConfig) -> dict[str, Any]:
         "num_control_points": config.num_control_points,
         "num_sections": config.num_sections,
         "continuity": config.continuity.name,
-        "bbox_scale": config.bbox_scale,
         "geometric_continuity": config.geometric_continuity,
         "junction_continuity": list(config.junction_continuity),
     }
@@ -141,11 +133,9 @@ def _encode_optimization_config(config: OptimizationConfig) -> dict[str, Any]:
     """Encode OptimizationConfig to JSON-serializable dict."""
     return {
         "optimizer": config.optimizer.value,
-        "metric": config.metric.value,
         "max_iterations": config.max_iterations,
         "smoothing_factor": config.smoothing_factor,
         "smoothing_weight": config.smoothing_weight,
-        "seed": config.seed,
         "early_stop_patience": config.early_stop_patience,
         "relative_tolerance": config.relative_tolerance,
         "optimize_le_position": config.optimize_le_position,
@@ -154,18 +144,6 @@ def _encode_optimization_config(config: OptimizationConfig) -> dict[str, Any]:
         "max_points_per_section": config.max_points_per_section,
         "knot_placement": config.knot_placement,
         "grow_control_points": config.grow_control_points,
-    }
-
-
-def _encode_fairness_weights(weights: FairnessWeights) -> dict[str, Any]:
-    """Encode FairnessWeights to JSON-serializable dict."""
-    return {
-        "length_variance": weights.length_variance,
-        "polygon_bend": weights.polygon_bend,
-        "anti_bunching": weights.anti_bunching,
-        "end_handles": weights.end_handles,
-        "curvature_squared": weights.curvature_squared,
-        "curvature_gradient": weights.curvature_gradient,
     }
 
 
@@ -201,7 +179,6 @@ def _encode_optimization_run(run: OptimizationRun) -> dict[str, Any]:
         "timestamp": run.timestamp,
         "spline_config": _encode_spline_config(run.spline_config),
         "optimization_config": _encode_optimization_config(run.optimization_config),
-        "fairness_weights": _encode_fairness_weights(run.fairness_weights),
         "result": _encode_fit_result(run.result),
         "loss_history": [_encode_iteration_record(r) for r in run.loss_history],
         "section_control_points": [
@@ -263,7 +240,6 @@ def _decode_spline_config(data: dict[str, Any]) -> SplineConfig:
         num_control_points=data["num_control_points"],
         num_sections=data.get("num_sections", 2),
         continuity=_continuity_mode_from_str(data["continuity"]),
-        bbox_scale=data.get("bbox_scale", 3.0),
         geometric_continuity=bool(geometric),
         junction_continuity=tuple(data.get("junction_continuity", ())),
     )
@@ -273,11 +249,9 @@ def _decode_optimization_config(data: dict[str, Any]) -> OptimizationConfig:
     """Decode OptimizationConfig from JSON dict."""
     return OptimizationConfig(
         optimizer=_optimizer_type_from_str(data["optimizer"]),
-        metric=_error_metric_from_str(data["metric"]),
         max_iterations=data.get("max_iterations", 10000),
         smoothing_factor=data.get("smoothing_factor"),
         smoothing_weight=data.get("smoothing_weight", 1e-3),
-        seed=data.get("seed", -1),
         early_stop_patience=data.get("early_stop_patience", 50),
         relative_tolerance=data.get("relative_tolerance", 1e-6),
         optimize_le_position=data.get("optimize_le_position", False),
@@ -289,19 +263,7 @@ def _decode_optimization_config(data: dict[str, Any]) -> OptimizationConfig:
         knot_placement=data.get("knot_placement",
                                 "uniform" if data.get("tolerance") is None else "free"),
         grow_control_points=data.get("grow_control_points", data.get("tolerance") is not None),
-        # Projects written before fairing was removed may still contain "fairing"; it is ignored.
-    )
-
-
-def _decode_fairness_weights(data: dict[str, Any]) -> FairnessWeights:
-    """Decode FairnessWeights from JSON dict."""
-    return FairnessWeights(
-        length_variance=data.get("length_variance", 0.0),
-        polygon_bend=data.get("polygon_bend", 0.0),
-        anti_bunching=data.get("anti_bunching", 0.0),
-        end_handles=data.get("end_handles", 0.0),
-        curvature_squared=data.get("curvature_squared", 0.0),
-        curvature_gradient=data.get("curvature_gradient", 0.0),
+        # Older projects may also contain "fairing", "metric" and "seed"; they are ignored.
     )
 
 
@@ -347,7 +309,6 @@ def _decode_optimization_run(data: dict[str, Any]) -> OptimizationRun:
         timestamp=data["timestamp"],
         spline_config=_decode_spline_config(data["spline_config"]),
         optimization_config=_decode_optimization_config(data["optimization_config"]),
-        fairness_weights=_decode_fairness_weights(data["fairness_weights"]),
         result=_decode_fit_result(data["result"], section_control_points),
         loss_history=[_decode_iteration_record(r) for r in data["loss_history"]],
         section_control_points=section_control_points,
@@ -401,7 +362,6 @@ def create_project_metadata(created: str | None = None) -> ProjectMetadata:
 def create_optimization_run(
     spline_config: SplineConfig,
     optimization_config: OptimizationConfig,
-    fairness_weights: FairnessWeights,
     result: FitResult,
     loss_history: list[IterationRecord],
 ) -> OptimizationRun:
@@ -411,7 +371,6 @@ def create_optimization_run(
     Args:
         spline_config: Spline configuration used
         optimization_config: Optimizer configuration used
-        fairness_weights: Fairness weights used
         result: Optimization result
         loss_history: Iteration history (one record per optimizer iteration)
         
@@ -423,7 +382,6 @@ def create_optimization_run(
         timestamp=datetime.now().isoformat(),
         spline_config=spline_config,
         optimization_config=optimization_config,
-        fairness_weights=fairness_weights,
         result=result,
         loss_history=loss_history,
         section_control_points=result.section_control_points,
@@ -530,7 +488,6 @@ def get_run_summary(run: OptimizationRun) -> str:
         f"{res.num_control_points if opt.tolerance else cfg.num_control_points}",
         f"Continuity: {', '.join(cfg.junction_specs()) or cfg.continuity.name}",
         *([f"Tolerance: {opt.tolerance:.3e}"] if opt.tolerance else []),
-        f"Metric: {opt.metric.display_name}",
         f"Final Error: {res.final_error:.6e}",
         f"Iterations: {res.num_iterations}, Evaluations: {res.num_evaluations}",
         f"Time: {res.elapsed_seconds:.2f}s",

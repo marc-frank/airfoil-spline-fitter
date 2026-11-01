@@ -11,8 +11,6 @@ This package provides:
 
 from .fairness import (
     compute_curve_energy,
-    compute_fairness_penalty,
-    compute_penalty_scales,
     compute_polygon_metrics,
 )
 from .spline import (
@@ -35,6 +33,4 @@ __all__ = [
     # Fairness
     "compute_polygon_metrics",
     "compute_curve_energy",
-    "compute_fairness_penalty",
-    "compute_penalty_scales",
 ]

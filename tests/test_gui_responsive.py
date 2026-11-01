@@ -11,7 +11,6 @@ import pytest
 from bspline_varpro.airfoil import NACA4
 
 from spline_fitter.geometry import create_airfoil_data
-from spline_fitter.optimization.models import OptimizerType
 
 FREEZE_S = 1.0
 
@@ -73,15 +72,6 @@ def test_sweep_keeps_gui_responsive(window):
     stall = _longest_stall(window._fitting_controller.on_fit)
     assert len(window._fitting_controller._sweep_results) == 3
     assert stall < FREEZE_S, f"GUI stalled {stall:.2f} s during a sweep"
-
-
-def test_python_objective_fit_keeps_gui_responsive(window):
-    window._combo_opt.setCurrentIndex(window._combo_opt.findData(OptimizerType.L_BFGS_B))
-    window._spin_ctrl.setValue(10)
-    window._spin_maxiter.setValue(60)
-    stall = _longest_stall(window._fitting_controller.on_fit)
-    assert window._fit_result is not None
-    assert stall < FREEZE_S, f"GUI stalled {stall:.2f} s during an L-BFGS-B fit"
 
 
 def test_cancel_reaches_a_running_fit(window):
