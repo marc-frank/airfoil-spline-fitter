@@ -2,7 +2,9 @@
 File Actions
 ============
 
-Open, save, export, and report actions for the main window.
+Open, save, export, and report actions for the main window: files opened
+from the menu, File > Open recent, a drop on the window or the clipboard,
+and airfoils generated from a NACA code.
 """
 
 from __future__ import annotations
@@ -10,7 +12,9 @@ from __future__ import annotations
 import os
 import threading
 
-from PyQt6.QtCore import QDir
+import numpy as np
+from PyQt6.QtCore import QDir, QMimeData, QRegularExpression
+from PyQt6.QtGui import QRegularExpressionValidator
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -19,13 +23,34 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QInputDialog,
+    QLineEdit,
+    QSpinBox,
 )
 
 from ..analysis import fit_report, format_report_html, scipy_curves
 from ..geometry import create_airfoil_data
-from ..io import export_airfoil_data, export_spline_data, parse_airfoil_data
+from ..io import export_airfoil_data, export_spline_data, parse_airfoil_data, parse_airfoil_text
 from .background import run_in_background
 from .widgets import ScientificSpinBox, SegmentedControl, add_form_row, dialog_form, show_document
+
+# Files the window opens: dropped, recent, or copied to the clipboard
+AIRFOIL_SUFFIX = ".dat"
+PROJECT_SUFFIX = ".asfproj"
+# Entries in File > Open recent
+RECENT_FILES = 10
+# Fewer pasted points are taken for stray numbers, not an airfoil
+MIN_PASTED_POINTS = 5
+# Decimals of a generated NACA airfoil, as in published coordinate files
+NACA_DECIMALS = 6
+
+
+def _supported_files(mime: QMimeData | None) -> list[str]:
+    """The local airfoil and project files in dragged or copied data."""
+    if mime is None or not mime.hasUrls():
+        return []
+    return [url.toLocalFile() for url in mime.urls()
+            if url.isLocalFile() and os.path.splitext(url.toLocalFile())[1].lower()
+            in (AIRFOIL_SUFFIX, PROJECT_SUFFIX)]
 
 
 class FileActionsMixin:
@@ -51,32 +76,49 @@ class FileActionsMixin:
         if path:
             self._load_airfoil(path)
 
-    def _load_airfoil(self, path: str):
-        """Load and display an airfoil file."""
+    def _load_airfoil(self, path: str) -> bool:
+        """Load and display an airfoil file; whether it loaded."""
         ext = os.path.splitext(path)[1].lower()
-        if ext != ".dat":
+        if ext != AIRFOIL_SUFFIX:
             self.statusBar().showMessage(f"Unsupported file type: {ext}")
-            return
+            return False
 
         self.statusBar().showMessage(f"Loading: {os.path.basename(path)}...")
         QApplication.processEvents()
 
         try:
             filename_name, content_name, coords, max_precision = parse_airfoil_data(path)
+        except Exception as e:
+            self.statusBar().showMessage(f"Failed to load: {e}")
+            self._play_error_chime()
+            return False
+        if not coords:
+            self.statusBar().showMessage("No coordinates found in the file")
+            self._play_error_chime()
+            return False
+        loaded = self._set_airfoil(
+            coords,
+            filename=filename_name or os.path.basename(path),
+            name=content_name or filename_name or "",
+            precision=max_precision if isinstance(max_precision, int) else 6,
+            path=path,
+        )
+        if loaded:
+            self._add_recent_file(path)
+        return loaded
 
-            if not coords:
-                self.statusBar().showMessage("No coordinates found in the file")
-                self._play_error_chime()
-                return
-
+    def _set_airfoil(self, coords, filename: str, name: str, precision: int,
+                     path: str = "", verb: str = "Loaded") -> bool:
+        """Make ``coords`` the airfoil to fit, from a file, the clipboard or
+        the NACA generator; whether it worked."""
+        try:
             # Create airfoil data object with current section count
-            num_sections = self._spin_sections.value()
             self._airfoil = create_airfoil_data(
                 coords,
-                filename=filename_name or os.path.basename(path),
-                name=content_name or filename_name or "",
-                precision=max_precision if isinstance(max_precision, int) else 6,
-                num_sections=num_sections,
+                filename=filename,
+                name=name,
+                precision=precision,
+                num_sections=self._spin_sections.value(),
             )
 
             # Clear previous fit
@@ -91,18 +133,168 @@ class FileActionsMixin:
 
             # Plot airfoil
             self._plot_manager.plot_airfoil(coords)
-            self._update_auto_tolerance()
+            # The automatic tolerance follows the airfoil: not a step to undo
+            with self._settings_history.quiet():
+                self._update_auto_tolerance()
 
-            display_name = content_name or filename_name
-            n_points = len(coords)
             section_sizes = [len(sec) for sec in self._airfoil.sections]
             self.statusBar().showMessage(
-                f"Loaded: {display_name} ({n_points} points, {len(section_sizes)} sections: {section_sizes})"
+                f"{verb}: {name or filename} ({len(coords)} points, "
+                f"{len(section_sizes)} sections: {section_sizes})"
             )
+            return True
 
         except Exception as e:
             self.statusBar().showMessage(f"Failed to load: {e}")
             self._play_error_chime()
+            return False
+
+    def open_path(self, path: str) -> bool:
+        """Open an airfoil (.dat) or project (.asfproj) file; whether it opened."""
+        if self._is_fitting:
+            self.statusBar().showMessage("Cancel the running fit to open a file")
+            return False
+        if not os.path.isfile(path):
+            self.statusBar().showMessage(f"File not found: {path}")
+            self._remove_recent_file(path)
+            self._play_error_chime()
+            return False
+        if os.path.splitext(path)[1].lower() == PROJECT_SUFFIX:
+            return self._project_manager.open_project(path)
+        return self._load_airfoil(path)
+
+    # -- Drop -------------------------------------------------------------------
+    # The widgets under the cursor ignore file drags, which so reach the window
+
+    def dragEnterEvent(self, event):
+        if not self._is_fitting and _supported_files(event.mimeData()):
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        files = _supported_files(event.mimeData())
+        if files:
+            event.acceptProposedAction()
+            self.activateWindow()
+            self.open_path(files[0])
+
+    # -- Recent files ----------------------------------------------------------
+
+    def _recent_files(self) -> list[str]:
+        value = self._settings.value("recent_files", [])
+        # QSettings gives a list of one back as a plain string
+        return [value] if isinstance(value, str) else list(value or [])
+
+    def _add_recent_file(self, path: str) -> None:
+        """Put ``path`` at the top of File > Open recent."""
+        path = os.path.abspath(path)
+        files = [path] + [f for f in self._recent_files()
+                          if os.path.normcase(f) != os.path.normcase(path)]
+        self._settings.setValue("recent_files", files[:RECENT_FILES])
+
+    def _remove_recent_file(self, path: str) -> None:
+        path = os.path.normcase(os.path.abspath(path))
+        self._settings.setValue("recent_files", [
+            f for f in self._recent_files() if os.path.normcase(f) != path])
+
+    def _populate_recent_menu(self) -> None:
+        """Fill File > Open recent as it opens."""
+        menu = self._menu_recent
+        menu.clear()
+        files = self._recent_files()
+        if not files:
+            menu.addAction("No recent files").setEnabled(False)
+            return
+        for i, path in enumerate(files, start=1):
+            # The first nine get an access key; && shows an ampersand
+            name = os.path.basename(path).replace("&", "&&")
+            action = menu.addAction(f"&{i} {name}" if i < 10 else name)
+            action.setToolTip(path)
+            action.triggered.connect(lambda _=False, p=path: self.open_path(p))
+        menu.addSeparator()
+        menu.addAction("Clear recent files").triggered.connect(
+            lambda: self._settings.setValue("recent_files", []))
+
+    # -- Clipboard and generator -----------------------------------------------
+
+    def _on_paste_airfoil(self):
+        """Load coordinates, or a copied airfoil or project file, from the clipboard."""
+        if self._is_fitting:
+            return
+        mime = QApplication.clipboard().mimeData()
+        files = _supported_files(mime)
+        if files:
+            self.open_path(files[0])
+            return
+        text = mime.text() if mime is not None and mime.hasText() else ""
+        try:
+            _, content_name, coords, max_precision = parse_airfoil_text(text)
+        except Exception:
+            coords = None
+        if not coords or len(coords) < MIN_PASTED_POINTS:
+            self.statusBar().showMessage(
+                "No airfoil coordinates on the clipboard: copy x y pairs, one point per line")
+            self._play_error_chime()
+            return
+        self._set_airfoil(coords, filename="", name=content_name or "Pasted airfoil",
+                          precision=max_precision or 6, verb="Pasted")
+
+    def _on_new_naca(self):
+        """Ask for a NACA 4-digit code and make that airfoil the one to fit."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("New NACA airfoil")
+        form = dialog_form(dialog)
+        edit_code = QLineEdit(self._settings.value("naca_code", "2412"))
+        edit_code.setValidator(QRegularExpressionValidator(QRegularExpression(r"\d{4}")))
+        edit_code.setToolTip(
+            "Four digits: the camber in percent of the chord, its position in tenths\n"
+            "of the chord, and the thickness in percent. 2412 has 2% camber at 40%\n"
+            "of the chord and is 12% thick; 0012 is symmetric.")
+        add_form_row(form, "Digits", edit_code)
+        spin_points = QSpinBox()
+        spin_points.setRange(10, 5000)
+        spin_points.setValue(self._settings.value("naca_points", 81, type=int))
+        spin_points.setToolTip("Spaced closer toward the leading and trailing edge")
+        add_form_row(form, "Points per side", spin_points)
+        seg_te = SegmentedControl()
+        seg_te.addItem("Closed", userData=True)
+        seg_te.addItem("Open", userData=False)
+        seg_te.setItemToolTip(0, "Modified thickness coefficient: a sharp trailing edge")
+        seg_te.setItemToolTip(1, "Original thickness coefficient: a thin blunt trailing edge")
+        seg_te.setCurrentIndex(
+            max(0, seg_te.findData(self._settings.value("naca_closed_te", True, type=bool))))
+        add_form_row(form, "Trailing edge", seg_te)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
+        btn_create = buttons.addButton("Create", QDialogButtonBox.ButtonRole.AcceptRole)
+        btn_create.setDefault(True)
+        edit_code.textChanged.connect(
+            lambda _: btn_create.setEnabled(edit_code.hasAcceptableInput()))
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        form.addRow(buttons)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        code, n_per_side, closed_te = edit_code.text(), spin_points.value(), seg_te.currentData()
+        self._settings.setValue("naca_code", code)
+        self._settings.setValue("naca_points", n_per_side)
+        self._settings.setValue("naca_closed_te", closed_te)
+        self.new_naca_airfoil(code, n_per_side, closed_te)
+
+    def new_naca_airfoil(self, code: str, n_per_side: int = 81, closed_te: bool = True) -> bool:
+        """Make a NACA 4-digit section the airfoil to fit; whether it worked."""
+        from bspline_varpro.airfoil import NACA4
+
+        if self._is_fitting:
+            return False
+        try:
+            points = np.round(NACA4(code, closed_te=closed_te).points(n_per_side), NACA_DECIMALS)
+        except ValueError as e:
+            self.statusBar().showMessage(f"Cannot create the airfoil: {e}")
+            self._play_error_chime()
+            return False
+        return self._set_airfoil([(float(x), float(y)) for x, y in points],
+                                 filename=f"naca{code}", name=f"NACA {code}",
+                                 precision=NACA_DECIMALS, verb="Created")
 
     def _on_save_fitted(self):
         """Save fitted airfoil as sampled points."""
