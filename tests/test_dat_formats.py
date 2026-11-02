@@ -36,4 +36,6 @@ def test_formats_load_the_same_contour(tmp_path, lines, name):
     assert back_name == name
     assert coords.shape == PTS.shape
     assert np.allclose(coords, PTS, atol=1e-6)
-    assert precision == 6  # the point counts do not count as coordinates
+    # The point counts do not count as coordinates; precision is at unit
+    # chord, so 0-100 data with 6 decimals has 8
+    assert precision == (8 if "100" in lines[1] else 6)
