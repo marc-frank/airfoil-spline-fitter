@@ -206,7 +206,8 @@ def test_project_round_trip_keeps_knots_and_settings(tmp_path, tolerance_fit):
     assert run.result.report["max_deviation"] == result.report["max_deviation"]
     from spline_fitter.gui.explorer import column
     assert column("Fitted control points").cell(run) == result.num_control_points
-    assert column("Error").cell(run) == raw.fun
+    # The same measure as any other run's, not the tolerance goal's max deviation
+    assert column("Error").cell(run) == result.report["rms_deviation"] != raw.fun
     assert column("Tolerance").cell(run) == pytest.approx(1e-5)
     assert column("Type").cell(run) == "Geometric"
 

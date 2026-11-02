@@ -251,4 +251,5 @@ class GNVarProOptimizer(AlgebraicOptimizer):
             success=result.success,
             message=result.message,
             section_knots=[np.asarray(k, dtype=np.float64).tolist() for k in result.knots],
+            rms_error=float(result.rms_error),
         )

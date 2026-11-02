@@ -160,3 +160,27 @@ def test_footpoint_never_climbs_to_a_distance_maximum(t0, method):
     closest = np.hypot(spline_x(ts) - 0.5, spline_y(ts) + 0.6).min()
     assert distance[0] == pytest.approx(closest, abs=1e-9)
     assert t[0] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_every_run_records_its_rms_error():
+    """A tolerance goal's fun is its max deviation; the RMS error is recorded
+    beside it, so its runs compare with the others."""
+    airfoil = small_airfoil(0.001)
+    config = SplineConfig(degree=3, num_control_points=6)
+    tolerance = GNVarProOptimizer().fit(config, OptimizationConfig(tolerance=1e-3), airfoil)
+    assert tolerance.rms_error < tolerance.fun
+    fixed = GNVarProOptimizer().fit(config, OptimizationConfig(max_iterations=300), airfoil)
+    direct = run_optimization(config, OptimizationConfig(optimizer=OptimizerType.DIRECT_LSQ),
+                              airfoil)
+    assert fixed.rms_error == fixed.fun and direct.rms_error == direct.fun
+
+
+def test_runs_compare_by_one_measure():
+    from spline_fitter.optimization.models import FitResult
+    result = FitResult([[(0.0, 0.0), (1.0, 0.0)]], 1, final_error=3e-4, num_iterations=1,
+                       num_evaluations=1, elapsed_seconds=0.0)
+    assert result.comparison_error == 3e-4  # recorded nothing else
+    result.rms_error = 1e-4
+    assert result.comparison_error == 1e-4
+    result.report = {"max_deviation": 3e-4, "rms_deviation": 1.2e-4}
+    assert result.comparison_error == 1.2e-4

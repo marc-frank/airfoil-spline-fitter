@@ -38,10 +38,12 @@ class RawOptimResult:
             LM fixed count), refits (tolerance mode), or 1 (Direct LSQ)
         section_control_points: Direct control points (for algebraic methods)
         section_knots: Knot vector per section (None = open uniform)
+        rms_error: RMS distance of the data points to their curve points,
+            whatever ``fun`` is
     """
 
     __slots__ = ("x", "fun", "nit", "section_control_points", "parameters", "success",
-                 "message", "section_knots")
+                 "message", "section_knots", "rms_error")
 
     def __init__(
         self,
@@ -53,6 +55,7 @@ class RawOptimResult:
         success: bool = True,
         message: str = "",
         section_knots: list[list[float]] | None = None,
+        rms_error: float | None = None,
     ) -> None:
         self.x = x
         self.fun = fun
@@ -62,6 +65,7 @@ class RawOptimResult:
         self.success = success
         self.message = message
         self.section_knots = section_knots
+        self.rms_error = fun if rms_error is None else rms_error
 
 
 class BaseOptimizer(ABC):

@@ -333,6 +333,9 @@ class FitResult:
             knots (the fixed-count optimizers).
         report: Quality report (deviation, curvature, junctions), see
             :func:`spline_fitter.analysis.fit_report`.
+        rms_error: RMS distance of the data points to their curve points.
+            ``final_error`` is the max deviation for a tolerance goal, so runs
+            compare by :attr:`comparison_error` instead.
     """
     section_control_points: list[PointList]
     degree: int
@@ -345,6 +348,7 @@ class FitResult:
     cancelled: bool = False
     section_knots: list[list[float]] | None = None
     report: dict | None = None
+    rms_error: float | None = None
 
     def __post_init__(self):
         """Ensure control points are stored as lists, not tuples."""
@@ -370,6 +374,17 @@ class FitResult:
         from ..spline.spline import BSplineCurve2D
         return [BSplineCurve2D(self.degree, ctrl, self.knots(i))
                 for i, ctrl in enumerate(self.section_control_points)]
+
+    @property
+    def comparison_error(self) -> float:
+        """The error runs compare by, the same measure for every optimizer
+        and goal: the report's RMS orthogonal deviation, else the RMS error
+        (``final_error`` only for runs that recorded neither)."""
+        if self.report and self.report.get("rms_deviation") is not None:
+            return float(self.report["rms_deviation"])
+        if self.rms_error is not None:
+            return self.rms_error
+        return self.final_error
 
     @property
     def num_control_points(self) -> int:
