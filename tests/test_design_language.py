@@ -481,8 +481,8 @@ PRODUCT = "Airfoil Spline Fitter"
 ABBREVIATIONS = re.compile(
     r"\b(?:Avg|avg|Min|dev|pts|iters?|Iter|evals?|Evals|err|tol|sw|LE|TE|Ctrl pts)\b"
     r"|\b[a-z]+/[a-z]+\b(?!\))")
-# Symbols beyond the arrow and the Greek letters of math
-SYMBOLS = re.compile("[˜✓✗≥≤∫…≈·•×]")
+# Symbols beyond the arrow, the Greek letters of math and the times sign
+SYMBOLS = re.compile("[˜✓✗≥≤∫…≈·•]")
 
 
 def _decoded(code: str) -> str:

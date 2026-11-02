@@ -84,7 +84,7 @@ def test_result_shows_sections_times_control_points(window):
     window._combo_live.setCurrentIndex(0)
     window._fitting_controller.on_fit()
     window._set_save_enabled(True)
-    assert window._lbl_result_ctrl.text() == "2 sections of 10"
+    assert window._lbl_result_ctrl.text() == "2 × 10"
     assert window._lbl_result_ctrl.toolTip() == "10, 10 per section"
 
 

@@ -172,9 +172,9 @@ curve is a deviation worth seeing. Every new plot item takes a `Z` value.
 - **Glyphs**: no emoji. Icons are the stroked glyphs from `theme.icon()`
   (`chevron_down`, `chevron_up`, `chevron_right`, `chevron_left`,
   `check`, `dash` (partly checked), `range`, `sort_up`, `sort_down`, `filter`), drawn in `TEXT_2` at `Size.GLYPH`. Text symbols are limited to
-  → (from one value to the next), plus Greek letters for math (κ, dκ/ds).
-  Products are spelled out ("2 sections of 10", not "2 × 10"), and items
-  are separated by a comma, not a middle dot or bullet.
+  → (from one value to the next), plus Greek letters for math (κ, dκ/ds)
+  and × between numbers ("2 × 10" control points). No middle dots or bullets
+  as separators: use a comma.
 - **The sweep toggle is a dimension line** (`range`, at `Size.GLYPH_LARGE`):
   |←→|, as a drawing marks a span. Glyphs on checkable buttons turn `TEXT` when checked
   (`icon(name, checked_role="TEXT")`).

@@ -979,8 +979,6 @@ class WindowLayoutMixin:
         self._lbl_result_time = QLabel()
         for readout in (self._lbl_result_dev, self._lbl_result_ctrl, self._lbl_result_time):
             readout.setObjectName("Readout")
-        # "12 sections of 100" breaks into lines rather than widen the sidebar
-        self._lbl_result_ctrl.setWordWrap(True)
         for col, (caption, value) in enumerate((
             (self._lbl_result_caption_dev, self._lbl_result_dev),
             (QLabel("Control points"), self._lbl_result_ctrl),
