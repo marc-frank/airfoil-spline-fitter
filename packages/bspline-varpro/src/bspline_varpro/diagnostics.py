@@ -97,9 +97,13 @@ def distance_to_curves(
 def section_deviations(
     sections: Sequence[np.ndarray], curves: Sequence[BSpline], samples_per_span: int = 32,
 ) -> List[np.ndarray]:
-    """Orthogonal distance of every point to the curve of its own section."""
-    return [project(np.asarray(sec, dtype=np.float64), c, samples_per_span)[1]
-            for sec, c in zip(sections, curves)]
+    """Orthogonal distance of every point of each section to the nearest point of the chain.
+
+    A chain fit does not keep points on the section they were given with: they
+    move across a junction with their parameter, so every curve is a candidate.
+    """
+    return [distance_to_curves(np.asarray(sec, dtype=np.float64), curves, samples_per_span)
+            for sec in sections]
 
 
 def _planar(curve: BSpline) -> None:
@@ -219,7 +223,7 @@ def junctions(curves: Sequence[BSpline]) -> List[Dict[str, float]]:
 def max_deviation(
     sections: Sequence[np.ndarray], curves: Sequence[BSpline], samples_per_span: int = 32,
 ) -> float:
-    """Largest orthogonal distance of any point to its section's curve."""
+    """Largest orthogonal distance of any point to the chain (as tolerance fits measure it)."""
     return float(max(np.max(d) for d in section_deviations(sections, curves, samples_per_span)))
 
 

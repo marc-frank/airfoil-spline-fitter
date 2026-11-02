@@ -186,9 +186,15 @@ def polish_knots(
     sections = as_sections(points)
     options = options or result.options or ChainOptions(continuity=result.continuity or "G1")
     degree = result.degree
-    counts = [len(interior_knots(k, degree)) for k in result.knots]
+    # Sections with a repeated interior knot keep their knots: the gap
+    # parameterization would spread the repeat and change the continuity there
+    inner_knots = [interior_knots(k, degree) for k in result.knots]
+    counts = [len(inner) if np.all(np.diff(inner) > 0) else 0 for inner in inner_knots]
     if sum(counts) == 0:
         return result
+    # The gaps must stay above min_gap, or the starting knots would not map to themselves
+    gaps = [np.diff(np.concatenate([[0.0], inner, [1.0]])) for inner, r in zip(inner_knots, counts) if r > 0]
+    min_gap = min(min_gap, 0.5 * float(np.min(np.concatenate(gaps))))
     span = len(sections)
     n_eta = len(chain_data(sections)) - 1
     n_theta = len(result.theta)
@@ -354,6 +360,8 @@ def fit_to_tolerance(
         raise ValueError("Tolerance must be positive.")
     if knot_placement not in ("free", "uniform"):
         raise ValueError("knot_placement must be 'free' or 'uniform'.")
+    if max_iterations < 1:
+        raise ValueError("max_iterations must be at least 1.")
     uniform = knot_placement == "uniform"
     sections = as_sections(points)
     _validate_sections(sections)

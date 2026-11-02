@@ -86,3 +86,13 @@ def test_naca_points_selig_order():
     assert pts[10, 1] > 0 > pts[70, 1]
     blunt = NACA4("0012", closed_te=False).points(41)
     assert blunt[0, 1] - blunt[-1, 1] > 1e-3
+
+
+def test_max_deviation_follows_points_across_a_junction():
+    # Chain fits move points across junctions; (1.5, 0) was given with the first
+    # section but lies on the second curve
+    a = BSpline(np.r_[[0.0] * 2, [1.0] * 2], np.array([[0.0, 0.0], [1.0, 0.0]]), 1)
+    b = BSpline(np.r_[[0.0] * 2, [1.0] * 2], np.array([[1.0, 0.0], [2.0, 0.0]]), 1)
+    sections = [np.array([[0.0, 0.0], [0.5, 0.0], [1.5, 0.0]]), np.array([[1.5, 0.0], [2.0, 0.0]])]
+    assert dg.max_deviation(sections, [a, b]) < 1e-14
+    assert all(np.max(d) < 1e-14 for d in dg.section_deviations(sections, [a, b]))
