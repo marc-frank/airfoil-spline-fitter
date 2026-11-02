@@ -94,8 +94,8 @@ class LiveProgress:
         self._record(error)
 
         elapsed = time.perf_counter() - self._start
+        # The logged steps are the evaluations, so one count says both
         status = (f"{self._prefix}Fitting... {format_duration(elapsed)} | "
-                  f"Iteration {len(self._logger.errors)} | "
                   f"Evaluations {get_evaluation_count()} | ")
         if self._steps:
             status += f"RMS error {format_error(error)}"

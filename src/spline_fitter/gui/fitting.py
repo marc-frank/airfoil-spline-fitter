@@ -41,6 +41,29 @@ if TYPE_CHECKING:
     from .ui import SplineFitterWindow
 
 
+def continuity_text(config: SplineConfig) -> str:
+    """The continuity of every junction, as fitted: ``G3``, or per junction
+    ``G2/C1/G3``; ``none`` for a single section."""
+    specs = config.junction_specs()
+    if not specs:
+        return "none"
+    return specs[0] if len(set(specs)) == 1 else "/".join(specs)
+
+
+def _count(value: int, noun: str) -> str:
+    return f"{value} {noun}" + ("" if value == 1 else "s")
+
+
+def fit_effort(result, opt_config: OptimizationConfig, evaluations: int) -> str:
+    """What a fit took: its residual evaluations, and the refits of a
+    tolerance search; Direct LSQ evaluates nothing, it solves once."""
+    if opt_config.tolerance is not None:
+        return f"{_count(result.nit, 'refit')}, {_count(evaluations, 'evaluation')}"
+    if evaluations:
+        return _count(evaluations, "evaluation")
+    return _count(result.nit, "solve")
+
+
 class FittingController:
     """Manages single-fit and parameter-sweep optimization operations."""
 
@@ -152,8 +175,7 @@ class FittingController:
             live.show_loss()
 
             # Save log
-            cont_level = config.continuity.name[1]
-            extra_info = f"mode=C{cont_level}, degree={config.degree}"
+            extra_info = f"continuity={continuity_text(config)}, degree={config.degree}"
             log_path = error_logger.save(
                 optimizer_key=opt_config.optimizer.value,
                 extra_info=extra_info,
@@ -162,18 +184,17 @@ class FittingController:
                 print(f"Log saved: {log_path}")
 
             # Status message with detailed info
-            eval_count = get_evaluation_count()
-            iterations = result.nit
+            effort = fit_effort(result, opt_config, get_evaluation_count())
             opt_name = opt_config.optimizer.display_name
 
             if w._cancel_requested:
                 msg = (
-                    f"Cancelled: {iterations} iterations, {eval_count} evaluations "
+                    f"Cancelled: {effort} "
                     f"in {format_duration(elapsed)} | Best error {format_error(result.fun)}"
                 )
             else:
                 msg = (
-                    f"Completed ({opt_name}): {iterations} iterations, {eval_count} evaluations "
+                    f"Completed ({opt_name}): {effort} "
                     f"in {format_duration(elapsed)} | Error {format_error(result.fun)}"
                 )
 
