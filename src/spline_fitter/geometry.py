@@ -136,13 +136,7 @@ def split_into_sections(
     # This allows a center section to wrap around the LE naturally
     if num_sections % 2 == 1:
         arc_params = compute_arc_length_parameters(list(coordinates))
-        junction_indices_list = []
-
-        for i in range(1, num_sections):
-            target_param = i / num_sections
-            closest_idx = min(range(len(arc_params)),
-                            key=lambda idx: abs(arc_params[idx] - target_param))
-            junction_indices_list.append(closest_idx)
+        junction_indices_list = _junctions(arc_params, num_sections)
 
         # Build sections
         sections = []
@@ -166,6 +160,11 @@ def split_into_sections(
 
     n_upper = num_sections // 2
     n_lower = num_sections // 2
+    if len(upper_coords) < n_upper + 1 or len(lower_coords) < n_lower + 1:
+        raise ValueError(
+            f"Need at least {n_upper + 1} points on each side of the leading edge for "
+            f"{num_sections} sections, got {len(upper_coords)} and {len(lower_coords)}"
+        )
 
     sections = []
     junction_indices = []
@@ -174,13 +173,7 @@ def split_into_sections(
     if n_upper == 1:
         sections.append(tuple(upper_coords))
     else:
-        upper_arc_params = compute_arc_length_parameters(upper_coords)
-        upper_junctions = []
-        for i in range(1, n_upper):
-            target_param = i / n_upper
-            closest_idx = min(range(len(upper_arc_params)),
-                            key=lambda idx: abs(upper_arc_params[idx] - target_param))
-            upper_junctions.append(closest_idx)
+        upper_junctions = _junctions(compute_arc_length_parameters(upper_coords), n_upper)
 
         # Build upper sections
         start_idx = 0
@@ -199,13 +192,7 @@ def split_into_sections(
     if n_lower == 1:
         sections.append(tuple(lower_coords))
     else:
-        lower_arc_params = compute_arc_length_parameters(lower_coords)
-        lower_junctions = []
-        for i in range(1, n_lower):
-            target_param = i / n_lower
-            closest_idx = min(range(len(lower_arc_params)),
-                            key=lambda idx: abs(lower_arc_params[idx] - target_param))
-            lower_junctions.append(closest_idx)
+        lower_junctions = _junctions(compute_arc_length_parameters(lower_coords), n_lower)
 
         # Build lower sections
         start_idx = 0
@@ -219,6 +206,20 @@ def split_into_sections(
         sections.append(tuple(lower_coords[start_idx:]))
 
     return tuple(sections), tuple(junction_indices)
+
+
+def _junctions(arc_params: Sequence[float], num_sections: int) -> list[int]:
+    """Indices splitting a polyline into ``num_sections`` of about equal arc
+    length: the point nearest each division, moved where needed so every
+    section keeps at least one segment (two points)."""
+    last = len(arc_params) - 1
+    junctions = [min(range(len(arc_params)), key=lambda idx: abs(arc_params[idx] - i / num_sections))
+                 for i in range(1, num_sections)]
+    for k in range(len(junctions)):
+        junctions[k] = max(junctions[k], junctions[k - 1] + 1 if k else 1)
+    for k in reversed(range(len(junctions))):
+        junctions[k] = min(junctions[k], junctions[k + 1] - 1 if k + 1 < len(junctions) else last - 1)
+    return junctions
 
 
 def create_airfoil_data(

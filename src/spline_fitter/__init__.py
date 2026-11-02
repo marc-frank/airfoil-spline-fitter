@@ -15,24 +15,25 @@ Architecture
 ------------
 The package is organized into focused modules:
 
-    models          Data structures (AirfoilData, SplineConfig, etc.)
-    spline          Core B-spline mathematics and curve evaluation
+    optimization    Data models (optimization.models), optimizer wrappers, error logging
+    spline          Core B-spline mathematics, curve evaluation and fairness metrics
     geometry        Coordinate processing and geometric utilities
-    optimization    Optimizer wrappers and error logging
-    fairness        Smoothness metrics
+    io              Airfoil and spline .dat files
+    project_io      Project files (.asfproj)
     analysis        Deviation, curvature and junction reports of a fit
-    ui              PyQt6-based graphical user interface
+    gui             PyQt6-based graphical user interface (imported on first use,
+                    so the rest of the package works without Qt)
     formatting      Display formatting utilities
 
 Example
 -------
-To run the GUI application:
+To run the GUI application from a source checkout:
 
-    python -m spline_fitter
+    python -m src.spline_fitter
 
 Or programmatically:
 
-    from spline_fitter.ui import SplineFitterWindow
+    from spline_fitter.gui import SplineFitterWindow
     from PyQt6.QtWidgets import QApplication
     import sys
     
@@ -68,9 +69,6 @@ from .geometry import (
     split_at_leading_edge,
     split_into_sections,
 )
-
-# UI components
-from .gui import SplineFitterWindow
 
 # Optimization engine
 from .optimization import (
@@ -164,3 +162,11 @@ __all__ = [
     # UI
     "SplineFitterWindow",
 ]
+
+
+def __getattr__(name):
+    # The GUI needs PyQt6 and pyqtgraph: import it only when asked for
+    if name == "SplineFitterWindow":
+        from .gui import SplineFitterWindow
+        return SplineFitterWindow
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
