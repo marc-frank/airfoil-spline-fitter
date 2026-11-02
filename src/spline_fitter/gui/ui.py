@@ -13,7 +13,8 @@ This module provides:
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QSettings
+from PyQt6.QtCore import QSettings, Qt
+from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QMainWindow,
 )
@@ -37,7 +38,7 @@ from .history import SettingsHistory
 from .layout import WindowLayoutMixin
 from .motion import install_smooth_scrolling
 from .plotting import PlotManager
-from .project import ProjectManager
+from .project import APP_NAME, ProjectManager
 from .theme import apply_theme, style_plot, theme_changed
 from .widgets import MotionDialog, SweepableSpinBox, ThemeDialog
 
@@ -63,7 +64,7 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         # Wheel scrolling glides in every list, table, panel and document
         install_smooth_scrolling()
         super().__init__()
-        self.setWindowTitle("Airfoil Spline Fitter")
+        self.setWindowTitle(APP_NAME)
 
         # Application state
         self._airfoil: AirfoilData | None = None
@@ -97,14 +98,17 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._set_advanced_baseline()
 
         # Undo and redo of the fit settings, in the order they are applied
-        # (as in _apply_run_settings: what limits a setting comes first)
+        # (as in _apply_run_settings: what limits a setting comes first); a
+        # project that fails to open restores them in the same order
+        self._settings_widgets = [
+            self._combo_opt, self._seg_goal, self._check_auto_tolerance,
+            self._spin_tolerance, self._combo_knot_placement,
+            self._seg_parameterization, self._check_grow, self._spin_sections,
+            self._spin_degree, self._combo_cont, self._combo_cont_kind, self._spin_ctrl,
+            self._edit_junctions, self._check_subsample, self._spin_subsample,
+            self._spin_smoothing_weight, self._check_optimize_le, *self._sweep_group]
         self._settings_history = SettingsHistory(
-            [self._combo_opt, self._seg_goal, self._check_auto_tolerance,
-             self._spin_tolerance, self._combo_knot_placement,
-             self._seg_parameterization, self._check_grow, self._spin_sections,
-             self._spin_degree, self._combo_cont, self._combo_cont_kind, self._spin_ctrl,
-             self._edit_junctions, self._check_subsample, self._spin_subsample,
-             self._spin_smoothing_weight, self._check_optimize_le, *self._sweep_group],
+            self._settings_widgets,
             is_quiet=lambda: self._is_fitting,
             after_restore=lambda: self._on_optimizer_changed(self._combo_opt.currentIndex()),
             parent=self,
@@ -319,6 +323,11 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
             combo.currentIndexChanged.connect(self._project_manager.refresh_comparison_plot)
         self._btn_load_run.clicked.connect(self._project_manager.on_load_selected_run)
         self._btn_delete_run.clicked.connect(self._project_manager.on_delete_selected_runs)
+        # The Delete key deletes the selected runs while the table has focus
+        QShortcut(QKeySequence.StandardKey.Delete, table.view,
+                  self._project_manager.on_delete_selected_runs,
+                  context=Qt.ShortcutContext.WidgetShortcut)
+        self._action_restore_runs.triggered.connect(self._project_manager.on_restore_deleted_runs)
 
         # Initialize optimizer-dependent UI state
         self._on_optimizer_changed(self._combo_opt.currentIndex())

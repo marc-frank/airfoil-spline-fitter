@@ -19,7 +19,9 @@ from typing import TYPE_CHECKING
 from PyQt6.QtCore import QDir
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
+from ..analysis import scipy_curves
 from ..formatting import format_duration, number
+from ..geometry import create_airfoil_data
 from ..optimization.models import (
     FitResult,
     IterationRecord,
@@ -28,9 +30,19 @@ from ..optimization.models import (
     ProjectFile,
     SplineConfig,
 )
-from ..project_io import create_optimization_run, create_project, load_project, save_project
-from .explorer import column, is_number
+from ..project_io import (
+    create_optimization_run,
+    create_project,
+    load_project,
+    number_runs,
+    save_project,
+)
+from .explorer import COLUMNS, column, is_number
 from .file_actions import PROJECT_SUFFIX
+from .history import set_widget_value, widget_value
+
+# The window title, after the project's name
+APP_NAME = "Airfoil Spline Fitter"
 
 if TYPE_CHECKING:
     from .ui import SplineFitterWindow
@@ -45,6 +57,11 @@ class ProjectManager:
         self._project_path: str | None = None
         self._project_modified = False
         self._selected_runs: list[OptimizationRun] = []
+        # The runs of each delete, with their places, for Restore deleted runs
+        self._deleted: list[list[tuple[int, OptimizationRun]]] = []
+        # The highest run number given in this project: never given again,
+        # also when that run is deleted (it may be restored)
+        self._last_number = 0
         # (x, y, run) of the comparison plot's points; None while the plot
         # shows something else (a sweep) or the table changed since
         self._comparison_points: list | None = None
@@ -74,11 +91,13 @@ class ProjectManager:
         self._project = None
         self._project_path = None
         self._project_modified = False
+        self._deleted, self._last_number = [], 0
         self._show_project_label()
         self._window._set_project_save_enabled(False)
         # The explorer lists no runs of the previous airfoil
         self._populate_table()
         self.refresh_comparison_plot()
+        self.update_run_buttons()
 
     def confirm_discard(self) -> bool:
         """Whether the open project may be closed: asks to save its unsaved
@@ -122,73 +141,162 @@ class ProjectManager:
             self.open_project(file_path)
 
     def open_project(self, file_path: str) -> bool:
-        """Open the project at ``file_path``; whether it opened."""
-        if self._window._is_fitting:
-            self._window.statusBar().showMessage("Cancel the running fit to open a file")
+        """Open the project at ``file_path``; whether it opened.
+
+        All or nothing: what showing the project computes from its file is
+        computed first, and should showing it fail all the same, the project
+        open before is restored as it was.
+        """
+        w = self._window
+        if w._is_fitting:
+            w.statusBar().showMessage("Cancel the running fit to open a file")
             return False
         try:
             project = load_project(file_path)
+            self._check_project(project)
         except Exception as e:
-            self._window.statusBar().showMessage(f"Failed to load project: {e}")
-            self._window._play_error_chime()
+            w.statusBar().showMessage(f"Failed to load project: {e}")
+            w._play_error_chime()
             return False
         # Asked only once the file has loaded: a broken file closes nothing
         if not self.confirm_discard():
-            self._window.statusBar().showMessage("Open cancelled.")
+            w.statusBar().showMessage("Open cancelled.")
             return False
 
+        before = self._capture()
         try:
-            # Set project state
-            self._project = project
-            self._project_path = file_path
-            self._project_modified = False
-
-            # Load airfoil from project; the previous airfoil's fit goes with it
-            self._window._airfoil = project.airfoil
-            self._window._fit_result = None
-            self._window._set_save_enabled(False)
-            self._window._limit_sections(project.airfoil.num_points)
-
-            # Update UI state
-            self._window._show_file_info(project.airfoil, file_path)
-            self._window._spin_sections.setValue(project.airfoil.num_sections)
-
-            self._show_project_label()
-
-            # Enable save buttons
-            self._window._set_project_save_enabled(True)
-
-            # Update visualization - plot airfoil points
-            self._window._plot_manager.clear_plot_items()
-            self._window._plot_manager.plot_airfoil(self._window._airfoil.coordinates)
-
-            # If project has runs, load the last one: its settings first, as
-            # a different section count re-splits the airfoil
-            if project.optimization_runs:
-                last_run = project.optimization_runs[-1]
-                self._window._apply_run_settings(last_run)
-                self._load_run_to_plots(last_run)
-
-                n_runs = len(project.optimization_runs)
-                self._window.statusBar().showMessage(
-                    f"Loaded project with {n_runs} run{'s' if n_runs != 1 else ''}, "
-                    f"showing {last_run.optimization_config.optimizer.display_name}"
-                )
-            else:
-                self._window.statusBar().showMessage(
-                    f"Loaded project: {os.path.basename(file_path)}"
-                )
-
-            # Fill the explorer and plot its runs
-            self._populate_table()
-            self.refresh_comparison_plot()
-            self._window._add_recent_file(file_path)
-            return True
-
+            self._show_project(project, file_path)
         except Exception as e:
-            self._window.statusBar().showMessage(f"Failed to load project: {e}")
-            self._window._play_error_chime()
+            self._restore(before)
+            w.statusBar().showMessage(f"Failed to load project: {e}")
+            w._play_error_chime()
             return False
+        w._add_recent_file(file_path)
+        return True
+
+    @staticmethod
+    def _check_project(project: ProjectFile) -> None:
+        """Compute what showing a project computes from its file, before
+        anything changes: the explorer's cells of every run, the airfoil
+        split as it opens, and the curves of the run it shows. Raises on a
+        project that cannot be shown."""
+        for run in project.optimization_runs:
+            for c in COLUMNS:
+                c.text(c.cell(run))
+        runs, airfoil = project.optimization_runs, project.airfoil
+        splits = {airfoil.num_sections} | {run.spline_config.num_sections for run in runs[-1:]}
+        for sections in splits:
+            create_airfoil_data(list(airfoil.coordinates), filename=airfoil.filename,
+                                name=airfoil.name, precision=airfoil.precision,
+                                num_sections=sections)
+        if runs:
+            scipy_curves(runs[-1].result)
+
+    def _show_project(self, project: ProjectFile, file_path: str) -> None:
+        """Make ``project`` the open project: its airfoil, its last run's
+        settings and fit, and its runs in the explorer."""
+        w = self._window
+        self._project = project
+        self._project_path = file_path
+        self._project_modified = False
+        self._deleted = []
+        self._last_number = max((run.number for run in project.optimization_runs), default=0)
+
+        # Load airfoil from project; the previous airfoil's fit goes with it
+        w._airfoil = project.airfoil
+        w._fit_result = None
+        w._set_save_enabled(False)
+        w._limit_sections(project.airfoil.num_points)
+        w._show_file_info(project.airfoil, file_path)
+        w._spin_sections.setValue(project.airfoil.num_sections)
+        self._show_project_label()
+        w._set_project_save_enabled(True)
+
+        w._plot_manager.clear_plot_items()
+        w._plot_manager.plot_airfoil(w._airfoil.coordinates)
+
+        # If project has runs, load the last one: its settings first, as
+        # a different section count re-splits the airfoil
+        if project.optimization_runs:
+            last_run = project.optimization_runs[-1]
+            w._apply_run_settings(last_run)
+            self._load_run_to_plots(last_run)
+            n_runs = len(project.optimization_runs)
+            w.statusBar().showMessage(
+                f"Loaded project with {n_runs} run{'s' if n_runs != 1 else ''}, "
+                f"showing {last_run.optimization_config.optimizer.display_name}"
+            )
+        else:
+            w.statusBar().showMessage(f"Loaded project: {os.path.basename(file_path)}")
+
+        # Fill the explorer and plot its runs
+        self._populate_table()
+        self.refresh_comparison_plot()
+        self.update_run_buttons()
+
+    def _capture(self) -> dict:
+        """What opening a project changes, to restore when it fails."""
+        w = self._window
+        return {
+            "project": (self._project, self._project_path, self._project_modified,
+                        self._deleted, self._last_number),
+            "airfoil": w._airfoil,
+            "fit": w._fit_result,
+            "sections_maximum": w._spin_sections.maximum(),
+            "settings": [widget_value(x) for x in w._settings_widgets],
+            "file_card": [(label.text(), label.toolTip())
+                          for label in (w._lbl_file_name, w._lbl_path)],
+            "selected": list(self._selected_runs),
+        }
+
+    def _restore(self, state: dict) -> None:
+        """Put back what ``_capture`` took: the project, airfoil, fit,
+        settings, file card, plots and explorer."""
+        w = self._window
+        (self._project, self._project_path, self._project_modified,
+         self._deleted, self._last_number) = state["project"]
+        # The settings first: the section count re-splits the airfoil it finds
+        w._spin_sections.setMaximum(state["sections_maximum"])
+        with w._settings_history.quiet():
+            for widget, value in zip(w._settings_widgets, state["settings"], strict=True):
+                set_widget_value(widget, value)
+        w._on_optimizer_changed(w._combo_opt.currentIndex())
+        w._airfoil = state["airfoil"]
+        for label, (text, tip) in zip((w._lbl_file_name, w._lbl_path), state["file_card"],
+                                      strict=True):
+            label.setText(text)
+            label.setToolTip(tip)
+        w._set_project_save_enabled(self._project is not None)
+        self._show_project_label()
+
+        # The explorer, its selection quietly: the fit below is the one shown
+        self._populate_table()
+        table = w._run_table
+        table.view.selectionModel().blockSignals(True)
+        table.select_runs(state["selected"])
+        table.view.selectionModel().blockSignals(False)
+        self._show_selection()
+        self.refresh_comparison_plot()
+
+        w._plot_manager.clear_plot_items()
+        if w._airfoil is not None:
+            w._plot_manager.plot_airfoil(w._airfoil.coordinates)
+        fit, run = state["fit"], self.run_of(state["fit"])
+        if run is not None:
+            self._load_run_to_plots(run)
+        else:
+            w._fit_result = fit
+            if fit is not None:
+                w._plot_manager.plot_fitted_spline(fit)
+                w._refresh_curvature_comb()
+            w._set_save_enabled(fit is not None)
+
+    def run_of(self, result: FitResult | None) -> OptimizationRun | None:
+        """The run of the open project whose fit ``result`` is."""
+        if self._project is None or result is None:
+            return None
+        return next((run for run in self._project.optimization_runs if run.result is result),
+                    None)
 
     def on_save_project(self):
         """Save project to current path."""
@@ -235,6 +343,10 @@ class ProjectManager:
         # Only the suffix makes it open as a project again
         if not save_path.lower().endswith(PROJECT_SUFFIX):
             save_path += PROJECT_SUFFIX
+            # The file dialog asked about the name without it
+            if os.path.exists(save_path) and not self._confirm_replace(save_path):
+                self._window.statusBar().showMessage("Save cancelled.")
+                return
 
         try:
             save_project(self._project, save_path)
@@ -251,6 +363,15 @@ class ProjectManager:
         except Exception as e:
             self._window.statusBar().showMessage(f"Save failed: {e}")
             self._window._play_error_chime()
+
+    def _confirm_replace(self, path: str) -> bool:
+        """Whether to replace the existing file at ``path``."""
+        Button = QMessageBox.StandardButton
+        answer = QMessageBox.question(
+            self._window, "Save project as",
+            f"{os.path.basename(path)} already exists. Replace it?",
+            Button.Yes | Button.No, Button.No)
+        return answer == Button.Yes
 
     # ------------------------------------------------------------------
     # Optimization run management
@@ -286,16 +407,19 @@ class ProjectManager:
             loss_history=loss_history,
         )
 
-        # Check for duplicate configuration and replace if found
+        # Check for duplicate configuration and replace if found; the new run
+        # takes the number of the one it replaces
         replaced = False
         for i, existing in enumerate(self._project.optimization_runs):
             if self._configs_match(existing, spline_config, opt_config):
+                run.number = existing.number
                 self._project.optimization_runs[i] = run
                 replaced = True
                 break
 
         if not replaced:
             self._project.optimization_runs.append(run)
+            self._last_number = number_runs(self._project.optimization_runs, self._last_number)
 
         self._project_modified = True
         self._show_project_label()
@@ -305,16 +429,23 @@ class ProjectManager:
             self.refresh_comparison_plot()
 
     def _show_project_label(self):
-        """Name the project and count its runs; * marks unsaved changes."""
+        """Name the project and count its runs, also in the window title;
+        * marks unsaved changes."""
+        w = self._window
         if self._project is None:
-            self._window._lbl_project.setText("No project")
+            w._lbl_project.setText("No project")
+            w.setWindowTitle(APP_NAME)
+            w.setWindowModified(False)
             return
         name = os.path.basename(self._project_path) if self._project_path else "Unsaved project"
         n_runs = len(self._project.optimization_runs)
-        self._window._lbl_project.setText(
+        w._lbl_project.setText(
             f"{name}{'*' if self._project_modified else ''}\n"
             f"{n_runs} optimization run{'s' if n_runs != 1 else ''}"
         )
+        # Qt shows the * in place of [*] while the window is modified
+        w.setWindowTitle(f"{name}[*] - {APP_NAME}")
+        w.setWindowModified(self._project_modified)
 
     def _configs_match(
         self,
@@ -349,8 +480,9 @@ class ProjectManager:
         if eo.optimizer != opt_config.optimizer:
             return False
 
-        # Compare smoothing weight (distinguishes GN-VarPro sweep runs)
-        if eo.smoothing_weight != opt_config.smoothing_weight:
+        # Compare smoothing weight (distinguishes GN-VarPro sweep runs); a
+        # tolerance goal uses its own fixed weight, not the setting
+        if opt_config.tolerance is None and eo.smoothing_weight != opt_config.smoothing_weight:
             return False
 
         return True
@@ -399,10 +531,12 @@ class ProjectManager:
             self._window._run_details.set_message(f"{len(runs)} runs selected")
 
     def update_run_buttons(self):
-        """Delete and Load settings act on the selected runs, not during a fit."""
+        """Delete and Load settings act on the selected runs, Restore deleted
+        runs on the last delete; none during a fit."""
         idle = not self._window._is_fitting
         self._window._btn_delete_run.setEnabled(idle and bool(self._selected_runs))
         self._window._btn_load_run.setEnabled(idle and len(self._selected_runs) == 1)
+        self._window._action_restore_runs.setEnabled(idle and bool(self._deleted))
 
     def on_table_selection_changed(self):
         """Show the selected run (details and plots); mark the selection on
@@ -421,15 +555,13 @@ class ProjectManager:
         """Double-click: apply the run's settings to the sidebar and show it."""
         if self._window._is_fitting or self._project is None:
             return
-        runs = self._project.optimization_runs
-        run_number = next((i + 1 for i, r in enumerate(runs) if r is run), None)
-        if run_number is None:  # not a run of this project
-            return
+        if not any(r is run for r in self._project.optimization_runs):
+            return  # not a run of this project
         self._window._apply_run_settings(run)
         self._load_run_to_plots(run)
         cfg, opt = run.spline_config, run.optimization_config
         self._window.statusBar().showMessage(
-            f"Applied the settings of run {run_number} "
+            f"Applied the settings of run {run.number} "
             f"({opt.optimizer.display_name}, degree {cfg.degree}, "
             f"{cfg.num_control_points} control points, {cfg.num_sections} sections)"
         )
@@ -629,23 +761,25 @@ class ProjectManager:
     # ------------------------------------------------------------------
 
     def on_delete_selected_runs(self):
-        """Delete selected runs from the project."""
+        """Delete the selected runs from the project, once confirmed; Edit >
+        Restore deleted runs brings them back."""
         if not self._selected_runs or self._project is None or self._window._is_fitting:
             return
 
-        # Remove runs from project: these objects, not runs equal to them
-        doomed = {id(run) for run in self._selected_runs}
+        # These objects, not runs equal to them
+        selected = {id(run) for run in self._selected_runs}
         runs = self._project.optimization_runs
-        kept = [run for run in runs if id(run) not in doomed]
-        count = len(runs) - len(kept)
-        shown = any(run.result is self._window._fit_result
-                    for run in runs if id(run) in doomed)
-        runs[:] = kept
-        self._selected_runs = []
-        if not count:
+        doomed = [(i, run) for i, run in enumerate(runs) if id(run) in selected]
+        if not doomed:
             self._show_selection()
             return
+        count = len(doomed)
+        if not self._confirm_delete(count):
+            return
 
+        shown = any(run.result is self._window._fit_result for _, run in doomed)
+        runs[:] = [run for run in runs if id(run) not in selected]
+        self._deleted.append(doomed)
         self._project_modified = True
         if shown:
             self._clear_fit()
@@ -654,4 +788,36 @@ class ProjectManager:
         self._show_project_label()
         self.on_table_selection_changed()
 
-        self._window.statusBar().showMessage(f"Deleted {count} run{'s' if count != 1 else ''}")
+        self._window.statusBar().showMessage(
+            f"Deleted {count} run{'s' if count != 1 else ''}; "
+            "Edit > Restore deleted runs brings them back")
+
+    def _confirm_delete(self, count: int) -> bool:
+        """Whether to delete ``count`` runs."""
+        box = QMessageBox(self._window)
+        box.setWindowTitle("Delete runs")
+        box.setText(f"Delete {count} run{'s' if count != 1 else ''} from the project?")
+        box.setInformativeText("Edit > Restore deleted runs brings them back.")
+        delete = box.addButton("Delete", QMessageBox.ButtonRole.DestructiveRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(delete)
+        box.exec()
+        return box.clickedButton() is delete
+
+    def on_restore_deleted_runs(self):
+        """Put the runs of the last delete back in their places, selected."""
+        if not self._deleted or self._project is None or self._window._is_fitting:
+            return
+        restored = self._deleted.pop()
+        runs = self._project.optimization_runs
+        # In the order they were in: each at its old place among the others
+        for i, run in restored:
+            runs.insert(min(i, len(runs)), run)
+        self._project_modified = True
+        self._populate_table()
+        self._show_project_label()
+        self._window._run_table.select_runs([run for _, run in restored])
+        self.update_run_buttons()
+        count = len(restored)
+        self._window.statusBar().showMessage(
+            f"Restored {count} run{'s' if count != 1 else ''}")

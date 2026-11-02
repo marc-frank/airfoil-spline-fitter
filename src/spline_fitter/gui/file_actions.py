@@ -385,8 +385,12 @@ class FileActionsMixin:
                 self.statusBar().showMessage("Save cancelled.")
                 return
 
+            # The continuity of the fit shown: a run picked in the explorer
+            # may have other sections and junctions than the sidebar
+            run = self._project_manager.run_of(self._fit_result)
             try:
-                continuity = self._get_spline_config().junction_specs()
+                config = run.spline_config if run is not None else self._get_spline_config()
+                continuity = config.junction_specs()
             except ValueError:
                 continuity = None
             export_spline_data(

@@ -26,6 +26,7 @@ def window():
     from spline_fitter.gui.ui import SplineFitterWindow
     app = QApplication.instance() or QApplication([])
     w = SplineFitterWindow()
+    w._project_manager._confirm_delete = lambda count: True
     w.show()
     pts = np.round(NACA4("2412").points(81), 6)
     w._airfoil = create_airfoil_data([tuple(p) for p in pts], filename="n", name="n",
