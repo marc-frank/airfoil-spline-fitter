@@ -109,6 +109,20 @@ def test_warm_start_does_not_stall():
     assert warm.rms_error <= cold.rms_error * 1.01
 
 
+@pytest.mark.parametrize("placement", ["free", "uniform"])
+def test_collapsed_gap_reopens_in_later_refits(placement):
+    # On NACA 0009 the 7-control-point stage loops at the trailing edge and pushes the
+    # points next to it onto the end points; their parameter gaps used to stay collapsed
+    # in every later refit, so the fit grew to 53 control points (or failed) with those
+    # points 7e-4 from their curve points while the curve passed within 1e-5 of them.
+    tolerance = 1e-5
+    result = bv.fit_to_tolerance([NACA4("0009").points(60)], tolerance, 5, knot_placement=placement)
+    assert result.success, result.message
+    assert max(result.num_control_points) <= 15
+    assert result.max_residual <= 1.5 * tolerance
+    assert result.rms_error <= result.max_deviation
+
+
 def test_no_remaining_knot_can_be_removed():
     # NACA 2412 at 5 decimals used to keep removable knots: removal gave up after
     # two failures in a row and only polished the knots afterwards.
