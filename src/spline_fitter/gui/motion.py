@@ -46,11 +46,22 @@ class _ScrollAnimation(QVariantAnimation):
         super().__init__(bar)
         self._bar = bar
         self.target = 0.0
+        self._set = None  # the value the glide last gave the bar
         self.setEasingCurve(QEasingCurve.Type.OutCubic)
         # Start and end are both floats, or the animation cannot interpolate
-        self.valueChanged.connect(lambda value: bar.setValue(round(value)))
-        # Dragging the handle takes over from the animation
+        self.valueChanged.connect(self._step)
+        # Dragging the handle takes over from the animation, as does any
+        # other move of the bar (keys, a click on the track, scrolling to an item)
         bar.sliderPressed.connect(self.stop)
+        bar.valueChanged.connect(self._on_bar_moved)
+
+    def _step(self, value: float) -> None:
+        self._set = round(value)
+        self._bar.setValue(self._set)
+
+    def _on_bar_moved(self, value: int) -> None:
+        if value != self._set and self.state() == QVariantAnimation.State.Running:
+            self.stop()
 
     def scroll_by(self, distance: float) -> bool:
         """Start (or extend) the glide; False if the bar is already at that end."""
@@ -153,6 +164,7 @@ class SmoothViewBox(pg.ViewBox):
         self._zoom_done = 0.0      # eased progress already applied
         self._zoom_mask = [True, True]
         self._zoom_center = pg.Point(0, 0)
+        self._zoom_range = None    # the range the glide last left
 
     def wheelEvent(self, ev, axis=None):
         if axis in (0, 1):
@@ -171,6 +183,7 @@ class SmoothViewBox(pg.ViewBox):
         self._zoom_center = pg.Point(
             fn.invertQTransform(self.childGroup.transform()).map(ev.pos()))
         self._resetTarget()
+        self._zoom_range = self._target_range()
         self._zoom.setDuration(Motion.ZOOM_MS)
         if self._zoom.duration():
             self._zoom.start()
@@ -179,10 +192,19 @@ class SmoothViewBox(pg.ViewBox):
         ev.accept()
         self.sigRangeChangedManually.emit(mask)
 
+    def _target_range(self) -> list[list[float]]:
+        return [list(r) for r in self.state['targetRange']]
+
     def _zoom_step(self, progress: float) -> None:
+        if self._target_range() != self._zoom_range:
+            # Something else set the range since (auto range, panning, a
+            # new airfoil): it takes over from the glide
+            self._zoom.stop()
+            return
         step = progress - self._zoom_done
         if not step:
             return
         self._zoom_done = progress
         s = math.exp(self._zoom_log * step)
         self.scaleBy([None if m is False else s for m in self._zoom_mask], self._zoom_center)
+        self._zoom_range = self._target_range()

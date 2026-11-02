@@ -2,6 +2,7 @@
 import math
 import os
 
+import numpy as np
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -187,3 +188,49 @@ def test_off_zooms_and_scrolls_every_notch(app, monkeypatch):
         _wheel(view.viewport(), notches)
         assert bar.value() == expected
     view.close()
+
+
+def test_any_other_scroll_stops_the_glide(app):
+    """Keys, a click on the track or scrolling to an item take over from a
+    glide, as dragging the handle does."""
+    view = QListWidget()
+    view.addItems([f"Run {i}" for i in range(500)])
+    view.resize(200, 200)
+    view.show()
+    QTest.qWait(10)
+    bar = view.verticalScrollBar()
+    for _ in range(5):
+        _wheel(view.viewport(), -1)
+    QTest.qWait(Motion.SCROLL_MS // 4)
+    assert bar.value() > 0
+    bar.setValue(0)
+    QTest.qWait(Motion.SCROLL_MS * 2)
+    assert bar.value() == 0
+    view.close()
+
+
+@pytest.mark.parametrize("aspect_locked", [False, True])
+def test_a_range_set_during_a_zoom_glide_ends_it(app, aspect_locked):
+    """Auto range (or a new airfoil, or panning) during a zoom glide wins:
+    the glide does not go on zooming after it."""
+    import pyqtgraph as pg
+
+    plot = pg.PlotWidget(viewBox=SmoothViewBox())
+    plot.resize(400, 300)
+    plot.show()
+    plot.plot([0, 10], [0, 10])
+    vb = plot.getViewBox()
+    vb.setAspectLocked(aspect_locked)
+    plot.autoRange()
+    QTest.qWait(10)
+    auto = vb.viewRange()
+    vb.wheelEvent(_FakeWheel(360, vb.mapFromScene(vb.mapViewToScene(pg.Point(5, 5)))))
+    QTest.qWait(Motion.ZOOM_MS // 5)
+    assert vb.viewRange() != auto
+    plot.autoRange()
+    ranged = vb.viewRange()
+    QTest.qWait(Motion.ZOOM_MS * 2)
+    # The rest of the glide would zoom in by a factor of about two; an
+    # aspect lock may still settle the range a little
+    assert np.allclose(np.diff(vb.viewRange()), np.diff(ranged), rtol=0.1)
+    plot.close()
