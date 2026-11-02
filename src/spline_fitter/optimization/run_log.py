@@ -49,7 +49,9 @@ class OptimizerErrorLogger:
         ...
     """
 
-    DEFAULT_LOG_DIR = _default_log_dir()
+    # A directory set here overrides _default_log_dir(), which is resolved
+    # when a logger is made, so SPLINE_FITTER_LOG_DIR may be set at any time
+    DEFAULT_LOG_DIR: str | None = None
 
     def __init__(self, run_name: str = "unnamed", log_dir: str | None = None):
         """
@@ -57,11 +59,12 @@ class OptimizerErrorLogger:
         
         Args:
             run_name: Descriptive name for this run (e.g., airfoil name)
-            log_dir: Directory for log files (default: DEFAULT_LOG_DIR)
+            log_dir: Directory for log files (default: DEFAULT_LOG_DIR, else
+                ``SPLINE_FITTER_LOG_DIR`` or the project's optimizer_logs)
         """
         self.run_name = run_name
         self.start_time = datetime.now()
-        self.log_dir = log_dir or self.DEFAULT_LOG_DIR
+        self.log_dir = log_dir or self.DEFAULT_LOG_DIR or _default_log_dir()
 
         self.iterations: list[int] = []
         self.evaluations: list[int] = []
@@ -105,11 +108,16 @@ class OptimizerErrorLogger:
         # Generate filename
         timestamp = self.start_time.strftime("%Y%m%d_%H%M%S")
         safe_name = sanitize_filename(self.run_name)
-        filename = f"{timestamp}_{safe_name}_{optimizer_key}.csv"
-        self._file_path = os.path.join(self.log_dir, filename)
+        # Runs started within the same second get numbered files
+        stem = f"{timestamp}_{safe_name}_{optimizer_key}"
+        self._file_path = os.path.join(self.log_dir, f"{stem}.csv")
+        number = 1
+        while os.path.exists(self._file_path):
+            number += 1
+            self._file_path = os.path.join(self.log_dir, f"{stem}_{number}.csv")
 
         try:
-            with open(self._file_path, "w", encoding="utf-8") as f:
+            with open(self._file_path, "x", encoding="utf-8") as f:
                 # Write header comments
                 f.write("# Optimizer Error Log\n")
                 f.write(f"# Run: {self.run_name}\n")
