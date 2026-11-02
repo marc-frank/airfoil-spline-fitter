@@ -249,12 +249,17 @@ def analyze_project(data: Dict[str, Any], threshold: float, jump_sizes: List[int
     # Group runs
     groups = defaultdict(list)
     for run in runs:
+        # Tolerance-mode runs choose their own count: not part of a sweep
+        if run["optimization_config"].get("tolerance") is not None:
+            continue
         opt = run["optimization_config"]["optimizer"]
         cfg = run["spline_config"]
         degree = cfg["degree"]
         sections = cfg.get("num_sections", 2)
         continuity = cfg["continuity"]
-        cont_type = cfg["continuity_type"]
+        # Projects before geometric_continuity stored continuity_type
+        cont_type = ("GEOMETRIC" if cfg.get("geometric_continuity")
+                     else cfg.get("continuity_type", "PARAMETRIC"))
         
         key = (opt, degree, sections, continuity, cont_type)
         ctrl = cfg["num_control_points"]
@@ -580,15 +585,19 @@ def plot_jump_size_analysis(analysis: Dict[str, Any], threshold: float, output_p
 
 
 def main():
-    # Load project file from docs
-    script_dir = Path(__file__).parent
-    project_path = script_dir.parent / "docs" / "AG 25.asfproj"
+    # Project file from the command line
+    args = sys.argv[1:]
+    if not args or args[0] in ("-h", "--help"):
+        print(__doc__)
+        sys.exit(1)
+    project_path = Path(args[0])
+    threshold = 1e-5
+    if "--threshold" in args:
+        threshold = float(args[args.index("--threshold") + 1])
     
     if not project_path.exists():
         print(f"Error: File not found: {project_path}")
         sys.exit(1)
-    
-    threshold = 1e-5
     
     print(f"Loading: {project_path}")
     with open(project_path, 'r', encoding='utf-8') as f:
@@ -603,7 +612,7 @@ def main():
     print_results(analysis, threshold)
     
     # Save plot
-    output_path = script_dir.parent / "docs" / "jump_size_analysis.png"
+    output_path = project_path.with_name(project_path.stem + "_jump_size_analysis.png")
     plot_jump_size_analysis(analysis, threshold, output_path)
 
 
