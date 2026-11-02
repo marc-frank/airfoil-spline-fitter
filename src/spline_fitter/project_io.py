@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import platform
 import uuid
 from datetime import datetime
@@ -433,8 +434,17 @@ def save_project(project: ProjectFile, filepath: str, indent: int = 2) -> None:
 
     data = _encode_project(project)
 
-    with open(filepath, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=indent, ensure_ascii=False)
+    # Written beside the target and moved over it once complete: a failed
+    # save leaves the previous file as it was
+    temp_path = f"{filepath}.tmp"
+    try:
+        with open(temp_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=indent, ensure_ascii=False)
+        os.replace(temp_path, filepath)
+    except BaseException:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        raise
 
 
 def load_project(filepath: str) -> ProjectFile:
