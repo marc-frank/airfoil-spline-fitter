@@ -46,7 +46,7 @@ def _to_result(problem: JointProblem, t, z, template: FitResult, iterations, suc
         degree=template.degree,
         rms_error=float(np.sqrt(np.mean(misfit ** 2))),
         max_residual=float(np.max(misfit)),
-        nfev=iterations,
+        nfev=problem.evaluations,
         success=success,
         message=message,
         continuity=list(template.continuity),

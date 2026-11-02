@@ -197,3 +197,57 @@ def test_levenberg_marquardt_stops_on_a_non_finite_jacobian():
     assert outcome, "levenberg_marquardt did not return"
     assert not outcome[0].success
     assert "not finite" in outcome[0].message
+
+
+def half_ellipse(n=40):
+    t = np.linspace(0, np.pi, n)
+    return np.column_stack((np.cos(t), 0.3 * np.sin(t)))
+
+
+@pytest.mark.parametrize("smoothing", [0.0, 1e-3])
+def test_fit_without_any_constraint(smoothing):
+    # Free ends, no tangents and one section: C has no rows
+    result = bv.fit(half_ellipse(), 6, fix_ends=False, smoothing=smoothing)
+    assert np.isfinite(result.rms_error) and result.rms_error < 1e-2
+
+
+def test_regularization_is_validated():
+    with pytest.raises(ValueError, match="Regularization"):
+        bv.fit(half_ellipse(), 6, regularization=-1e-12)
+
+
+@pytest.mark.parametrize("offset", [1e4, 1e7])
+def test_fit_does_not_depend_on_where_the_data_are(offset):
+    # The ridge pulls towards the data centroid, so moving the data moves the fit
+    points = half_ellipse()
+    near = bv.fit(points, 7)
+    far = bv.fit(points + offset, 7)
+    np.testing.assert_allclose(far.control_points[0] - offset, near.control_points[0], atol=1e-5)
+    assert far.rms_error == pytest.approx(near.rms_error, rel=1e-4)
+
+
+def test_stopped_fit_keeps_the_best_evaluated_state():
+    costs = []
+
+    def stop_after_ten(control_points, rms):
+        costs.append(rms)
+        return len(costs) == 10
+
+    # Finite differences evaluate perturbed points between the iterates
+    result = bv.fit(two_sections(0.002), 8, 3, exact_jacobian=False, smoothing=0.0,
+                    regularization=0.0, callback=stop_after_ten)
+    assert result.message == "Stopped by callback."
+    assert result.rms_error == pytest.approx(min(costs), rel=1e-9)
+
+
+def test_eta_jacobian_is_zero_where_the_gap_is_held_constant():
+    from bspline_varpro.reparam import ETA_LIMIT, eta_jacobian, eta_to_t
+
+    eta = np.array([0.0, -ETA_LIMIT - 50.0, 0.0, 1.0])
+    u = eta_to_t(eta, 1.0)
+    h = 1e-3
+    for j in range(len(eta)):
+        step = np.zeros_like(eta)
+        step[j] = h
+        numerical = (eta_to_t(eta + step, 1.0) - eta_to_t(eta - step, 1.0)) / (2 * h)
+        np.testing.assert_allclose(eta_jacobian(eta, u, 1.0)[:, j], numerical, atol=1e-9)

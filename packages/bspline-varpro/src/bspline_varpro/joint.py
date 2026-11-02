@@ -31,7 +31,7 @@ class JointProblem:
         degree: Spline degree.
         C, d: Linear constraints on the stacked control points.
         smoothing: Weight of the parametric bending-energy penalty.
-        regularization: Ridge on the control points.
+        regularization: Ridge on the control points (towards the data centroid).
     """
 
     def __init__(
@@ -54,17 +54,26 @@ class JointProblem:
         self.offsets = np.concatenate([[0], np.cumsum(self.n_ctrl)]).astype(int)
         self.total_ctrl = int(self.offsets[-1])
 
-        _, s, Vt = np.linalg.svd(C)
-        rank = int(np.sum(s > 1e-10 * max(s[0], 1.0))) if len(s) else 0
-        self.Z = Vt[rank:].T
-        self.P0 = np.linalg.lstsq(C, d, rcond=None)[0]
+        C = np.asarray(C, dtype=np.float64).reshape(-1, self.total_ctrl)
+        d = np.asarray(d, dtype=np.float64).reshape(len(C), self.dim)
+        if len(C):
+            _, s, Vt = np.linalg.svd(C)
+            rank = int(np.sum(s > 1e-10 * max(s[0], 1.0)))
+            self.Z = Vt[rank:].T
+            self.P0 = np.linalg.lstsq(C, d, rcond=None)[0]
+        else:
+            self.Z = np.eye(self.total_ctrl)
+            self.P0 = np.zeros((self.total_ctrl, self.dim))
 
         penalty = regularization * np.eye(self.total_ctrl)
         if smoothing > 0:
             penalty += smoothing * block_diag(*[bending_energy_matrix(k, degree) for k in self.knots])
         root = matrix_root(penalty)
+        # The ridge pulls towards the data centroid, as in VarProProblem
+        self.center = np.mean(self.data, axis=0)
         self.RZ = root @ self.Z
-        self.RP0 = root @ self.P0
+        self.RP0 = root @ (self.P0 - self.center)
+        self.evaluations = 0
 
         # Every point but the chain's ends carries a free parameter
         self.free = np.arange(1, len(self.data) - 1)
@@ -98,6 +107,7 @@ class JointProblem:
         point-major, then penalty) and blocks
         ``(tangent, Jz)`` where ``Jz`` is the dense z-Jacobian of all rows.
         """
+        self.evaluations += 1
         P = self.control_points(z)
         N = self._basis(t_full, derivative=False)
         data_r = N @ P - self.data
@@ -110,6 +120,34 @@ class JointProblem:
         identity = np.eye(self.dim)
         Jz = np.vstack([np.kron(N @ self.Z, identity), np.kron(self.RZ, identity)])
         return r, (tangent, Jz)
+
+
+def _gradient_cosine(g_t, U, g_z, V, cost) -> float:
+    """Largest cosine between the residual and a Jacobian column (0 for a zero residual)."""
+    r_norm = np.sqrt(2.0 * cost)
+    if r_norm == 0:
+        return 0.0
+    gradient = np.concatenate([np.abs(g_t), np.abs(g_z)])
+    norms = np.sqrt(np.maximum(np.concatenate([U, np.diag(V)]), 0.0))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        cosines = np.where(norms > 0, gradient / (norms * r_norm), 0.0)
+    return float(np.max(cosines, initial=0.0))
+
+
+def _nondecreasing(values: np.ndarray) -> np.ndarray:
+    """Closest nondecreasing sequence in the least-squares sense (pool adjacent violators)."""
+    means: list = []
+    counts: list = []
+    for value in values:
+        means.append(float(value))
+        counts.append(1)
+        while len(means) > 1 and means[-2] > means[-1]:
+            count = counts[-2] + counts[-1]
+            means[-2] = (means[-2] * counts[-2] + means[-1] * counts[-1]) / count
+            counts[-2] = count
+            means.pop()
+            counts.pop()
+    return np.repeat(means, counts)
 
 
 def solve_joint(
@@ -125,12 +163,18 @@ def solve_joint(
     ``on_step(t, z)`` is called after every accepted step; returning True
     stops with that state and the message ``"Stopped by callback."``.
 
+    The parameters stay in the order of the data: every step is projected
+    onto nondecreasing parameters, so points never pass each other and the
+    result can warm start a variable projection fit. Convergence is tested on
+    the cosine between the residual and the Jacobian columns (as MINPACK's
+    ``gtol``), which does not depend on the units of the data.
+
     Returns ``(t, z, iterations, converged, message)``.
     """
     dim = problem.dim
     free = problem.free
     n_data_rows = len(problem.data) * dim
-    t = t_full.copy()
+    t = np.clip(np.maximum.accumulate(np.asarray(t_full, dtype=np.float64)), 0.0, problem.num_sections)
     z = np.ravel(z).copy()
     r, (tangent, Jz) = problem.evaluate(t, z, with_jacobian=True)
     cost = 0.5 * r @ r
@@ -149,8 +193,7 @@ def solve_joint(
         W = np.einsum("ik,ikj->ij", T, Jz_data[free])
         V = Jz.T @ Jz
         g_z = Jz.T @ r
-        gradient_norm = max(np.max(np.abs(g_t), initial=0.0), np.max(np.abs(g_z), initial=0.0))
-        if gradient_norm < tolerance * max(1.0, cost):
+        if _gradient_cosine(g_t, U, g_z, V, cost) <= tolerance:
             converged, message = True, "Gradient below tolerance."
             break
         diag_V = np.maximum(np.diag(V), 1e-12 * max(np.max(np.diag(V), initial=0.0), 1e-300))
@@ -172,7 +215,8 @@ def solve_joint(
                 continue
             dt = -(g_t + W @ dz) / U_d
             t_new = t.copy()
-            t_new[free] = np.clip(t[free] + dt, 0.0, problem.num_sections)
+            t_new[free] = np.clip(_nondecreasing(t[free] + dt), 0.0, problem.num_sections)
+            dt = t_new[free] - t[free]
             z_new = z + dz
             r_new, _ = problem.evaluate(t_new, z_new)
             cost_new = 0.5 * r_new @ r_new
@@ -185,7 +229,9 @@ def solve_joint(
             mu *= nu
             nu *= 2.0
             if mu > 1e16:
-                return t, z, iteration, True, "No further decrease possible."
+                # Converged only if the gradient is small too, not merely the steps
+                stalled = _gradient_cosine(g_t, U, g_z, V, cost) <= np.sqrt(tolerance)
+                return t, z, iteration, stalled, "No further decrease possible."
         decrease = cost - cost_new
         t, z = t_new, z_new
         r, (tangent, Jz) = problem.evaluate(t, z, with_jacobian=True)

@@ -59,3 +59,52 @@ def test_refine_supports_3d():
     result = bv.fit(helix, 8, 5, max_nfev=100)
     refined = bv.refine(helix, result)
     assert refined.rms_error <= result.rms_error * (1 + 1e-6)
+
+
+def jittered_half_circle(n=400, seed=0):
+    # Jitter along the arc larger than the point spacing: neighbours want to swap
+    s = np.linspace(0, np.pi, n)
+    s[1:-1] += np.random.default_rng(seed).normal(0, 0.02, n - 2)
+    return np.column_stack((np.cos(s), np.sin(s)))
+
+
+def test_refined_parameters_stay_ordered_and_warm_start_a_fit():
+    points = jittered_half_circle()
+    dense = bv.fit(points, 8, max_points_per_section=50)
+    assert np.all(np.diff(dense.parameters) >= 0)
+    refit = bv.fit(points, 8, initial_parameters=dense.parameters)
+    assert np.isfinite(refit.rms_error)
+
+
+def test_refine_counts_residual_evaluations():
+    points = jittered_half_circle(100)
+    fitted = bv.fit(points, 8, max_nfev=3)
+    iterations = []
+    result = bv.refine(points, fitted, max_iterations=5, callback=lambda cp, rms: iterations.append(rms))
+    # One evaluation to start, then at least a trial and a Jacobian per iteration
+    assert iterations and result.nfev >= 2 * len(iterations) + 1
+
+
+def test_refine_convergence_does_not_depend_on_units():
+    sections = naca_sections(41)
+    result = bv.fit(sections, 8, 5, continuity="G2")
+    scale = 1e-7
+    small = [s * scale for s in sections]
+    tiny = bv.fit(small, 8, 5, continuity="G2")
+    rough = bv.chain.chain_parameters([np.linspace(0, 1, len(s)) for s in sections], sections)
+    for fitted, data, factor in ((result, sections, 1.0), (tiny, small, scale)):
+        fitted.parameters = rough.copy()
+        refined = bv.refine(data, fitted, max_iterations=30)
+        # The first iteration is not mistaken for convergence on tiny data
+        assert refined.nfev > 3
+        assert refined.rms_error / factor < 1e-3
+
+
+def test_joint_problem_without_constraints():
+    points = jittered_half_circle(60)
+    knots = [bv.open_uniform_knots(3, 6)]
+    problem = JointProblem([points], knots, 3, np.zeros((0, 6)), np.zeros((0, 2)), smoothing=1e-3)
+    assert problem.num_z == 6 * 1
+    result = bv.fit(points, 6, fix_ends=False)
+    refined = bv.refine(points, result)
+    assert refined.rms_error <= result.rms_error * (1 + 1e-6)
