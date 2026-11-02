@@ -271,6 +271,24 @@ class ChainConstraints:
     def has_shape_parameters(self) -> bool:
         return any(kind == "shape" for kind, _, _ in self._layout)
 
+    def alpha_deviations(self, theta: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """``ln(alpha / ratio)`` per geometric junction and its derivative w.r.t. theta.
+
+        Returns ``(values, jacobian)`` shaped (k,) and (k, num_params) for the k
+        alpha parameters: how far each speed ratio is from its natural value,
+        the section length ratio.
+        """
+        rows = [(i, index) for i, (kind, index, slot) in enumerate(self._layout)
+                if kind == "shape" and slot == "alpha"]
+        values = np.zeros(len(rows))
+        jacobian = np.zeros((len(rows), self.num_params))
+        for r, (i, index) in enumerate(rows):
+            ratio = self._length_ratio(index)
+            alpha, dalpha = _alpha(theta[i], ratio)
+            values[r] = np.log(alpha / ratio)
+            jacobian[r, i] = dalpha / alpha
+        return values, jacobian
+
     def shape_values(self, theta: np.ndarray) -> List[Tuple[float, float, float]]:
         """``(alpha, beta, gamma)`` per junction (1, 0, 0 for parametric joins)."""
         values = [[1.0, 0.0, 0.0] for _ in self.junctions]

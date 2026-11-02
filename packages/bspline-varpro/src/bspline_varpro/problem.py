@@ -51,6 +51,12 @@ from .basis import basis_derivative_matrix, basis_matrix, bending_energy_rows, v
 from .chain import chain_data, groups
 from .constraints import ChainConstraints, ContinuitySpec, End, parse_junctions
 
+#: Weight of the pull of each geometric junction's speed ratio alpha towards
+#: its natural value, relative to the smoothing weight (see VarProProblem):
+#: the weakest that keeps alpha clear of its range limits (2/3 of the way at
+#: worst in the tests, against 0.97 without), so it changes fits little.
+ALPHA_PULL = 3e-5
+
 
 class KKTSolver:
     """LU-factored KKT matrix ``[[A, C'], [C, 0]]`` for repeated solves."""
@@ -150,6 +156,14 @@ class VarProProblem:
         self.constraints = ChainConstraints(self.sections, self.knots, degree, self.junctions, start, end)
         self.num_params = self.constraints.num_params
         self.theta = self.constraints.initial_params()
+        # The bending energy is measured per unit of each section's parameter, so
+        # with smoothing a geometric junction can lower it by changing alpha alone,
+        # which runs alpha to the end of its range. A weak pull of ln(alpha / ratio)
+        # towards 0, scaled like the bending energy (smoothing times the squared
+        # extent of the data) and absent without smoothing, keeps it inside.
+        spread = float(np.mean(np.sum((self.data - self.center) ** 2, axis=1)))
+        self.alpha_pull = float(np.sqrt(smoothing * ALPHA_PULL * spread)) if smoothing > 0 else 0.0
+        self.num_pull_rows = len(self.constraints.alpha_deviations(self.theta)[0]) if self.alpha_pull > 0 else 0
 
         self._constraint_key: Optional[bytes] = None
         self._constraint_cache: Tuple = ()
@@ -220,14 +234,25 @@ class VarProProblem:
     def residual(self, t_flat: np.ndarray, theta: Optional[np.ndarray] = None) -> np.ndarray:
         """Data residuals then penalty residuals, each flattened point-major.
 
-        Shape ``(dim * (total_pts + len(penalty_root)),)``. Also records
-        ``last_control_points`` and the data-only ``last_rms_error``.
+        Shape ``(dim * (total_pts + len(penalty_root)) + num_pull_rows,)``: the
+        last rows pull the speed ratio of each geometric junction towards its
+        natural value. Also records ``last_control_points`` and the data-only
+        ``last_rms_error``.
         """
         N, P, _, _ = self.solve(t_flat, theta=theta)
         data_residual = N @ P - self.data
         self.last_control_points = P
         self.last_rms_error = float(np.sqrt(np.sum(data_residual ** 2) / self.total_pts))
-        return np.concatenate((data_residual.ravel(), (self.penalty_root @ (P - self.center)).ravel()))
+        return np.concatenate((data_residual.ravel(), (self.penalty_root @ (P - self.center)).ravel(),
+                               self._pull(theta)[0]))
+
+    def _pull(self, theta: Optional[np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
+        """Residual rows pulling alpha towards its natural value, and their theta derivative."""
+        if self.num_pull_rows == 0:
+            return np.zeros(0), np.zeros((0, self.num_params))
+        theta = self.theta if theta is None else np.asarray(theta, dtype=np.float64)
+        values, jacobian = self.constraints.alpha_deviations(theta)
+        return self.alpha_pull * values, self.alpha_pull * jacobian
 
     def _stack(self, N: np.ndarray, dP_by_coord: List[np.ndarray]) -> np.ndarray:
         J_data = np.empty((self.total_pts * self.dim, dP_by_coord[0].shape[1]))
@@ -235,7 +260,8 @@ class VarProProblem:
         for k, dP in enumerate(dP_by_coord):
             J_data[k::self.dim] = N @ dP
             J_penalty[k::self.dim] = self.penalty_root @ dP
-        return np.vstack((J_data, J_penalty))
+        # The pull rows depend on theta alone: zero here, added by parameter_jacobian
+        return np.vstack((J_data, J_penalty, np.zeros((self.num_pull_rows, J_data.shape[1]))))
 
     def jacobian(self, t_flat: np.ndarray, theta: Optional[np.ndarray] = None) -> np.ndarray:
         """Exact derivative of :meth:`residual` w.r.t. t, shape (len(residual), total_pts).
@@ -288,13 +314,14 @@ class VarProProblem:
         for dN, dR, dC, dd in changes:
             rhs = dN.T @ misfit - N.T @ (dN @ P) - dR.T @ penalty_residual - R.T @ (dR @ shifted) - dC.T @ mu
             dP = kkt.solve(rhs, dd - dC @ P)
-            columns.append(np.concatenate(((dN @ P + N @ dP).ravel(), (dR @ shifted + R @ dP).ravel())))
+            columns.append(np.concatenate(((dN @ P + N @ dP).ravel(), (dR @ shifted + R @ dP).ravel(),
+                                           np.zeros(self.num_pull_rows))))
         return np.stack(columns, axis=1)
 
     def parameter_jacobian(self, t_flat: np.ndarray, theta: Optional[np.ndarray] = None) -> np.ndarray:
         """Exact derivative of :meth:`residual` w.r.t. theta, shape (len(residual), num_params)."""
         if self.num_params == 0:
-            return np.zeros((self.dim * (self.total_pts + len(self.penalty_root)), 0))
+            return np.zeros((self.dim * (self.total_pts + len(self.penalty_root)) + self.num_pull_rows, 0))
         N, P, _, kkt = self.solve(t_flat, theta=theta)
         mu, used_theta = self._cache[4], self._cache[5]
         _, _, dC, dd = self._constraints(used_theta)
@@ -303,4 +330,7 @@ class VarProProblem:
             rhs = np.stack([-dC_i.T @ mu[:, k] for dC_i in dC], axis=1)
             d_rhs = np.stack([dd_i[:, k] - dC_i @ P[:, k] for dC_i, dd_i in zip(dC, dd)], axis=1)
             dPs.append(kkt.solve(rhs, d_rhs))
-        return self._stack(N, dPs)
+        J = self._stack(N, dPs)
+        if self.num_pull_rows:
+            J[-self.num_pull_rows:] = self._pull(used_theta)[1]
+        return J

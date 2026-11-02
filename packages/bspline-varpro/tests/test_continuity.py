@@ -205,3 +205,48 @@ def test_junction_point_column_is_the_derivative_from_the_right():
     left = (problem.residual(t, theta) - problem.residual(t - step, theta)) / h
     np.testing.assert_allclose(J[:, junction], right, rtol=1e-4, atol=1e-6)
     assert not np.allclose(J[:, junction], left, rtol=1e-3, atol=1e-6)
+
+
+def stretched_sections(length=5.0):
+    # Section length ratio about 9: alpha used to run to 10 times that under smoothing
+    a = np.linspace(0, np.pi / 2, 25)
+    long = np.column_stack((np.linspace(0, length, 25), 0.05 * length * np.sin(2 * a)))
+    b = np.linspace(0, 1, 12)
+    short = np.column_stack((length + 0.5 * b, 0.3 * b ** 2 - 0.05 * b))
+    short[0] = long[-1]
+    return [long, short]
+
+
+def _position_in_alpha_range(result, sections):
+    from bspline_varpro.constraints import _alpha_range
+
+    problem = bv.VarProProblem(sections, result.knots, result.degree, continuity="G2")
+    centre, half = _alpha_range(problem.constraints._length_ratio(0))
+    return (np.log(result.shape_parameters[0][0]) - centre) / half  # -1 .. 1
+
+
+def test_alpha_stays_inside_its_range_with_smoothing():
+    sections = stretched_sections()
+    result = bv.fit(sections, 7, continuity="G2", max_nfev=400, smoothing=1e-3)
+    assert abs(_position_in_alpha_range(result, sections)) < 0.8
+
+
+def test_alpha_pull_leaves_unsmoothed_fits_alone(monkeypatch):
+    import bspline_varpro.problem as problem_module
+
+    sections = stretched_sections()
+    pulled = bv.fit(sections, 7, continuity="G2", max_nfev=400, smoothing=0.0)
+    monkeypatch.setattr(problem_module, "ALPHA_PULL", 0.0)
+    free = bv.fit(sections, 7, continuity="G2", max_nfev=400, smoothing=0.0)
+    np.testing.assert_array_equal(pulled.theta, free.theta)
+    np.testing.assert_array_equal(np.vstack(pulled.control_points), np.vstack(free.control_points))
+
+
+def test_alpha_pull_jacobian_matches_finite_differences():
+    sections = naca_sections(21)
+    problem = bv.VarProProblem(sections, bv.open_uniform_knots(5, 9), 5, continuity="G2", smoothing=0.1)
+    assert problem.num_pull_rows == 1
+    t = bv.chain.chain_parameters([bv.centripetal_parameters(s) for s in sections], sections)
+    theta = problem.theta + np.array([1.5, -0.3])
+    assert abs(problem.residual(t, theta)[-1]) > 1e-4  # the pull row is active
+    _fd_check(problem, t, theta)
