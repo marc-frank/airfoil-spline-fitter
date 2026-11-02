@@ -7,6 +7,7 @@ Algebraic (non-iterative) spline fitting using constrained LSQ.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -15,6 +16,7 @@ from scipy.linalg import solve
 
 from ..constraints import compute_derivative_constraint_coeffs
 from .base import AlgebraicOptimizer, RawOptimResult
+from .gn_varpro import accepts_preview
 
 if TYPE_CHECKING:
     from ..models import (
@@ -60,6 +62,7 @@ class ConstrainedLSQOptimizer(AlgebraicOptimizer):
         config: SplineConfig,
         opt_config: OptimizationConfig,
         airfoil: AirfoilData,
+        callback: Callable[..., bool] | None = None,
     ) -> RawOptimResult:
         """
         Fit splines using constrained least-squares.
@@ -68,6 +71,10 @@ class ConstrainedLSQOptimizer(AlgebraicOptimizer):
             config: Spline configuration
             opt_config: Optimization configuration
             airfoil: Airfoil data with sections
+            callback: Optional callback(x, error) called once with the
+                result (error = RMS error); with a ``preview`` keyword it also
+                gets ``(section_control_points, section_knots, degree)``.
+                Every solve counts as one evaluation.
             
         Returns:
             RawOptimResult with computed control points and the points' chain
@@ -83,6 +90,7 @@ class ConstrainedLSQOptimizer(AlgebraicOptimizer):
 
         from ...geometry import centripetal_parametrize, compute_arc_length_parameters
         from ...spline.spline import create_open_uniform_knots
+        from ..tracking import increment_evaluation
 
         sections = [list(sec) for sec in airfoil.sections]
         arrays = [np.array(sec, dtype=np.float64) for sec in sections]
@@ -104,24 +112,28 @@ class ConstrainedLSQOptimizer(AlgebraicOptimizer):
         C, d = self._constraints(sections, config, knots, free)
         if fixed_parameters:
             P = self._solve(self._basis(u, knots, degree, n_ctrl, num_sections), data, C, d)
+            increment_evaluation()
         else:
             # Free junctions start from the refined fit with pinned ones, which
             # meets their constraints too: freeing them can only lower the error
             stages = [self._constraints(sections, config, knots, False)] if free else []
             C0, d0 = stages[0] if free else (C, d)
             P = self._solve(self._basis(u, knots, degree, n_ctrl, num_sections), data, C0, d0)
+            increment_evaluation()
             for C_stage, d_stage in stages + [(C, d)]:
                 problem = JointProblem(arrays, [knots] * num_sections, degree, C_stage, d_stage,
                                        regularization=0.0)
                 u, z, _, _, _ = solve_joint(problem, u, problem.z_from(P), self.MAX_ITERATIONS)
                 P = problem.control_points(z)
+                increment_evaluation()
 
         section_control_points = [
             [(float(x), float(y)) for x, y in P[s * n_ctrl:(s + 1) * n_ctrl]]
             for s in range(num_sections)
         ]
         splines = [ScipyBSpline(knots, np.asarray(c), degree) for c in section_control_points]
-        final_error = float(np.mean(np.linalg.norm(evaluate_chain(splines, u) - data, axis=1)))
+        # RMS error, as VarPro LM reports it
+        final_error = float(np.sqrt(np.mean(np.sum((evaluate_chain(splines, u) - data) ** 2, axis=1))))
 
         # Flatten control points to variable vector for logging compatibility
         flat_vars = []
@@ -129,8 +141,16 @@ class ConstrainedLSQOptimizer(AlgebraicOptimizer):
             for x, y in ctrl_pts:
                 flat_vars.extend([x, y])
 
+        x = np.array(flat_vars, dtype=np.float64)
+        if callback is not None:
+            if accepts_preview(callback):
+                callback(x, final_error, preview=([np.asarray(c) for c in section_control_points],
+                                                  [knots] * num_sections, degree))
+            else:
+                callback(x, final_error)
+
         return RawOptimResult(
-            x=np.array(flat_vars, dtype=np.float64),
+            x=x,
             fun=final_error,
             nit=1,  # Single "iteration" for algebraic solve
             section_control_points=section_control_points,

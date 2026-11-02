@@ -8,6 +8,7 @@ Abstract base class and common utilities for all optimizers.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -30,8 +31,11 @@ class RawOptimResult:
     
     Attributes:
         x: Solution variable vector
-        fun: Objective function value at solution
-        nit: Number of iterations performed
+        fun: Error of the fit: the RMS distance of the data points to their
+            curve points, or the maximum orthogonal deviation in VarPro LM
+            tolerance mode (whose goal it is)
+        nit: Steps performed: residual evaluations of the whole fit (VarPro
+            LM fixed count), refits (tolerance mode), or 1 (Direct LSQ)
         section_control_points: Direct control points (for algebraic methods)
         section_knots: Knot vector per section (None = open uniform)
     """
@@ -98,6 +102,7 @@ class AlgebraicOptimizer(BaseOptimizer):
         config: SplineConfig,
         opt_config: OptimizationConfig,
         airfoil: AirfoilData,
+        callback: Callable[..., bool] | None = None,
     ) -> RawOptimResult:
         """
         Fit splines using an algebraic method.
@@ -106,6 +111,7 @@ class AlgebraicOptimizer(BaseOptimizer):
             config: Spline configuration
             opt_config: Optimization configuration
             airfoil: Airfoil data to fit
+            callback: Optional progress callback(x, error)
             
         Returns:
             RawOptimResult with computed control points
