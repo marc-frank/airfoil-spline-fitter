@@ -243,3 +243,29 @@ def test_mirrored_spans_get_knots_together():
     # span place its knot at their mean
     centered = _new_knots(bv.clamped_knots(5, []), t, dev, 0.1, 1e-4)
     assert centered == [[pytest.approx(0.5)]]
+
+
+def test_rejects_no_iterations():
+    with pytest.raises(ValueError, match="max_iterations"):
+        bv.fit_to_tolerance(naca_sections(21), 1e-4, 5, max_iterations=0)
+
+
+def test_polish_starts_from_the_given_knots_and_keeps_repeats():
+    sections = naca_sections(41, 5)
+    seen = []
+
+    def step(control_points, rms, knots):
+        seen.append([np.array(k) for k in knots])
+
+    # Knots closer than the default minimum gap of the polish
+    close = [bv.clamped_knots(5, [0.5, 0.5005]), bv.clamped_knots(5, [0.3, 0.6])]
+    start = bv.fit(sections, degree=5, knots=close, continuity="G2", smoothing=1e-5, max_nfev=300)
+    bv.polish_knots(sections, start, bv.ChainOptions(continuity="G2", smoothing=1e-5), callback=step)
+    for got, given in zip(seen[0], start.knots):
+        assert np.allclose(got, given, rtol=0, atol=1e-12)
+
+    # A double interior knot stays double
+    repeated = [bv.clamped_knots(5, [0.4, 0.4, 0.7]), bv.clamped_knots(5, [0.3, 0.6])]
+    start = bv.fit(sections, degree=5, knots=repeated, continuity="G2", smoothing=1e-5, max_nfev=300)
+    polished = bv.polish_knots(sections, start, bv.ChainOptions(continuity="G2", smoothing=1e-5))
+    assert np.array_equal(polished.knots[0], start.knots[0])
