@@ -146,9 +146,12 @@ class GNVarProOptimizer(AlgebraicOptimizer):
         from ..engine import increment_evaluation
 
         with_preview = accepts_preview(callback)
+        evaluations = 0
 
         def on_evaluation(control_points: list[np.ndarray], rms_error: float,
                           knots: list[np.ndarray] | None = None) -> bool:
+            nonlocal evaluations
+            evaluations += 1
             increment_evaluation()
             if callback is None:
                 return False
@@ -178,7 +181,9 @@ class GNVarProOptimizer(AlgebraicOptimizer):
             verbose=self.config.verbose,
             callback=on_evaluation,
         )
-        return self._raw(result, result.rms_error, result.nfev)
+        # Every evaluation of the fit: growing and moving knots and dense
+        # refinement too, where result.nfev counts only the last stage
+        return self._raw(result, result.rms_error, max(evaluations, result.nfev))
 
     def _fit_tolerance(self, spline_config, opt_config, sections, callback,
                        should_stop=None) -> RawOptimResult:
@@ -220,10 +225,18 @@ class GNVarProOptimizer(AlgebraicOptimizer):
             initial_control_points=(None if opt_config.grow_control_points
                                     else spline_config.num_control_points),
             callback=on_refit,
+            **self._tolerance_nfev(opt_config),
             **({"should_stop": should_stop} if _TOLERANCE_STOP and should_stop else {}),
             **({"step_callback": on_step} if with_steps else {}),
         )
         return self._raw(result, result.max_deviation, max(refits, 1))
+
+    def _tolerance_nfev(self, opt_config) -> dict:
+        """Residual evaluation limit per refit: the configured one, else the
+        library's (the fixed-count default suits a whole fit, not a refit)."""
+        limit = self.config.max_nfev or (opt_config.max_iterations
+                                         if opt_config.max_iterations > 0 else None)
+        return {"max_nfev": limit} if limit else {}
 
     @staticmethod
     def _raw(result: bspline_varpro.FitResult, error: float, nit: int) -> RawOptimResult:

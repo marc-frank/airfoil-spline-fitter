@@ -71,16 +71,6 @@ class ContinuityMode(Enum):
         }[self]
 
     @property
-    def constrained_control_points(self) -> int:
-        """Return the number of control points constrained at each junction."""
-        return {
-            ContinuityMode.G0: 1,  # Just the LE point
-            ContinuityMode.G1: 2,  # LE + 1 tangent control point per side
-            ContinuityMode.G2: 3,  # LE + 2 curvature control points per side
-            ContinuityMode.G3: 4,  # LE + 3 curvature-rate control points per side
-        }[self]
-
-    @property
     def order(self) -> int:
         """The number of derivatives linked at a junction (0 to 3)."""
         return int(self.name[1])
@@ -221,7 +211,8 @@ class SplineConfig:
             raise ValueError(
                 f"num_sections must be >= 1, got {self.num_sections}"
             )
-        if self.degree < self.continuity.minimum_degree:
+        # One section has no junction for the continuity to apply to
+        if self.num_sections > 1 and self.degree < self.continuity.minimum_degree:
             raise ValueError(
                 f"{self.continuity.name} continuity requires degree >= "
                 f"{self.continuity.minimum_degree}, got {self.degree}"
@@ -253,16 +244,6 @@ class SplineConfig:
         of every junction allow."""
         return minimum_control_points([int(s[1]) for s in self.junction_specs()], self.degree)
 
-    @property
-    def free_control_points_per_section(self) -> int:
-        """
-        Calculate the number of free (optimizable) control points per section.
-        
-        Each section has: [endpoint] + [free points] + [constrained junction points]
-        """
-        # Total minus endpoints (2) minus constrained junction points
-        return self.num_control_points - 2 - (self.continuity.constrained_control_points - 1)
-
 
 @dataclass(frozen=True)
 class OptimizationConfig:
@@ -271,7 +252,8 @@ class OptimizationConfig:
 
     Attributes:
         optimizer: Which optimization algorithm to use
-        max_iterations: VarPro LM residual evaluation limit (0 = its own default)
+        max_iterations: VarPro LM residual evaluation limit, per refit in
+            tolerance mode (0 = its own default)
         early_stop_patience: Iterations without improvement before stopping
         relative_tolerance: Relative improvement threshold for early stopping
         optimize_le_position: If True, every junction's (x, y) is fitted too,
