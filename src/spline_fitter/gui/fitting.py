@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import itertools
 import time
+import traceback
 from dataclasses import replace as dc_replace
 from typing import TYPE_CHECKING
 
@@ -38,6 +39,29 @@ from .live import LiveProgress
 
 if TYPE_CHECKING:
     from .ui import SplineFitterWindow
+
+
+def continuity_text(config: SplineConfig) -> str:
+    """The continuity of every junction, as fitted: ``G3``, or per junction
+    ``G2/C1/G3``; ``none`` for a single section."""
+    specs = config.junction_specs()
+    if not specs:
+        return "none"
+    return specs[0] if len(set(specs)) == 1 else "/".join(specs)
+
+
+def _count(value: int, noun: str) -> str:
+    return f"{value} {noun}" + ("" if value == 1 else "s")
+
+
+def fit_effort(result, opt_config: OptimizationConfig, evaluations: int) -> str:
+    """What a fit took: its residual evaluations, and the refits of a
+    tolerance search; Direct LSQ evaluates nothing, it solves once."""
+    if opt_config.tolerance is not None:
+        return f"{_count(result.nit, 'refit')}, {_count(evaluations, 'evaluation')}"
+    if evaluations:
+        return _count(evaluations, "evaluation")
+    return _count(result.nit, "solve")
 
 
 class FittingController:
@@ -127,11 +151,12 @@ class FittingController:
             # Run optimization off the GUI thread
             result, fit_result, elapsed = run_in_background(work, live.on_tick)
 
+            kept = False
             if fit_result is not None:
                 w._fit_result = fit_result
 
                 # Add optimization run to project
-                w._project_manager.add_optimization_run(
+                kept = not w._project_manager.add_optimization_run(
                     spline_config=config,
                     opt_config=opt_config,
                     result=w._fit_result,
@@ -141,13 +166,16 @@ class FittingController:
                 # Plot final result
                 w._plot_manager.plot_fitted_spline(w._fit_result)
                 w._refresh_curvature_comb()
+            elif w._fit_result is not None:
+                # No fit to show: the current fit stays, and is drawn again
+                w._plot_manager.plot_fitted_spline(w._fit_result)
+                w._refresh_curvature_comb()
 
             # Always update loss plot at completion (for Minimal mode)
             live.show_loss()
 
             # Save log
-            cont_level = config.continuity.name[1]
-            extra_info = f"mode=C{cont_level}, degree={config.degree}"
+            extra_info = f"continuity={continuity_text(config)}, degree={config.degree}"
             log_path = error_logger.save(
                 optimizer_key=opt_config.optimizer.value,
                 extra_info=extra_info,
@@ -156,32 +184,35 @@ class FittingController:
                 print(f"Log saved: {log_path}")
 
             # Status message with detailed info
-            eval_count = get_evaluation_count()
-            iterations = result.nit
+            effort = fit_effort(result, opt_config, get_evaluation_count())
             opt_name = opt_config.optimizer.display_name
 
             if w._cancel_requested:
                 msg = (
-                    f"Cancelled: {iterations} iterations, {eval_count} evaluations "
+                    f"Cancelled: {effort} "
                     f"in {format_duration(elapsed)} | Best error {format_error(result.fun)}"
                 )
             else:
                 msg = (
-                    f"Completed ({opt_name}): {iterations} iterations, {eval_count} evaluations "
+                    f"Completed ({opt_name}): {effort} "
                     f"in {format_duration(elapsed)} | Error {format_error(result.fun)}"
                 )
 
-            if w._fit_result is not None and w._fit_result.report:
-                msg += " | " + summary_line(w._fit_result.report)
+            # The summary of this run's fit only, never of an earlier one
+            if fit_result is not None and fit_result.report:
+                msg += " | " + summary_line(fit_result.report)
             if not result.success and not w._cancel_requested:
                 msg += " | Solver did not converge: " + result.message
+            if kept:
+                msg += " | The project keeps its finished run of these settings"
             w.statusBar().showMessage(msg)
 
             # Play completion chime (only if not cancelled)
             if not w._cancel_requested:
                 w._play_completion_chime()
 
-        except ValueError as e:
+        except Exception as e:
+            traceback.print_exc()
             w.statusBar().showMessage(f"Fitting error: {e}")
             w._play_error_chime()
 
@@ -284,7 +315,6 @@ class FittingController:
         gains a point (and the best marker moves) after every fit.
         """
         w = self._window
-        airfoil = w._airfoil
 
         axes = [(box, axis) for box in sweep_boxes
                 if (axis := self._sweep_axis_of(box)) is not None]
@@ -330,110 +360,24 @@ class FittingController:
         w._plot_manager.set_comparison_data([], [])
         w._plot_manager.set_comparison_marker([], [])
 
-        w._set_fitting_ui(True)
-        sweep_start_time = time.perf_counter()
-
-        total_fits = len(combinations)
-
-        msg = f"Sweep: fitting {total_fits} splines ({', '.join(names)})"
+        msg = f"Sweep: fitting {len(combinations)} splines ({', '.join(names)})"
         if too_few:
             msg += (f" | Left out {too_few} combinations with too few control points "
                     "for their degree and junctions")
-        w.statusBar().showMessage(msg + "...")
-        QApplication.processEvents()
 
-        # Perform sweep
-        for idx, values in enumerate(combinations):
-            if w._cancel_requested:
-                break
-
-            sweep_config, sweep_opt_config = make_configs(values)
-            if sweep_config.num_sections == airfoil.num_sections:
-                sweep_airfoil = airfoil
-            else:
-                sweep_airfoil = create_airfoil_data(
-                    list(airfoil.coordinates), filename=airfoil.filename, name=airfoil.name,
-                    precision=airfoil.precision, num_sections=sweep_config.num_sections,
-                )
-            label = describe(values)
-
-            # The live preview replaces the previous fit, as in a single fit
-            w._plot_manager.clear_plot_items()
-            reset_iteration_tracking()
-            self._reset_loss_plot()
-            fit_start_time = time.perf_counter()
-
-            run_name = w._airfoil.name or w._airfoil.filename
-            error_logger = OptimizerErrorLogger(run_name=run_name)
-            live = LiveProgress(
-                w, sweep_config, sweep_opt_config, error_logger, fit_start_time,
-                status_prefix=f"Sweep {idx + 1}/{total_fits} | {label} | ",
-                airfoil=sweep_airfoil,
-            )
-
-            def sweep_work(sweep_config=sweep_config, sweep_opt_config=sweep_opt_config,
-                           fit_start_time=fit_start_time, live=live,
-                           airfoil=sweep_airfoil):
-                """Run one sweep fit and measure it (worker thread)."""
-                result = run_optimization(
-                    sweep_config,
-                    sweep_opt_config,
-                    airfoil,
-                    callback=live.callback,
-                    should_stop=lambda: w._cancel_requested,
-                )
-                return self._fit_result(result, sweep_config, sweep_opt_config, airfoil,
-                                        time.perf_counter() - fit_start_time)
-
-            try:
-                fit_result = run_in_background(sweep_work, live.on_tick)
-                live.show_loss()
-
-                if fit_result is not None:
-                    self._sweep_results.append((values, fit_result))
-
-                    # Add to project
-                    w._project_manager.add_optimization_run(
-                        spline_config=sweep_config,
-                        opt_config=sweep_opt_config,
-                            result=fit_result,
-                        loss_history=self._loss_history(error_logger),
-                        replot=False,
-                    )
-
-                    # Show the finished fit and its point on the comparison plot
-                    w._plot_manager.plot_fitted_spline(fit_result)
-                    w._fit_result = fit_result
-                    w._refresh_curvature_comb()
-                    self._show_sweep_comparison()
-
-            except Exception as e:
-                print(f"Sweep fit failed for {label}: {e}")
-
-            # Update progress
-            progress = (idx + 1) / total_fits * 100
-            elapsed = time.perf_counter() - sweep_start_time
-            if self._sweep_results and self._sweep_results[-1][0] == values:
-                last_error = self._sweep_results[-1][1].comparison_error
-                w.statusBar().showMessage(
-                    f"Sweep: {idx + 1}/{total_fits} ({number(progress, '.0f')}%) | "
-                    f"{label}, error {format_error(last_error)} | "
-                    f"{format_duration(elapsed)}"
-                )
-            else:
-                w.statusBar().showMessage(
-                    f"Sweep: {idx + 1}/{total_fits} ({number(progress, '.0f')}%) | "
-                    f"{label} | {format_duration(elapsed)}"
-                )
-            QApplication.processEvents()
-
-        elapsed = time.perf_counter() - sweep_start_time
+        w._set_fitting_ui(True)
+        try:
+            elapsed, failed = self._sweep(combinations, make_configs, describe, msg)
+        finally:
+            w._set_fitting_ui(False)
 
         if self._sweep_results:
             best_values, best_result = self._show_sweep_comparison()
 
-            for (box, _), v in zip(axes, best_values, strict=True):
-                box.spinbox.setValue(v)
+            # The best values become the settings, as one step Undo takes
+            # back to the sweep: the sweep is over, and its lower ends are
+            # these values' boxes, so leaving it on would narrow it
+            self._apply_sweep_values(axes, best_values)
 
             w._fit_result = best_result
             w._plot_manager.plot_fitted_spline(w._fit_result)
@@ -446,15 +390,126 @@ class FittingController:
                 f"Best: {describe(best_values)}, "
                 f"error {format_error(best_result.comparison_error)}"
             )
+            if failed:
+                msg += f" | {failed} failed"
         else:
             msg = "Sweep failed: no fit succeeded"
 
         w.statusBar().showMessage(msg)
 
-        if not w._cancel_requested and self._sweep_results:
+        if failed:
+            w._play_error_chime()
+        elif not w._cancel_requested and self._sweep_results:
             w._play_completion_chime()
 
-        w._set_fitting_ui(False)
+    def _sweep(self, combinations: list, make_configs, describe, start_message: str
+               ) -> tuple[float, int]:
+        """Fit every combination (UI locked); the time taken and the fits that failed."""
+        w = self._window
+        airfoil = w._airfoil
+        sweep_start_time = time.perf_counter()
+        total_fits = len(combinations)
+        failed = 0
+
+        w.statusBar().showMessage(start_message + "...")
+        QApplication.processEvents()
+
+        # Perform sweep
+        for idx, values in enumerate(combinations):
+            if w._cancel_requested:
+                break
+
+            label = describe(values)
+            fit_result = None
+            error = None
+            try:
+                sweep_config, sweep_opt_config = make_configs(values)
+                if sweep_config.num_sections == airfoil.num_sections:
+                    sweep_airfoil = airfoil
+                else:
+                    sweep_airfoil = create_airfoil_data(
+                        list(airfoil.coordinates), filename=airfoil.filename,
+                        name=airfoil.name, precision=airfoil.precision,
+                        num_sections=sweep_config.num_sections,
+                    )
+
+                # The live preview replaces the previous fit, as in a single fit
+                w._plot_manager.clear_plot_items()
+                reset_iteration_tracking()
+                self._reset_loss_plot()
+                fit_start_time = time.perf_counter()
+
+                run_name = airfoil.name or airfoil.filename
+                error_logger = OptimizerErrorLogger(run_name=run_name)
+                live = LiveProgress(
+                    w, sweep_config, sweep_opt_config, error_logger, fit_start_time,
+                    status_prefix=f"Sweep {idx + 1}/{total_fits} | {label} | ",
+                    airfoil=sweep_airfoil,
+                )
+
+                def sweep_work(sweep_config=sweep_config, sweep_opt_config=sweep_opt_config,
+                               fit_start_time=fit_start_time, live=live,
+                               airfoil=sweep_airfoil):
+                    """Run one sweep fit and measure it (worker thread)."""
+                    result = run_optimization(
+                        sweep_config,
+                        sweep_opt_config,
+                        airfoil,
+                        callback=live.callback,
+                        should_stop=lambda: w._cancel_requested,
+                    )
+                    return self._fit_result(result, sweep_config, sweep_opt_config, airfoil,
+                                            time.perf_counter() - fit_start_time)
+
+                fit_result = run_in_background(sweep_work, live.on_tick)
+                live.show_loss()
+
+                if fit_result is not None:
+                    self._sweep_results.append((values, fit_result))
+
+                    # Add to project
+                    w._project_manager.add_optimization_run(
+                        spline_config=sweep_config,
+                        opt_config=sweep_opt_config,
+                        result=fit_result,
+                        loss_history=self._loss_history(error_logger),
+                        replot=False,
+                    )
+
+                    # Show the finished fit and its point on the comparison plot
+                    w._plot_manager.plot_fitted_spline(fit_result)
+                    w._fit_result = fit_result
+                    w._refresh_curvature_comb()
+                    self._show_sweep_comparison()
+
+            except Exception as e:
+                traceback.print_exc()
+                error = e
+                failed += 1
+
+            # Update progress
+            progress = (idx + 1) / total_fits * 100
+            elapsed = time.perf_counter() - sweep_start_time
+            done = f"Sweep: {idx + 1}/{total_fits} ({number(progress, '.0f')}%) | {label}"
+            if error is not None:
+                done += f" | Failed: {error}"
+            elif fit_result is not None:
+                done += f", error {format_error(fit_result.comparison_error)}"
+            w.statusBar().showMessage(f"{done} | {format_duration(elapsed)}")
+            QApplication.processEvents()
+
+        return time.perf_counter() - sweep_start_time, failed
+
+    def _apply_sweep_values(self, axes: list, values: tuple) -> None:
+        """Leave sweep mode and set the swept settings to ``values``: the
+        section count first, then the degree, as each limits the next."""
+        order = {self._window._sweep_sections: 0, self._window._sweep_degree: 1}
+        boxes = sorted(zip((box for box, _ in axes), values, strict=True),
+                       key=lambda bv: order.get(bv[0], 2))
+        for box, _ in boxes:
+            box.stop_sweep()
+        for box, v in boxes:
+            box.spinbox.setValue(v)
 
     def _show_sweep_comparison(self) -> tuple[tuple, FitResult]:
         """Plot the errors of all project runs along the sweep's x axis and

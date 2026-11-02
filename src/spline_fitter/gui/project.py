@@ -68,6 +68,10 @@ class ProjectManager:
     # Reset
     # ------------------------------------------------------------------
 
+    def _is_fitting(self) -> bool:
+        """Whether a fit runs: its run is added to this project when it ends."""
+        return self._window._is_fitting
+
     def reset(self):
         """Reset project state (called when loading a new airfoil)."""
         self._project = None
@@ -94,6 +98,9 @@ class ProjectManager:
 
     def open_project(self, file_path: str) -> bool:
         """Open the project at ``file_path``; whether it opened."""
+        if self._is_fitting():
+            self._window.statusBar().showMessage("Cancel the running fit to open a project")
+            return False
         try:
             project = load_project(file_path)
 
@@ -217,15 +224,23 @@ class ProjectManager:
         result: FitResult,
         loss_history: list[IterationRecord],
         replot: bool = True,
-    ):
-        """Add a completed optimization run to the current project.
+    ) -> bool:
+        """Add a completed optimization run to the current project; whether
+        it was added.
 
-        If a run with identical configuration exists, it will be replaced.
+        If a run with identical configuration exists, it will be replaced,
+        unless the new run was cancelled and the existing one was not: a
+        finished run is never lost to a partial one.
         ``replot`` redraws the comparison plot from the explorer; a sweep
         draws its own series there instead.
         """
         if self._window._airfoil is None:
-            return
+            return False
+        if result.cancelled and self._project is not None and any(
+                not existing.result.cancelled
+                and self._configs_match(existing, spline_config, opt_config)
+                for existing in self._project.optimization_runs):
+            return False
 
         # Create project if needed
         if self._project is None:
@@ -257,6 +272,7 @@ class ProjectManager:
         self._populate_table()
         if replot:
             self.refresh_comparison_plot()
+        return True
 
     def _show_project_label(self):
         """Name the project and count its runs; * marks unsaved changes."""
@@ -334,14 +350,17 @@ class ProjectManager:
         the comparison plot."""
         runs = self._window._run_table.selected_runs()
         self._selected_runs = runs
-        self._window._btn_delete_run.setEnabled(bool(runs))
-        self._window._btn_load_run.setEnabled(len(runs) == 1)
+        fitting = self._is_fitting()
+        self._window._btn_delete_run.setEnabled(not fitting and bool(runs))
+        self._window._btn_load_run.setEnabled(not fitting and len(runs) == 1)
 
         if not runs:
             self._window._run_details.set_message("Select a run to view details")
         elif len(runs) == 1:
             self._show_run_details(runs[0])
-            self._load_run_to_plots(runs[0])
+            # A running fit owns the plots and the current fit
+            if not fitting:
+                self._load_run_to_plots(runs[0])
         else:
             self._window._run_details.set_message(f"{len(runs)} runs selected")
         self._mark_selected_runs()
@@ -353,6 +372,9 @@ class ProjectManager:
 
     def on_run_activated(self, run: OptimizationRun):
         """Double-click: apply the run's settings to the sidebar and show it."""
+        if self._is_fitting():
+            self._window.statusBar().showMessage("Cancel the running fit to load a run")
+            return
         self._window._apply_run_settings(run)
         self._load_run_to_plots(run)
         cfg, opt = run.spline_config, run.optimization_config
@@ -551,7 +573,7 @@ class ProjectManager:
 
     def on_delete_selected_runs(self):
         """Delete selected runs from the project."""
-        if not self._selected_runs or self._project is None:
+        if not self._selected_runs or self._project is None or self._is_fitting():
             return
 
         count = len(self._selected_runs)
