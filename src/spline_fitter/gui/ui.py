@@ -643,7 +643,7 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
     def _show_file_info(self, airfoil: AirfoilData, path: str = ""):
         """Show the loaded airfoil in the sidebar's file card."""
         self._lbl_file_name.setText(airfoil.name or airfoil.filename or "Airfoil")
-        self._lbl_path.setText(f"{airfoil.num_points} points \u00B7 {airfoil.precision} decimals")
+        self._lbl_path.setText(f"{airfoil.num_points} points, {airfoil.precision} decimals")
         self._lbl_file_name.setToolTip(path)
         self._lbl_path.setToolTip(path)
 

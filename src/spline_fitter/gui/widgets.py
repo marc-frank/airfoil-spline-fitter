@@ -12,6 +12,7 @@ This module provides:
     - SegmentedControl: Button row with a combo-box-like API
     - SweepableSpinBox: Spinbox with parameter sweep toggle
     - ReadoutList: Label and value pairs, as many to a line as fit
+    - ReflowRow: Widgets side by side, stacked when the row is too narrow
     - ThemeDialog: Light / dark mode and the temperature of the greys
 """
 
@@ -22,6 +23,7 @@ import math
 from PyQt6.QtCore import QEvent, QPoint, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QValidator
 from PyQt6.QtWidgets import (
+    QBoxLayout,
     QButtonGroup,
     QDialog,
     QDialogButtonBox,
@@ -631,6 +633,7 @@ class SweepableDoubleSpinBox(QWidget):
         lay.addWidget(self._spin_max, stretch=1)
 
         self._lbl_step = QLabel("Step")
+        self._lbl_step.setObjectName("FormLabel")
         self._lbl_step.setVisible(False)
         lay.addWidget(self._lbl_step)
 
@@ -701,6 +704,46 @@ class SweepableDoubleSpinBox(QWidget):
     @property
     def spinbox(self) -> QDoubleSpinBox:
         return self._spin
+
+
+# =============================================================================
+# Reflowing Row
+# =============================================================================
+
+class ReflowRow(QWidget):
+    """Widgets side by side while they fit the row's width, one above the
+    other when it is narrower, so the row asks for no more width than its
+    widest widget (the window can be made as narrow as the rest allows)."""
+
+    def __init__(self, spacing: int, parent=None):
+        super().__init__(parent)
+        self._layout = QBoxLayout(QBoxLayout.Direction.LeftToRight, self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(spacing)
+
+    def add_widget(self, widget: QWidget, stretch: int = 1) -> None:
+        self._layout.addWidget(widget, stretch)
+
+    def is_stacked(self) -> bool:
+        return self._layout.direction() == QBoxLayout.Direction.TopToBottom
+
+    def _widths(self) -> list[int]:
+        items = (self._layout.itemAt(i) for i in range(self._layout.count()))
+        return [item.minimumSize().width() for item in items if not item.isEmpty()]
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(max(self._widths(), default=0), self._layout.minimumSize().height())
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        widths = self._widths()
+        side_by_side = sum(widths) + self._layout.spacing() * max(len(widths) - 1, 0)
+        direction = (QBoxLayout.Direction.LeftToRight if event.size().width() >= side_by_side
+                     else QBoxLayout.Direction.TopToBottom)
+        if direction != self._layout.direction():
+            self._layout.setDirection(direction)
+            # Stacked, the row needs more height
+            self.updateGeometry()
 
 
 # =============================================================================
@@ -790,7 +833,7 @@ class ThemeDialog(QDialog):
         self._slider.setObjectName("TemperatureSlider")
         self._slider.setRange(-100, 100)
         self._slider.setPageStep(10)
-        self._slider.setMinimumWidth(220)
+        self._slider.setMinimumWidth(Size.SLIDER_WIDTH)
         self._slider.setValue(Scheme.TEMPERATURE)
         self._slider.setToolTip("Tint the greys cool (blue) or warm (sand); neutral in the middle")
         cool, warm = QLabel("Cool"), QLabel("Warm")

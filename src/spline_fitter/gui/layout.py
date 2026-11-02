@@ -42,6 +42,7 @@ from .widgets import (
     CollapsibleSection,
     DropDownPanel,
     ReadoutList,
+    ReflowRow,
     ResettableSplitter,
     ScientificSpinBox,
     SegmentedControl,
@@ -155,7 +156,7 @@ class WindowLayoutMixin:
             combo.setMinimumContentsLength(6)
         for field in sections.findChildren((QComboBox, QAbstractSpinBox)):
             field.setSizePolicy(QSizePolicy.Policy.Expanding, field.sizePolicy().verticalPolicy())
-            field.setMinimumWidth(70)
+            field.setMinimumWidth(Size.FIELD_MIN_WIDTH)
         self._sidebar_sections, self._sidebar_scroll = sections, sidebar_scroll
 
         sidebar_layout.addWidget(sidebar_scroll, stretch=1)
@@ -168,7 +169,7 @@ class WindowLayoutMixin:
         center_layout.setSpacing(Size.GAP)
 
         # Main plot (airfoil visualization) with its display toolbar
-        center_layout.addLayout(self._build_plot_toolbar())
+        center_layout.addWidget(self._build_plot_toolbar())
         self._plot = FramedPlot(parent=center_panel, viewBox=SmoothViewBox())
         style_plot(self._plot)
         self._plot.getPlotItem().setAspectLocked(True, ratio=1)
@@ -176,11 +177,10 @@ class WindowLayoutMixin:
         label_plot(self._plot, "left", "y")
         center_layout.addWidget(self._plot, stretch=3)
 
-        # Bottom row: Loss plot (with inline toolbar) and Comparison plot
-        bottom_plots = QWidget()
-        bottom_plots_layout = QHBoxLayout(bottom_plots)
-        bottom_plots_layout.setContentsMargins(0, 0, 0, 0)
-        bottom_plots_layout.setSpacing(Size.GROUP)
+        # Bottom row: Loss plot (with inline toolbar) and Comparison plot,
+        # one above the other when the window is too narrow for both toolbars
+        bottom_plots = ReflowRow(Size.GROUP)
+        self._bottom_plots = bottom_plots
 
         # Loss plot with inline axis controls
         loss_container = QWidget()
@@ -191,11 +191,13 @@ class WindowLayoutMixin:
 
         self._loss_plot = FramedPlot(parent=loss_container, viewBox=SmoothViewBox())
         style_plot(self._loss_plot)
-        label_plot(self._loss_plot, "bottom", "Evaluations")
+        # The axes as the toolbar sets them
+        label_plot(self._loss_plot, "bottom", self._combo_loss_x.currentText())
         label_plot(self._loss_plot, "left", "Error")
-        self._loss_plot.getPlotItem().setLogMode(x=True, y=True)
+        log = self._combo_log_scale.currentData()
+        self._loss_plot.getPlotItem().setLogMode(x=log in ("x", "both"), y=log in ("y", "both"))
         loss_layout.addWidget(self._loss_plot)
-        bottom_plots_layout.addWidget(loss_container, stretch=1)
+        bottom_plots.add_widget(loss_container)
 
         # Comparison plot: the runs that pass the explorer's filter, along
         # the columns chosen in its toolbar
@@ -210,7 +212,7 @@ class WindowLayoutMixin:
         label_plot(self._comparison_plot, "left", "Error")
         self._comparison_plot.getPlotItem().setLogMode(x=False, y=True)
         comparison_layout.addWidget(self._comparison_plot)
-        bottom_plots_layout.addWidget(comparison_container, stretch=1)
+        bottom_plots.add_widget(comparison_container)
 
         center_layout.addWidget(bottom_plots, stretch=2)
 
@@ -222,10 +224,10 @@ class WindowLayoutMixin:
         self._main_splitter.addWidget(sidebar)
         self._main_splitter.addWidget(center_panel)
         self._main_splitter.addWidget(explorer_panel)
-        sidebar.setMinimumWidth(300)
+        sidebar.setMinimumWidth(Size.SIDEBAR_MIN_WIDTH)
         # The explorer is hidden with its button or the View menu, never by
         # dragging the splitter shut, which left no way to bring it back
-        explorer_panel.setMinimumWidth(180)
+        explorer_panel.setMinimumWidth(Size.EXPLORER_MIN_WIDTH)
         self._main_splitter.setCollapsible(0, False)
         self._main_splitter.setCollapsible(1, False)
         self._main_splitter.setCollapsible(2, False)
@@ -387,8 +389,9 @@ class WindowLayoutMixin:
 
     # -- Plot Toolbar ------------------------------------------------------
 
-    def _build_plot_toolbar(self) -> QHBoxLayout:
-        """Build the display toolbar above the main plot."""
+    def _build_plot_toolbar(self) -> ReflowRow:
+        """Build the display toolbar above the main plot: the display
+        toggles, and the live preview setting beside or under them."""
         toolbar = QHBoxLayout()
         toolbar.setSpacing(Size.GAP)
         toolbar.setContentsMargins(0, 0, 0, 0)
@@ -427,6 +430,9 @@ class WindowLayoutMixin:
         self._spin_comb_scale.setDecimals(4)
         self._spin_comb_scale.setSingleStep(0.01)
         self._spin_comb_scale.setValue(0.05)
+        self._spin_comb_scale.setToolTip(
+            "Length of a tooth, in chords, where the quantity is 1 on the airfoil\n"
+            "scaled to a unit chord. The comb looks the same at any size of the data.")
         _add_row(comb_form, "Height", self._spin_comb_scale)
 
         self._spin_comb_density = QSpinBox()
@@ -485,12 +491,16 @@ class WindowLayoutMixin:
         deviation_row.addWidget(self._check_deviation)
         deviation_row.addWidget(self._btn_deviation_settings)
         toolbar.addLayout(deviation_row)
-
         toolbar.addStretch()
 
+        # The live preview setting, at the right of the display toggles, or
+        # under them when the plot is too narrow for both
+        live = QHBoxLayout()
+        live.setSpacing(Size.GAP)
+        live.setContentsMargins(0, 0, 0, 0)
         live_label = QLabel("Live preview")
         live_label.setObjectName("FormLabel")
-        toolbar.addWidget(live_label)
+        live.addWidget(live_label)
         self._combo_live = QComboBox()
         self._combo_live.addItems(["Minimal", "Moderate", "Detailed"])
         self._combo_live.setCurrentIndex(1)
@@ -503,9 +513,16 @@ class WindowLayoutMixin:
             "Minimal: only at the end. Moderate: once a second.\n"
             "Detailed: every iteration (slower)."
         )
-        toolbar.addWidget(self._combo_live)
+        live.addWidget(self._combo_live)
+        live.addStretch()
 
-        return toolbar
+        row = ReflowRow(Size.GAP)
+        self._plot_toolbar = row
+        for layout, stretch in ((toolbar, 1), (live, 0)):
+            group = QWidget()
+            group.setLayout(layout)
+            row.add_widget(group, stretch)
+        return row
 
     # -- Loss Toolbar ------------------------------------------------------
 
@@ -526,7 +543,6 @@ class WindowLayoutMixin:
         self._combo_loss_x = QComboBox()
         self._combo_loss_x.addItem("Iterations", userData="iters")
         self._combo_loss_x.addItem("Time", userData="time")
-        self._combo_loss_x.setFixedWidth(96)
         toolbar.addWidget(self._combo_loss_x)
 
         scale_label = QLabel("Log scale")
@@ -536,7 +552,6 @@ class WindowLayoutMixin:
         for text, axes in (("None", "none"), ("X only", "x"), ("Y only", "y"), ("Both", "both")):
             self._combo_log_scale.addItem(text, userData=axes)
         self._combo_log_scale.setCurrentIndex(self._combo_log_scale.findData("y"))
-        self._combo_log_scale.setFixedWidth(84)
         toolbar.addWidget(self._combo_log_scale)
         return toolbar
 
@@ -597,7 +612,6 @@ class WindowLayoutMixin:
         self._btn_show_explorer.setObjectName("IconButton")
         self._btn_show_explorer.setIcon(icon("chevron_left"))
         self._btn_show_explorer.setIconSize(glyph_size())
-        self._btn_show_explorer.setFixedWidth(Size.CONTROL_HEIGHT)
         self._btn_show_explorer.setToolTip("Show the project explorer (Ctrl+Shift+E)")
         layout.addWidget(self._btn_show_explorer)
         layout.addStretch()
