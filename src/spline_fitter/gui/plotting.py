@@ -17,7 +17,8 @@ from ..analysis import foot_points, scipy_curves
 from ..geometry import find_leading_edge_index
 from ..optimization.models import FitResult, SplineConfig
 from ..spline import BSplineCurve2D, compute_signed_curvature
-from .theme import Ink, Palette, Size, Z, brush, label_plot, pen
+from .motion import SmoothViewBox
+from .theme import FramedPlot, Ink, Palette, Size, Z, brush, label_plot, pen, style_plot
 from .widgets import MAX_PLOT_POINTS
 
 # Curvature comb: dense grid for tooth placement and higher derivatives, and the
@@ -89,6 +90,31 @@ def comb_values(curve: BSplineCurve2D, t: np.ndarray, quantity: int) -> np.ndarr
     for _ in range(quantity - 1):
         val = np.gradient(val, s, edge_order=2)
     return np.interp(t, fine, val)
+
+
+def shape_plot(shape: dict) -> FramedPlot:
+    """Thickness and camber of an airfoil along its chord, in percent of the
+    chord (from ``analysis.airfoil_shape``), each with its maximum marked:
+    the thickness as a trace, the camber line dashed like a construction
+    line."""
+    plot = FramedPlot(viewBox=SmoothViewBox())
+    style_plot(plot)
+    label_plot(plot, "bottom", "Chord (%)")
+    label_plot(plot, "left", "Percent of the chord")
+    plot.setMinimumHeight(Size.SHAPE_PLOT_HEIGHT)
+    legend = plot.addLegend(offset=(-Size.PAD, Size.PAD), labelTextColor=Palette.TEXT_2)
+    x = 100 * np.asarray(shape["x"])
+    for name, key, color, dashed in (("Thickness", "thickness", Ink.TRACE, False),
+                                     ("Camber", "camber", Ink.CONSTRUCTION, True)):
+        item = plot.plot(x, 100 * np.asarray(shape[key]), pen=pen(color, 1.5, dashed=dashed),
+                         name=name)
+        item.setZValue(Z.CURVE)
+        peak = plot.plot([100 * shape[f"max_{key}_x"]], [100 * shape[f"max_{key}"]], pen=None,
+                         symbol="o", symbolSize=Size.MARKER_SIZE - 6,
+                         symbolBrush=brush(color), symbolPen=pen(Palette.CANVAS, 2))
+        peak.setZValue(Z.KNOTS)
+    legend.setZValue(Z.KNOTS + 1)
+    return plot
 
 
 class _Trace(pg.PlotDataItem):

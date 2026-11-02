@@ -333,6 +333,79 @@ def leading_edge_radius(curves: CurveInput) -> float:
     return float(1.0 / kappa) if kappa > 0 else math.inf
 
 
+def _peak(x: np.ndarray, y: np.ndarray) -> Tuple[float, float]:
+    """``(x, y)`` of the largest |y|, refined by a parabola through its neighbours."""
+    j = int(np.argmax(np.abs(y)))
+    if 0 < j < len(y) - 1:
+        x0, x1, x2 = x[j - 1:j + 2]
+        y0, y1, y2 = y[j - 1:j + 2]
+        a = np.polyfit([x0, x1, x2], [y0, y1, y2], 2)
+        if a[0] != 0:
+            xv = -a[1] / (2 * a[0])
+            if x0 <= xv <= x2:
+                return float(xv), float(np.polyval(a, xv))
+    return float(x[j]), float(y[j])
+
+
+def thickness_and_camber(curves: CurveInput, stations: int = 201,
+                         samples: int = 4000) -> dict:
+    """Thickness and camber of a fitted airfoil along its chord.
+
+    The x axis is the chord line, as in airfoil databases: the airfoil is
+    not turned, only moved and scaled so the leading edge (the smallest x)
+    is at 0 and the trailing-edge midpoint at (1, 0). The two surfaces are
+    compared at the same x: the thickness is ``y_upper - y_lower`` and the
+    camber their mean. (The NACA definitions measure thickness normal to
+    the camber line instead, which differs by a little where it slopes.)
+
+    Args:
+        stations: Chordwise stations of the returned distributions, cosine
+            spaced.
+        samples: Points per surface the surfaces are sampled with.
+
+    Returns:
+        ``x``, ``thickness`` and ``camber`` at the stations, and
+        ``max_thickness``, ``max_thickness_x``, ``max_camber`` and
+        ``max_camber_x`` (the camber of largest magnitude, with its sign),
+        all in fractions of the ``chord``.
+
+    Raises:
+        ValueError: The leading edge is at an end of the chain (not an airfoil).
+    """
+    curves = as_curves(curves)
+    section, u_le, le = leading_edge(curves)
+    start, end = curves[0].t[curves[0].k], curves[-1].t[-curves[-1].k - 1]
+    if (section == 0 and u_le <= start) or (section == len(curves) - 1 and u_le >= end):
+        raise ValueError("Leading edge found at an end; expected an airfoil (TE -> LE -> TE).")
+    te = 0.5 * (curves[0](start) + curves[-1](end))
+    pts = resample(curves, samples)
+    front = int(np.argmin(pts[:, 0]))
+    chord = float(te[0] - pts[front, 0])
+    if chord <= 0:
+        raise ValueError("Trailing edge not behind the leading edge along x.")
+    local = (pts - [pts[front, 0], te[1]]) / chord
+    # Split at the smallest x, so each surface has one y at every x
+    upper, lower = local[:front + 1], local[front:]
+
+    def surface(side: np.ndarray, x: np.ndarray) -> np.ndarray:
+        order = np.argsort(side[:, 0], kind="stable")
+        return np.interp(x, side[order, 0], side[order, 1])
+
+    def distributions(x: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        yu, yl = surface(upper, x), surface(lower, x)
+        return yu - yl, 0.5 * (yu + yl)
+
+    fine = 0.5 * (1 - np.cos(np.linspace(0.0, np.pi, 4 * samples)))
+    t_fine, c_fine = distributions(fine)
+    t_x, t_max = _peak(fine, t_fine)
+    c_x, c_max = _peak(fine, c_fine)
+    x = 0.5 * (1 - np.cos(np.linspace(0.0, np.pi, stations)))
+    thickness, camber = distributions(x)
+    return {"x": x, "thickness": thickness, "camber": camber, "chord": chord,
+            "max_thickness": t_max, "max_thickness_x": t_x,
+            "max_camber": c_max, "max_camber_x": c_x}
+
+
 def trailing_edge_segment(curves: CurveInput) -> Optional[BSpline]:
     """Straight B-spline closing a blunt trailing edge (lower TE -> upper TE).
 

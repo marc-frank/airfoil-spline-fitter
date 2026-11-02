@@ -247,6 +247,7 @@ class Size:
     TRACE_POINT = 4
     MARKER_SIZE = 13
     PLOT_MARGIN = 24          # inside a plot's frame: above the plot area and right of it
+    SHAPE_PLOT_HEIGHT = 200   # thickness and camber chart in the fit report, at least
 
 
 class Type:

@@ -28,10 +28,11 @@ from PyQt6.QtWidgets import (
     QSpinBox,
 )
 
-from ..analysis import fit_report, format_report_html, scipy_curves
+from ..analysis import airfoil_shape, fit_report, format_report_html, scipy_curves, shape_report
 from ..geometry import create_airfoil_data
 from ..io import export_airfoil_data, export_spline_data, parse_airfoil_data, parse_airfoil_text
 from .background import run_in_background
+from .plotting import shape_plot
 from .widgets import (
     UNLIMITED,
     ScientificSpinBox,
@@ -509,8 +510,14 @@ class FileActionsMixin:
                 report = run_in_background(lambda: fit_report(
                     airfoil.sections, fit_result, precision=airfoil.precision))
                 fit_result.report = report
+            elif "max_thickness" not in report:
+                # A report from before thickness and camber were measured
+                report.update(shape_report(self._fit_result))
             title = self._airfoil.name or self._airfoil.filename or "Fit report"
-            show_document(self, "Fit report", format_report_html(report, title), 560, 520)
+            shape = airfoil_shape(self._fit_result)
+            chart = None if shape is None else shape_plot(shape)
+            show_document(self, "Fit report", format_report_html(report, title), 560,
+                          520 if chart is None else 720, extra=chart)
         except Exception as e:
             self.statusBar().showMessage(f"Report failed: {e}")
             self._play_error_chime()

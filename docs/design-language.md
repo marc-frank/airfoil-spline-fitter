@@ -268,7 +268,7 @@ never call `setStyleSheet` on it.
 | Plot pens and brushes | `theme.pen(Ink.X, width, dashed, alpha)`, `theme.brush(Ink.X, alpha)` |
 | Numbers spanning decades | `ScientificSpinBox` (`widgets.py`) |
 | Settings dialog | `dialog_form(dialog)` (dialog padding) + `add_form_row(form, "Label", field)`, buttons in a `QDialogButtonBox` |
-| Rich text dialog | `show_document(parent, title, html, w, h)` around `theme.text_browser()`, which renders its HTML again on a theme change; mark status with `class='ok'`, `'warn'`, `'error'`, numbers with `class='num'` |
+| Rich text dialog | `show_document(parent, title, html, w, h)` around `theme.text_browser()`, which renders its HTML again on a theme change; mark status with `class='ok'`, `'warn'`, `'error'`, numbers with `class='num'`. A chart goes below the text as `extra` (the fit report's thickness and camber, `plotting.shape_plot`: thickness a `TRACE` line, the camber line dashed `CONSTRUCTION`, each maximum a dot ringed in the canvas color) |
 | Slider | `QSlider`; the temperature slider is `TemperatureSlider` (cool-to-warm groove) |
 | Theme setting | `ThemeDialog` (`widgets.py`), from View > Theme... |
 | Scroll and zoom glide | `MotionDialog` (`widgets.py`), from View > Scrolling and zooming... |

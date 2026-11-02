@@ -8,10 +8,10 @@ This module handles multiple airfoil file formats:
     - Selig format: Name header followed by x y coordinate pairs
     - Lednicer format: Point counts header followed by upper/lower surfaces
 
-The coordinates are automatically normalized to:
-    - Leading edge at origin (0, 0)
-    - Trailing edge at (1, 0)
-    - Chord length of 1.0
+The coordinates are normalized without turning them (the file's x axis
+stays the chord line): coordinates already in chords are kept as written,
+others are moved and scaled so the leading edge (the smallest x) is at
+x = 0 and the trailing-edge midpoint at (1, 0).
 """
 import math
 import os
@@ -79,13 +79,23 @@ def filter_coordinate_outliers(coords, threshold_factor=5.0):
     return filtered_coords
 
 
+# Coordinates whose leading edge (smallest x) and trailing-edge midpoint are
+# this close to (0, 0) and (1, 0), in chords, are already normalized and kept
+# exactly as written
+UNIT_CHORD_TOLERANCE = 5e-3
+
+
 def normalize_coords(coords):
     """
-    Normalizes airfoil coordinates.
+    Normalizes airfoil coordinates without turning them, so the x axis of
+    the file stays the chord line (thickness and camber are then measured
+    as airfoil databases quote them).
     1. Handles 0-100 scaling.
-    2. Finds TE by averaging the first and last points.
-    3. Finds LE as the point furthest from the TE center.
-    4. Translates, rotates, and scales coordinates to place LE at (0,0) and TE at (1,0).
+    2. Keeps coordinates that already run from x = 0 to a trailing-edge
+       midpoint at (1, 0).
+    3. Otherwise moves and scales them uniformly so the leading edge (the
+       smallest x) is at x = 0 and the trailing-edge midpoint (the average
+       of the first and last points) at (1, 0).
     """
     return _normalize(coords)[0]
 
@@ -103,52 +113,16 @@ def _normalize(coords):
         coords = [(x / 100.0, y / 100.0) for x, y in coords]
         scale = 0.01
 
-    # 1. Find trailing edge (TE) center
-    p_start = coords[0]
-    p_end = coords[-1]
-    te_center = ((p_start[0] + p_end[0]) / 2.0, (p_start[1] + p_end[1]) / 2.0)
-
-    # 2. Find leading edge (LE)
-    max_dist_sq = -1
-    le_candidates = []
-    for p in coords:
-        dist_sq = (p[0] - te_center[0])**2 + (p[1] - te_center[1])**2
-        if dist_sq > max_dist_sq:
-            max_dist_sq = dist_sq
-            le_candidates = [p]
-        elif dist_sq == max_dist_sq:
-            le_candidates.append(p)
-
-    # If multiple points are at max distance, average them for the LE
-    if len(le_candidates) > 1:
-        le_x = sum(p[0] for p in le_candidates) / len(le_candidates)
-        le_y = sum(p[1] for p in le_candidates) / len(le_candidates)
-        le = (le_x, le_y)
-    else:
-        le = le_candidates[0]
-
-    # 3. Calculate chord length and angle for transformation
-    chord_length = math.sqrt((te_center[0] - le[0])**2 + (te_center[1] - le[1])**2)
-    if chord_length < 1e-6: # Avoid division by zero for degenerate cases
+    te_x = (coords[0][0] + coords[-1][0]) / 2.0
+    te_y = (coords[0][1] + coords[-1][1]) / 2.0
+    le_x = min(x for x, _ in coords)
+    chord = te_x - le_x
+    if chord < 1e-6:  # degenerate, or not in Selig order
         return coords, scale
-
-    # Angle of the chord relative to the x-axis
-    angle = math.atan2(te_center[1] - le[1], te_center[0] - le[0])
-    cos_angle = math.cos(-angle)
-    sin_angle = math.sin(-angle)
-
-    # 4. Translate, rotate, and scale all points
-    normalized_coords = []
-    for x, y in coords:
-        # Translate to move LE to origin
-        tx, ty = x - le[0], y - le[1]
-        # Rotate to align chord with x-axis
-        rx = tx * cos_angle - ty * sin_angle
-        ry = tx * sin_angle + ty * cos_angle
-        # Scale by chord length
-        normalized_coords.append((rx / chord_length, ry / chord_length))
-
-    return normalized_coords, scale / chord_length
+    if (abs(le_x) <= UNIT_CHORD_TOLERANCE and abs(te_x - 1.0) <= UNIT_CHORD_TOLERANCE
+            and abs(te_y) <= UNIT_CHORD_TOLERANCE):
+        return coords, scale
+    return [((x - le_x) / chord, (y - te_y) / chord) for x, y in coords], scale / chord
 
 
 def _scaled_precision(precision, scale):
