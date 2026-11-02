@@ -86,6 +86,7 @@ def vectorized_footpoint_update(
         
     Notes:
         - Handles degenerate cases where ||C'(t)|| ≈ 0 by not updating.
+        - Never moves a point away from the curve (see ``_descend``).
         - All operations are vectorized - no Python loops over data points.
         - The spline derivatives are computed via scipy's derivative method.
     
@@ -145,21 +146,38 @@ def vectorized_footpoint_update(
         # Gauss-Newton approximation: f'(t) ≈ ||C'(t)||²
         f_prime = tangent_norm_sq
 
-    # Safeguard against division by zero or near-zero tangent
-    # This can happen at cusps or if spline is degenerate
-    MIN_TANGENT_NORM_SQ = 1e-14
+    return _descend(t_clamped, f, f_prime, tangent_norm_sq, data_points,
+                    spline_x, spline_y, 1.0)
 
-    # Create mask for valid updates
-    valid = np.abs(f_prime) > MIN_TANGENT_NORM_SQ
 
-    # Newton update: t_new = t - f(t) / f'(t)
-    t_new = t_clamped.copy()
-    t_new[valid] = t_clamped[valid] - f[valid] / f_prime[valid]
+# Safeguard against division by zero or near-zero tangent
+# This can happen at cusps or if spline is degenerate
+MIN_TANGENT_NORM_SQ = 1e-14
 
-    # Clamp to valid parameter range
-    t_new = np.clip(t_new, 0.0, 1.0)
 
-    return t_new
+def _descend(t, f, f_prime, tangent_norm_sq, data_points, spline_x, spline_y, damping):
+    """Take the (damped) Newton step t - damping * f / f' where it brings
+    each point closer to the curve.
+
+    Where f' <= 0 the Newton step heads for a distance maximum (a point past
+    the centre of curvature), so the Gauss-Newton step f / ||C'||², which
+    always points downhill, is taken instead. A step that still increases
+    the distance is halved until it does not; one that never does is not
+    taken. Points with a degenerate tangent are not updated.
+    """
+    slope = np.where(f_prime > MIN_TANGENT_NORM_SQ, f_prime, tangent_norm_sq)
+    valid = slope > MIN_TANGENT_NORM_SQ
+    step = np.zeros_like(t)
+    step[valid] = damping * f[valid] / slope[valid]
+
+    before = compute_distances(t, data_points, spline_x, spline_y)
+    for _ in range(40):
+        t_new = np.clip(t - step, 0.0, 1.0)
+        worse = compute_distances(t_new, data_points, spline_x, spline_y) > before
+        if not worse.any():
+            return t_new
+        step[worse] *= 0.5
+    return np.where(worse, t, t_new)
 
 
 def iterative_footpoint_projection(
@@ -439,15 +457,9 @@ def damped_footpoint_update(
     error_dot_curvature = ex * ddx + ey * ddy
     f_prime = tangent_norm_sq + error_dot_curvature
 
-    # Safeguard
-    MIN_TANGENT_NORM_SQ = 1e-14
-    valid = np.abs(f_prime) > MIN_TANGENT_NORM_SQ
-
     # Damped Newton update
-    t_new = t_clamped.copy()
-    t_new[valid] = t_clamped[valid] - damping * f[valid] / f_prime[valid]
-
-    return np.clip(t_new, 0.0, 1.0)
+    return _descend(t_clamped, f, f_prime, tangent_norm_sq, data_points,
+                    spline_x, spline_y, damping)
 
 
 def robust_footpoint_projection(
