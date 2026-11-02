@@ -27,6 +27,12 @@ from ..optimization import (
     reset_iteration_tracking,
     run_optimization,
 )
+from ..optimization.models import (
+    ContinuityMode,
+    OptimizationConfig,
+    OptimizerType,
+    SplineConfig,
+)
 from .background import run_in_background
 from .live import LiveProgress
 from .theme import Size
@@ -34,6 +40,72 @@ from .widgets import add_form_row, dialog_form
 
 if TYPE_CHECKING:
     from .ui import SplineFitterWindow
+
+
+# The settings of a new window: their outputs keep the plain name
+# <file>.deg<degree>.spline.dat, as before other settings were named
+DEFAULT_SPLINE = SplineConfig(continuity=ContinuityMode.G3, geometric_continuity=True)
+DEFAULT_OPTIMIZATION = OptimizationConfig(
+    max_iterations=0, knot_placement="uniform", grow_control_points=False)
+
+
+def _num(value: float) -> str:
+    """A number for a file name: short, the same in every locale; small
+    ones (tolerances) as ``1e-4`` or ``2.5e-5``."""
+    if value and abs(value) < 1e-2:
+        mantissa, exponent = f"{value:.2e}".split("e")
+        return f"{mantissa.rstrip('0').rstrip('.')}e{int(exponent)}"
+    return f"{value:.3g}"
+
+
+def output_name(stem: str, config: SplineConfig, opt_config: OptimizationConfig,
+                auto_tolerance: bool = False) -> str:
+    """The batch output file of ``stem`` fitted with these settings.
+
+    The degree is always named; every other setting only when it differs
+    from a new window's, so two runs with different settings never write
+    the same file: ``naca0012.deg5.n30.s3.G2-C1.tol1e-4.spline.dat``.
+    """
+    d_spline, d_opt = DEFAULT_SPLINE, DEFAULT_OPTIMIZATION
+    parts = [stem, f"deg{config.degree}"]
+
+    # Curve
+    count_used = opt_config.tolerance is None or not opt_config.grow_control_points
+    if count_used and config.num_control_points != d_spline.num_control_points:
+        parts.append(f"n{config.num_control_points}")
+    if config.num_sections != d_spline.num_sections:
+        parts.append(f"s{config.num_sections}")
+    specs = config.junction_specs()
+    if specs and specs != [d_spline.junction_specs()[0]] * len(specs):
+        parts.append("-".join(specs) if len(set(specs)) > 1 else specs[0])
+
+    # Method
+    o = opt_config
+    if o.optimizer != d_opt.optimizer:
+        parts.append("lsq" if o.optimizer == OptimizerType.DIRECT_LSQ else o.optimizer.value)
+        if o.parameterization != d_opt.parameterization:
+            parts.append(o.parameterization.replace("_", "-"))
+    if o.tolerance is not None:
+        parts.append("tol-auto" if auto_tolerance else f"tol{_num(o.tolerance)}")
+    if o.knot_placement != d_opt.knot_placement:
+        parts.append(f"knots-{o.knot_placement}")
+    if o.grow_control_points != d_opt.grow_control_points:
+        parts.append("grow" if o.grow_control_points else "no-grow")
+    if o.smoothing_weight != d_opt.smoothing_weight:
+        parts.append(f"smooth{_num(o.smoothing_weight)}")
+    if o.smoothing_factor != d_opt.smoothing_factor and o.smoothing_factor is not None:
+        parts.append(f"sfactor{_num(o.smoothing_factor)}")
+    if o.max_points_per_section != d_opt.max_points_per_section:
+        parts.append(f"sub{o.max_points_per_section}")
+    if o.optimize_le_position != d_opt.optimize_le_position:
+        parts.append("free-le")
+    if o.max_iterations != d_opt.max_iterations:
+        parts.append(f"max{o.max_iterations}")
+    if o.early_stop_patience != d_opt.early_stop_patience:
+        parts.append(f"patience{o.early_stop_patience}")
+    if o.relative_tolerance != d_opt.relative_tolerance:
+        parts.append(f"rtol{_num(o.relative_tolerance)}")
+    return ".".join(parts) + ".spline.dat"
 
 
 class BatchController:
@@ -162,11 +234,9 @@ class BatchController:
                 )
 
                 # Check for existing output
-                base_name = airfoil.filename or airfoil.name
-                out_path = os.path.join(
-                    self._batch_dst_dir,
-                    f"{base_name}.deg{config.degree}.spline.dat"
-                )
+                auto_tolerance = self._window._check_auto_tolerance.isChecked()
+                out_path = os.path.join(self._batch_dst_dir, output_name(
+                    airfoil.filename or airfoil.name, config, opt_config, auto_tolerance))
 
                 if os.path.exists(out_path):
                     skipped += 1
@@ -175,7 +245,7 @@ class BatchController:
                     continue
 
                 file_opt_config = opt_config
-                if opt_config.tolerance is not None and self._window._check_auto_tolerance.isChecked():
+                if opt_config.tolerance is not None and auto_tolerance:
                     file_opt_config = dc_replace(
                         opt_config, tolerance=default_tolerance(airfoil.coordinates, airfoil.precision),
                     )
@@ -263,8 +333,8 @@ class BatchController:
         else:
             msg = f"Batch complete: {done} files in {format_duration(elapsed)} ({failed} failed)"
         if skipped:
-            # Outputs are named by file and degree only: other settings
-            # into the same folder would otherwise silently do nothing
+            # Files fitted with these settings before: say so, or a rerun
+            # would seem to do nothing
             msg += (f" | Skipped {skipped} already in the target folder "
-                    "(outputs are named by file and degree)")
+                    "with these settings")
         self._window.statusBar().showMessage(msg)

@@ -54,9 +54,15 @@ def _slow_fits(monkeypatch, seconds=0.5):
     monkeypatch.setattr(fitting, "run_optimization", slow)
 
 
-def _during_fit(action):
-    """Run ``action`` on the GUI thread while the next fit runs."""
-    QTimer.singleShot(100, action)
+def _during_fit(window, monkeypatch, action):
+    """Run ``action`` on the GUI thread once the next fit has started."""
+    set_fitting_ui = window._set_fitting_ui
+
+    def start(fitting):
+        set_fitting_ui(fitting)
+        if fitting:
+            QTimer.singleShot(0, action)
+    monkeypatch.setattr(window, "_set_fitting_ui", start)
 
 
 def _fail(*a, **k):
@@ -108,7 +114,7 @@ def test_project_cannot_be_opened_during_a_fit(window, monkeypatch, tmp_path):
     def open_now():
         seen["enabled"] = window._action_open_project.isEnabled()
         seen["opened"] = window._project_manager.open_project(path)
-    _during_fit(open_now)
+    _during_fit(window, monkeypatch, open_now)
     window._fitting_controller.on_fit()
 
     assert seen == {"enabled": False, "opened": False}
@@ -138,7 +144,7 @@ def test_explorer_neither_loads_nor_applies_runs_during_a_fit(window, monkeypatc
                     report=window._action_fit_report.isEnabled(),
                     load=window._btn_load_run.isEnabled(),
                     delete=window._btn_delete_run.isEnabled())
-    _during_fit(use_explorer)
+    _during_fit(window, monkeypatch, use_explorer)
     window._fitting_controller.on_fit()
 
     assert seen == dict(ctrl=12, old_fit_shown=False, save=False, report=False,
@@ -211,14 +217,57 @@ def _batch_folders(tmp_path, codes=("0012",)):
 
 
 def test_batch_reports_files_it_skips(window, tmp_path):
+    from spline_fitter.gui.batch import output_name
     src, dst = _batch_folders(tmp_path, ("0012", "2412"))
-    (dst / f"naca0012.deg{window._spin_degree.value()}.spline.dat").write_text("earlier\n")
+    name = output_name("naca0012", window._get_spline_config(),
+                       window._get_optimization_config())
+    (dst / name).write_text("earlier\n")
     batch = window._batch_controller
     batch._batch_src_dir, batch._batch_dst_dir = str(src), str(dst)
     batch._on_batch_convert()
     message = window.statusBar().currentMessage()
     assert message.startswith("Batch complete: 1 files")
     assert "Skipped 1 already in the target folder" in message
+
+
+def test_batch_output_names_tell_settings_apart():
+    """A new window's settings keep the plain name; every setting that
+    changes the fit changes the name, so no two runs share an output."""
+    from dataclasses import replace
+
+    from spline_fitter.gui.batch import output_name
+    from spline_fitter.gui.ui import SplineFitterWindow
+    from spline_fitter.optimization.models import OptimizerType
+
+    fresh = SplineFitterWindow()
+    config, opt = fresh._get_spline_config(), fresh._get_optimization_config()
+    fresh.deleteLater()
+    assert output_name("naca0012", config, opt) == "naca0012.deg5.spline.dat"
+
+    variants = {
+        "degree": (replace(config, degree=4), opt),
+        "count": (replace(config, num_control_points=30), opt),
+        "sections": (replace(config, num_sections=3), opt),
+        "parametric": (replace(config, geometric_continuity=False), opt),
+        "junctions": (replace(config, num_sections=3, junction_continuity=("G2", "C1")), opt),
+        "tolerance": (config, replace(opt, tolerance=1e-4)),
+        "auto tolerance": (config, replace(opt, tolerance=2e-4)),
+        "free knots": (config, replace(opt, knot_placement="free")),
+        "smoothing": (config, replace(opt, smoothing_weight=0.01)),
+        "subsample": (config, replace(opt, max_points_per_section=200)),
+        "leading edge": (config, replace(opt, optimize_le_position=True)),
+        "direct lsq": (config, replace(opt, optimizer=OptimizerType.DIRECT_LSQ)),
+        "evaluations": (config, replace(opt, max_iterations=500)),
+    }
+    names = {key: output_name("naca0012", c, o, auto_tolerance=key == "auto tolerance")
+             for key, (c, o) in variants.items()}
+    assert len(set(names.values()) | {"naca0012.deg5.spline.dat"}) == len(names) + 1
+    assert names["junctions"] == "naca0012.deg5.s3.G2-C1.spline.dat"
+    assert names["tolerance"] == "naca0012.deg5.tol1e-4.spline.dat"
+    assert names["auto tolerance"] == "naca0012.deg5.tol-auto.spline.dat"
+    assert names["parametric"] == "naca0012.deg5.C3.spline.dat"
+    # Numbers are written the same in every locale
+    assert names["smoothing"] == "naca0012.deg5.smooth0.01.spline.dat"
 
 
 def test_batch_unlocks_the_window_after_an_error(window, tmp_path, monkeypatch):
@@ -309,3 +358,43 @@ def test_a_failing_tick_keeps_the_outcome_of_the_work():
         raise ValueError("work failed")
     with pytest.raises(ValueError, match="work failed"):
         run_in_background(work, tick)
+
+
+# -- Status and run log ---------------------------------------------------------
+
+def test_status_counts_evaluations_not_iterations(window):
+    window._fitting_controller.on_fit()
+    message = window.statusBar().currentMessage()
+    assert message.startswith("Completed (VarPro LM): ")
+    assert " evaluations in " in message and "iteration" not in message.lower()
+
+
+def test_status_counts_refits_of_a_tolerance_search(window):
+    window._seg_goal.setCurrentIndex(window._seg_goal.findData(True))
+    window._check_auto_tolerance.setChecked(False)
+    window._spin_tolerance.setValue(1e-4)
+    window._fitting_controller.on_fit()
+    assert " refits, " in window.statusBar().currentMessage()
+
+
+def test_run_log_names_the_continuity_as_fitted(window, monkeypatch):
+    from spline_fitter.gui import fitting
+    from spline_fitter.optimization.models import ContinuityMode, SplineConfig
+    infos = []
+    monkeypatch.setattr(fitting.OptimizerErrorLogger, "save",
+                        lambda self, **k: infos.append(k["extra_info"]))
+    window._fitting_controller.on_fit()
+    assert infos == ["continuity=G3, degree=5"]
+
+    text = fitting.continuity_text
+    assert text(SplineConfig(continuity=ContinuityMode.G2, geometric_continuity=True)) == "G2"
+    assert text(SplineConfig(continuity=ContinuityMode.G2)) == "C2"
+    assert text(SplineConfig(num_sections=3, junction_continuity=("G2", "C1"))) == "G2/C1"
+    assert text(SplineConfig(num_sections=1)) == "none"
+
+
+def test_status_counts_the_one_solve_of_direct_lsq(window):
+    from spline_fitter.optimization.models import OptimizerType
+    window._combo_opt.setCurrentIndex(window._combo_opt.findData(OptimizerType.DIRECT_LSQ))
+    window._fitting_controller.on_fit()
+    assert ": 1 solve in " in window.statusBar().currentMessage()
