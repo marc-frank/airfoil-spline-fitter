@@ -44,7 +44,7 @@ from typing import List, Optional, Sequence, Tuple, Union
 import numpy as np
 from scipy.linalg import block_diag, lu_factor, lu_solve
 
-from .basis import basis_derivative_matrix, basis_matrix, bending_energy_matrix, matrix_root, validate_knots
+from .basis import basis_derivative_matrix, basis_matrix, bending_energy_rows, validate_knots
 from .chain import chain_data, groups
 from .constraints import ChainConstraints, ContinuitySpec, End, parse_junctions
 
@@ -128,12 +128,15 @@ class VarProProblem:
         self.smoothing = smoothing
         self.regularization = regularization
 
+        # Penalty residual rows R with R'R = lambda S + reg I: the weighted
+        # second-derivative samples of the bending energy, then the ridge
         self.bending_energy: Optional[np.ndarray] = None
-        penalty = regularization * np.eye(self.total_ctrl)
+        root = [np.sqrt(regularization) * np.eye(self.total_ctrl)]
         if smoothing > 0:
-            self.bending_energy = block_diag(*[bending_energy_matrix(k, degree) for k in self.knots])
-            penalty += smoothing * self.bending_energy
-        self.penalty_root = matrix_root(penalty)
+            rows = block_diag(*[bending_energy_rows(k, degree) for k in self.knots])
+            self.bending_energy = rows.T @ rows
+            root.insert(0, np.sqrt(smoothing) * rows)
+        self.penalty_root = np.vstack(root)
 
         self.junctions = parse_junctions(continuity, self.num_sections - 1, fix_junctions)
         self.constraints = ChainConstraints(self.sections, self.knots, degree, self.junctions, start, end)
@@ -209,7 +212,7 @@ class VarProProblem:
     def residual(self, t_flat: np.ndarray, theta: Optional[np.ndarray] = None) -> np.ndarray:
         """Data residuals then penalty residuals, each flattened point-major.
 
-        Shape ``(dim * (total_pts + total_ctrl),)``. Also records
+        Shape ``(dim * (total_pts + len(penalty_root)),)``. Also records
         ``last_control_points`` and the data-only ``last_rms_error``.
         """
         N, P, _, _ = self.solve(t_flat, theta=theta)
@@ -220,7 +223,7 @@ class VarProProblem:
 
     def _stack(self, N: np.ndarray, dP_by_coord: List[np.ndarray]) -> np.ndarray:
         J_data = np.empty((self.total_pts * self.dim, dP_by_coord[0].shape[1]))
-        J_penalty = np.empty((self.total_ctrl * self.dim, dP_by_coord[0].shape[1]))
+        J_penalty = np.empty((len(self.penalty_root) * self.dim, dP_by_coord[0].shape[1]))
         for k, dP in enumerate(dP_by_coord):
             J_data[k::self.dim] = N @ dP
             J_penalty[k::self.dim] = self.penalty_root @ dP
@@ -243,10 +246,40 @@ class VarProProblem:
             J[diagonal * self.dim + k, diagonal] += tangent[:, k]
         return J
 
+    def matrices(self, t_flat: np.ndarray, theta: Optional[np.ndarray] = None):
+        """``(N, R, C, d)``: the basis, penalty-root and constraint matrices of the
+        residual at (t, theta)."""
+        theta = self.theta if theta is None else np.asarray(theta, dtype=np.float64)
+        C, d, _, _ = self._constraints(theta)
+        return self._block_matrix(t_flat, derivative=False), self.penalty_root, C, d
+
+    def matrix_jacobian(self, t_flat: np.ndarray, theta: Optional[np.ndarray],
+                        changes: Sequence[Tuple[np.ndarray, ...]]) -> np.ndarray:
+        """Derivative of :meth:`residual` w.r.t. outer variables the matrices depend on.
+
+        Each change is ``(dN, dR, dC, dd)``, the derivative of :meth:`matrices`
+        w.r.t. one variable (a knot position) at fixed (t, theta). The KKT
+        solve is differentiated exactly, so the matrices alone may come from
+        finite differences: differencing the residual itself would amplify
+        the rounding of the solve by the conditioning of the normal equations.
+        Returns one column per change.
+        """
+        N, P, _, kkt = self.solve(t_flat, theta=theta)
+        mu = self._cache[4]
+        R = self.penalty_root
+        misfit = self.data - N @ P
+        penalty_residual = R @ P
+        columns = []
+        for dN, dR, dC, dd in changes:
+            rhs = dN.T @ misfit - N.T @ (dN @ P) - dR.T @ penalty_residual - R.T @ (dR @ P) - dC.T @ mu
+            dP = kkt.solve(rhs, dd - dC @ P)
+            columns.append(np.concatenate(((dN @ P + N @ dP).ravel(), (dR @ P + R @ dP).ravel())))
+        return np.stack(columns, axis=1)
+
     def parameter_jacobian(self, t_flat: np.ndarray, theta: Optional[np.ndarray] = None) -> np.ndarray:
         """Exact derivative of :meth:`residual` w.r.t. theta, shape (len(residual), num_params)."""
         if self.num_params == 0:
-            return np.zeros((self.dim * (self.total_pts + self.total_ctrl), 0))
+            return np.zeros((self.dim * (self.total_pts + len(self.penalty_root)), 0))
         N, P, _, kkt = self.solve(t_flat, theta=theta)
         mu, used_theta = self._cache[4], self._cache[5]
         _, _, dC, dd = self._constraints(used_theta)

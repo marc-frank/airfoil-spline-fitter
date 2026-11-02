@@ -53,8 +53,9 @@ def test_three_dimensional_jacobian():
     problem = bv.VarProProblem(sections, bv.open_uniform_knots(3, 6), 3, continuity=2, smoothing=0.01)
     t = bv.chain.chain_parameters([np.linspace(0, 1, 8), np.linspace(0, 1, 8)], sections)
     jac = problem.jacobian(t)
-    # The shared junction point is one data point
-    assert jac.shape == (3 * (15 + 12), 15)
+    # The shared junction point is one data point; the penalty has a row per
+    # Gauss node (8 on each of the 3 spans of both sections) and per control point
+    assert jac.shape == (3 * (15 + 2 * 3 * 8 + 12), 15)
     for j in [1, 6, 10]:
         step = np.zeros_like(t)
         step[j] = 1e-6
