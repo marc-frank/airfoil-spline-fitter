@@ -261,3 +261,44 @@ def test_remove_evals_script_writes_the_migrated_file(tmp_path, monkeypatch):
     script.main()
     history = load_project(str(tmp_path / "out.asfproj")).optimization_runs[0].loss_history
     assert [(r.iteration_number, r.error_value) for r in history] == [(1, 1.0)]
+
+
+# --- leading edge and retired project fields -------------------------------
+
+LE_INDEX = int(np.argmin(np.hypot(PTS[:, 0], PTS[:, 1])))
+
+
+@pytest.mark.parametrize("transform", [
+    lambda p: p,
+    lambda p: p + [0.3, -0.2],                      # shifted, LE no longer at the origin
+    lambda p: p * 200.0,                            # millimetres
+    lambda p: (p - [1.0, 0.0]) * 100.0,             # TE at the origin, 0-100 scale
+    lambda p: p @ np.array([[np.cos(0.2), np.sin(0.2)], [-np.sin(0.2), np.cos(0.2)]]),  # rotated
+], ids=["normalized", "shifted", "mm", "te at origin", "rotated"])
+def test_leading_edge_does_not_depend_on_where_the_data_sits(transform):
+    from spline_fitter.geometry import find_leading_edge_index
+    points = [tuple(p) for p in transform(PTS)]
+    assert find_leading_edge_index(points) == LE_INDEX
+    assert find_leading_edge_index(np.array(points)) == LE_INDEX  # as the deviation plot passes it
+    for n_sections in (2, 4):
+        sections, junctions = split_into_sections(points, n_sections)
+        assert LE_INDEX in junctions
+        assert sections[n_sections // 2 - 1][-1] == points[LE_INDEX]
+
+
+def test_unused_fields_are_not_written_and_old_projects_load(tmp_path):
+    path = tmp_path / "p.asfproj"
+    save_project(_project(), str(path))
+    data = json.loads(path.read_text(encoding="utf-8"))
+    run = data["optimization_runs"][0]
+    for key in ("smoothing_factor", "early_stop_patience", "relative_tolerance"):
+        assert key not in run["optimization_config"]
+    assert "early_stopped" not in run["result"]
+    # A project saved before these fields were dropped still loads
+    run["optimization_config"].update(smoothing_factor=0.5, early_stop_patience=20,
+                                      relative_tolerance=1e-4)
+    run["result"]["early_stopped"] = True
+    path.write_text(json.dumps(data), encoding="utf-8")
+    loaded = load_project(str(path)).optimization_runs[0]
+    assert loaded.optimization_config == _project().optimization_runs[0].optimization_config
+    assert loaded.result.final_error == 1e-5

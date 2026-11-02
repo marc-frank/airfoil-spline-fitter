@@ -33,29 +33,32 @@ def find_leading_edge_index(coordinates: Sequence[Point2D]) -> int:
     """
     Find the index of the leading edge point in airfoil coordinates.
     
-    The leading edge is identified as the point closest to the origin,
-    since coordinates should be normalized with LE at (0, 0).
-    
+    The leading edge is the point farthest from the trailing edge (the
+    midpoint of the first and last points), the rule the file reader
+    normalizes by, so it is found wherever the data sits: shifted, scaled,
+    rotated or in millimetres. The first of equally far points is taken.
+
     Args:
         coordinates: List of (x, y) airfoil coordinates in Selig format
-        
+
     Returns:
         Index of the leading edge point
-        
+
     Raises:
         ValueError: If coordinates is empty
     """
-    if not coordinates:
+    if len(coordinates) == 0:
         raise ValueError("Cannot find leading edge in empty coordinate list")
 
-    # Find point with minimum distance to origin
-    min_dist_sq = float('inf')
+    te_x = (coordinates[0][0] + coordinates[-1][0]) / 2.0
+    te_y = (coordinates[0][1] + coordinates[-1][1]) / 2.0
+    max_dist_sq = -1.0
     le_index = 0
 
     for i, (x, y) in enumerate(coordinates):
-        dist_sq = x * x + y * y
-        if dist_sq < min_dist_sq:
-            min_dist_sq = dist_sq
+        dist_sq = (x - te_x) ** 2 + (y - te_y) ** 2
+        if dist_sq > max_dist_sq:
+            max_dist_sq = dist_sq
             le_index = i
 
     return le_index

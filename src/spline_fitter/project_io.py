@@ -151,10 +151,7 @@ def _encode_optimization_config(config: OptimizationConfig) -> dict[str, Any]:
     return {
         "optimizer": config.optimizer.value,
         "max_iterations": config.max_iterations,
-        "smoothing_factor": config.smoothing_factor,
         "smoothing_weight": config.smoothing_weight,
-        "early_stop_patience": config.early_stop_patience,
-        "relative_tolerance": config.relative_tolerance,
         "optimize_le_position": config.optimize_le_position,
         "parameterization": config.parameterization,
         "tolerance": config.tolerance,
@@ -176,7 +173,6 @@ def _encode_fit_result(result: FitResult) -> dict[str, Any]:
         "num_evaluations": result.num_evaluations,
         "elapsed_seconds": result.elapsed_seconds,
         "converged": result.converged,
-        "early_stopped": result.early_stopped,
         "cancelled": result.cancelled,
         "section_knots": result.section_knots,
         "report": result.report,
@@ -270,10 +266,7 @@ def _decode_optimization_config(data: dict[str, Any]) -> OptimizationConfig:
     return OptimizationConfig(
         optimizer=_optimizer_type_from_str(data["optimizer"]),
         max_iterations=data.get("max_iterations", 10000),
-        smoothing_factor=data.get("smoothing_factor"),
         smoothing_weight=data.get("smoothing_weight", 1e-3),
-        early_stop_patience=data.get("early_stop_patience", 50),
-        relative_tolerance=data.get("relative_tolerance", 1e-6),
         optimize_le_position=data.get("optimize_le_position", False),
         parameterization=data.get("parameterization", "centripetal"),
         tolerance=data.get("tolerance"),
@@ -285,7 +278,9 @@ def _decode_optimization_config(data: dict[str, Any]) -> OptimizationConfig:
         grow_control_points=data.get("grow_control_points", data.get("tolerance") is not None),
         custom_parameters=(None if data.get("custom_parameters") is None else
                            [np.asarray(u, dtype=np.float64) for u in data["custom_parameters"]]),
-        # Older projects may also contain "fairing", "metric" and "seed"; they are ignored.
+        # Older projects may also contain "fairing", "metric", "seed",
+        # "smoothing_factor", "early_stop_patience" and "relative_tolerance",
+        # which no optimizer uses; they are ignored.
     )
 
 
@@ -299,10 +294,10 @@ def _decode_fit_result(data: dict[str, Any], section_control_points: list[PointL
         num_evaluations=data["num_evaluations"],
         elapsed_seconds=data["elapsed_seconds"],
         converged=data.get("converged", True),
-        early_stopped=data.get("early_stopped", False),
         cancelled=data.get("cancelled", False),
         section_knots=data.get("section_knots"),
         report=data.get("report"),
+        # Older projects may also contain "early_stopped", which nothing sets.
     )
 
 
@@ -530,6 +525,6 @@ def get_run_summary(run: OptimizationRun) -> str:
         f"Final Error: {res.final_error:.6e}",
         f"Iterations: {res.num_iterations}, Evaluations: {res.num_evaluations}",
         f"Elapsed: {res.elapsed_seconds:.2f}s",
-        f"Converged: {res.converged}, Early Stopped: {res.early_stopped}",
+        f"Converged: {res.converged}",
     ]
     return "\n".join(lines)
