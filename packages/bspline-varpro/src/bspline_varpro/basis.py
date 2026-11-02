@@ -102,9 +102,17 @@ def insert_knot(
 
     Returns:
         ``(new_knots, new_control_points)``.
+
+    Raises:
+        ValueError: If ``u`` is not strictly inside the domain or would exceed
+            multiplicity ``degree``.
     """
     knots = np.asarray(knots, dtype=np.float64)
     P = np.asarray(control_points, dtype=np.float64)
+    if not knots[degree] < u < knots[-degree - 1]:
+        raise ValueError(f"Knot {u} must lie strictly inside ({knots[degree]}, {knots[-degree - 1]}).")
+    if np.count_nonzero(knots == u) >= degree:
+        raise ValueError(f"Knot {u} already has multiplicity {degree}.")
     k = int(np.searchsorted(knots, u, side="right")) - 1
     k = min(max(k, degree), len(P) - 1)
     new_P = np.empty((len(P) + 1,) + P.shape[1:])

@@ -95,3 +95,17 @@ def test_knots_clustered_at_the_leading_edge_beat_uniform_knots():
                  bv.clamped_knots(5, np.sort(1 - upper_interior))]
     nonuniform = bv.fit(sections, degree=5, knots=clustered, continuity=2, max_nfev=300)
     assert nonuniform.max_residual < 0.7 * uniform.max_residual
+
+
+@pytest.mark.parametrize("u", [0.0, 1.0, -0.1, 1.5])
+def test_insert_knot_rejects_values_outside_the_domain(u):
+    with pytest.raises(ValueError, match="strictly inside"):
+        bv.insert_knot(bv.open_uniform_knots(3, 5), np.zeros((5, 2)), 3, u)
+
+
+def test_insert_knot_rejects_excess_multiplicity():
+    knots, P = bv.open_uniform_knots(3, 5), np.zeros((5, 2))
+    for _ in range(2):
+        knots, P = bv.insert_knot(knots, P, 3, 0.5)
+    with pytest.raises(ValueError, match="multiplicity"):
+        bv.insert_knot(knots, P, 3, 0.5)

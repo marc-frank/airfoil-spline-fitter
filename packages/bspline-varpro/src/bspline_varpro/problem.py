@@ -2,16 +2,19 @@
 
 For data D, parameters t, and control points P, the separable problem
 
-    min_{t, P}  ||N(t) P - D||² + P' (lambda S + reg I) P   s.t.  C(theta) P = d(theta)
+    min_{t, P}  ||N(t) P - D||² + (P - c)' (lambda S + reg I) (P - c)   s.t.  C(theta) P = d(theta)
 
-is linear in P. Variable projection (Golub & Pereyra 1973) eliminates P by
-solving the equality-constrained least-squares (KKT) system
+is linear in P. The ridge pulls the control points towards the centroid c of
+the data, not the origin, so a fit does not change when the data are moved
+(the bending energy of a constant curve is zero, so S c = 0). Variable
+projection (Golub & Pereyra 1973) eliminates P by solving the
+equality-constrained least-squares (KKT) system
 
-    [N'N + lambda S + reg I   C'] [P*]   [N'D]
-    [C                        0 ] [mu] = [d  ]
+    [N'N + lambda S + reg I   C'] [P*]   [N'D + reg c]
+    [C                        0 ] [mu] = [d          ]
 
 for every (t, theta), leaving a reduced problem in the outer variables alone.
-Its residual is ``[N(t) P*(t) - D ; R P*(t)]`` with ``R'R = lambda S + reg I``,
+Its residual is ``[N(t) P*(t) - D ; R (P*(t) - c)]`` with ``R'R = lambda S + reg I``,
 so the outer objective equals the inner one exactly.
 
 Every data point has a chain parameter t in [0, S] for S sections
@@ -91,11 +94,13 @@ class VarProProblem:
         degree: Spline degree.
         continuity: Junction continuity, one spec for all junctions or a list:
             ``"G2"`` (geometric), ``"C1"`` or ``1`` (parametric), or a
-            :class:`~bspline_varpro.constraints.Junction`.
+            :class:`~bspline_varpro.constraints.Junction`. Defaults as in
+            :func:`~bspline_varpro.fitting.fit`.
         fix_junctions: Pin junctions to the last point of their section (for
             specs that are not :class:`Junction` objects).
         smoothing: Weight lambda of the bending-energy penalty.
-        regularization: Ridge ``reg`` that keeps the KKT system nonsingular.
+        regularization: Ridge ``reg`` (towards the data centroid) that keeps the
+            KKT system nonsingular.
         start, end: :class:`~bspline_varpro.constraints.End` conditions of the chain.
     """
 
@@ -104,9 +109,9 @@ class VarProProblem:
         sections: Sequence[np.ndarray],
         knots: Union[np.ndarray, Sequence[np.ndarray]],
         degree: int,
-        continuity: Union[ContinuitySpec, Sequence[ContinuitySpec]] = 1,
+        continuity: Union[ContinuitySpec, Sequence[ContinuitySpec]] = "G1",
         fix_junctions: bool = True,
-        smoothing: float = 0.0,
+        smoothing: float = 1e-3,
         regularization: float = 1e-12,
         start: End = End(),
         end: End = End(),
@@ -137,6 +142,9 @@ class VarProProblem:
             self.bending_energy = rows.T @ rows
             root.insert(0, np.sqrt(smoothing) * rows)
         self.penalty_root = np.vstack(root)
+        # Centroid the penalty pulls towards, and its term R'R c of the KKT right-hand side
+        self.center = np.mean(self.data, axis=0)
+        self._center_rhs = self.penalty_root.T @ (self.penalty_root @ np.tile(self.center, (self.total_ctrl, 1)))
 
         self.junctions = parse_junctions(continuity, self.num_sections - 1, fix_junctions)
         self.constraints = ChainConstraints(self.sections, self.knots, degree, self.junctions, start, end)
@@ -199,7 +207,7 @@ class VarProProblem:
             A = A + self.smoothing * self.bending_energy
         C, d, _, _ = self._constraints(theta)
         kkt = KKTSolver(A, C, self.regularization)
-        P, mu = kkt.solve_full(N.T @ self.data, d)
+        P, mu = kkt.solve_full(N.T @ self.data + self._center_rhs, d)
 
         self._cache_key = key
         self._cache = (N, P, dN, kkt, mu, theta)
@@ -219,7 +227,7 @@ class VarProProblem:
         data_residual = N @ P - self.data
         self.last_control_points = P
         self.last_rms_error = float(np.sqrt(np.sum(data_residual ** 2) / self.total_pts))
-        return np.concatenate((data_residual.ravel(), (self.penalty_root @ P).ravel()))
+        return np.concatenate((data_residual.ravel(), (self.penalty_root @ (P - self.center)).ravel()))
 
     def _stack(self, N: np.ndarray, dP_by_coord: List[np.ndarray]) -> np.ndarray:
         J_data = np.empty((self.total_pts * self.dim, dP_by_coord[0].shape[1]))
@@ -234,6 +242,12 @@ class VarProProblem:
 
         ``dr_i/dt_j = [i == j] dN_i P* + N_i dP*/dt_j`` for data rows and
         ``R dP*/dt_j`` for penalty rows.
+
+        A point exactly on a junction (an integer t) lies on the section that
+        starts there, so its column is the derivative from the right. Across a
+        geometric junction with alpha != 1 the residual has a kink there (the
+        speed on the left is alpha times that on the right), and the column is
+        one-sided; a parametric junction has no kink.
         """
         N, P, dN, kkt = self.solve(t_flat, with_derivatives=True, theta=theta)
         tangent = dN @ P
@@ -268,12 +282,13 @@ class VarProProblem:
         mu = self._cache[4]
         R = self.penalty_root
         misfit = self.data - N @ P
-        penalty_residual = R @ P
+        shifted = P - self.center
+        penalty_residual = R @ shifted
         columns = []
         for dN, dR, dC, dd in changes:
-            rhs = dN.T @ misfit - N.T @ (dN @ P) - dR.T @ penalty_residual - R.T @ (dR @ P) - dC.T @ mu
+            rhs = dN.T @ misfit - N.T @ (dN @ P) - dR.T @ penalty_residual - R.T @ (dR @ shifted) - dC.T @ mu
             dP = kkt.solve(rhs, dd - dC @ P)
-            columns.append(np.concatenate(((dN @ P + N @ dP).ravel(), (dR @ P + R @ dP).ravel())))
+            columns.append(np.concatenate(((dN @ P + N @ dP).ravel(), (dR @ shifted + R @ dP).ravel())))
         return np.stack(columns, axis=1)
 
     def parameter_jacobian(self, t_flat: np.ndarray, theta: Optional[np.ndarray] = None) -> np.ndarray:
