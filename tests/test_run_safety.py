@@ -393,8 +393,12 @@ def test_run_log_names_the_continuity_as_fitted(window, monkeypatch):
     assert text(SplineConfig(num_sections=1)) == "none"
 
 
-def test_status_counts_the_one_solve_of_direct_lsq(window):
+def test_status_counts_the_solves_of_direct_lsq(window):
+    from spline_fitter.optimization import get_evaluation_count
     from spline_fitter.optimization.models import OptimizerType
     window._combo_opt.setCurrentIndex(window._combo_opt.findData(OptimizerType.DIRECT_LSQ))
     window._fitting_controller.on_fit()
-    assert ": 1 solve in " in window.statusBar().currentMessage()
+    solves = get_evaluation_count()
+    assert solves >= 1
+    noun = "solve" if solves == 1 else "solves"
+    assert f": {solves} {noun} in " in window.statusBar().currentMessage()

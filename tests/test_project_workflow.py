@@ -239,13 +239,12 @@ def test_a_failed_save_keeps_the_previous_file(window, tmp_path, monkeypatch):
     good = path.read_text()
     _add(window, 12)
 
-    def broken_dump(obj, f, **kw):
-        f.write("{")
+    def broken_dumps(obj, **kw):
         raise TypeError("not serializable")
-    monkeypatch.setattr(project_io.json, "dump", broken_dump)
+    monkeypatch.setattr(project_io.json, "dumps", broken_dumps)
     window._project_manager.on_save_project()
     assert path.read_text() == good
-    assert not (tmp_path / "p.asfproj.tmp").exists()
+    assert not list(tmp_path.glob("*.tmp"))
     assert window._project_manager.is_modified
     assert "Save failed" in window.statusBar().currentMessage()
 

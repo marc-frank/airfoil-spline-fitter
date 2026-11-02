@@ -32,6 +32,7 @@ from ..optimization.models import (
     FitResult,
     IterationRecord,
     OptimizationConfig,
+    OptimizerType,
     SplineConfig,
 )
 from .background import run_in_background
@@ -56,12 +57,12 @@ def _count(value: int, noun: str) -> str:
 
 def fit_effort(result, opt_config: OptimizationConfig, evaluations: int) -> str:
     """What a fit took: its residual evaluations, and the refits of a
-    tolerance search; Direct LSQ evaluates nothing, it solves once."""
+    tolerance search; Direct LSQ counts its linear solves instead."""
     if opt_config.tolerance is not None:
         return f"{_count(result.nit, 'refit')}, {_count(evaluations, 'evaluation')}"
-    if evaluations:
-        return _count(evaluations, "evaluation")
-    return _count(result.nit, "solve")
+    if opt_config.optimizer == OptimizerType.DIRECT_LSQ:
+        return _count(evaluations or result.nit, "solve")
+    return _count(evaluations, "evaluation")
 
 
 class FittingController:

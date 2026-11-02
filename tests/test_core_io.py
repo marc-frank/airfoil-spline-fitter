@@ -204,12 +204,15 @@ def test_too_few_points_on_one_side_is_an_error():
 
 
 def test_count_groups_thousands_apart_from_the_decimal_point():
+    # The window takes the system locale's decimal point: set both explicitly
+    before = formatting.decimal_point()
     try:
+        formatting.set_decimal_point(".")
         assert formatting.format_count(1500, "point") == "1,500 points"
         formatting.set_decimal_point(",")
         assert formatting.format_count(1500, "point") == "1.500 points"
     finally:
-        formatting.set_decimal_point(".")
+        formatting.set_decimal_point(before)
 
 
 def test_core_modules_import_without_qt():
