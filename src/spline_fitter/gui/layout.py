@@ -308,6 +308,7 @@ class WindowLayoutMixin:
 
         file_menu.addSeparator()
         self._action_open_project = file_menu.addAction("Open &project...")
+        self._action_open_project.setShortcut("Ctrl+Shift+O")
         self._action_save_project = file_menu.addAction("&Save project")
         self._action_save_project.setShortcut("Ctrl+S")
         self._action_save_project.setEnabled(False)
@@ -328,6 +329,9 @@ class WindowLayoutMixin:
         self._action_undo.setShortcuts(QKeySequence.keyBindings(QKeySequence.StandardKey.Undo))
         self._action_redo = edit_menu.addAction("&Redo")
         self._action_redo.setShortcuts(QKeySequence.keyBindings(QKeySequence.StandardKey.Redo))
+        # Brings back the runs of the last delete in the explorer
+        self._action_restore_runs = edit_menu.addAction("Restore &deleted runs")
+        self._action_restore_runs.setEnabled(False)
         edit_menu.addSeparator()
         # Ctrl+V pastes an airfoil only while no input field has focus: a
         # focused field takes the key for its own text first
@@ -651,7 +655,9 @@ class WindowLayoutMixin:
         btn_row.addWidget(self._btn_load_run)
         self._btn_delete_run = QPushButton("Delete")
         self._btn_delete_run.setEnabled(False)
-        self._btn_delete_run.setToolTip("Delete the selected runs from the project")
+        self._btn_delete_run.setToolTip(
+            "Delete the selected runs from the project (Delete key).\n"
+            "Edit > Restore deleted runs brings them back.")
         btn_row.addWidget(self._btn_delete_run)
         btn_row.addStretch()
         layout.addLayout(btn_row)
