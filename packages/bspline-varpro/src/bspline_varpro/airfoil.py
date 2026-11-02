@@ -113,7 +113,13 @@ def read_dat(path: Union[str, Path]) -> Tuple[str, np.ndarray]:
         raise ValueError(f"No coordinates found in {path}.")
     points = np.array(rows)
     n_upper, n_lower = points[0]
-    if len(points) > 4 and min(n_upper, n_lower) >= 2 and np.all(points[0] == np.round(points[0])):
+    # Lednicer lists start at the leading edge, Selig ones at the trailing edge: an
+    # integer first row (coordinates in mm) is only taken as counts if the rows after it
+    # start nearer the smallest x than the largest
+    x = points[1:, 0]
+    starts_at_le = len(x) > 0 and x[0] - np.min(x) < np.max(x) - x[0]
+    if (len(points) > 4 and min(n_upper, n_lower) >= 2 and np.all(points[0] == np.round(points[0]))
+            and starts_at_le):
         points = points[1:]
         if n_upper + n_lower != len(points):
             n_upper = np.argmin(np.diff(points[:, 0])) + 1
