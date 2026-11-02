@@ -176,105 +176,102 @@ def compute_curve_energy(
     if curve is None:
         return defaults
 
-    try:
-        knots = np.asarray(curve.knot_vector, dtype=np.float64)
+    knots = np.asarray(curve.knot_vector, dtype=np.float64)
 
-        if knots.size < 2 or not np.all(np.isfinite(knots)):
-            return defaults
-
-        nodes, weights = _get_gauss_nodes_weights(quadrature_order)
-        degree = int(curve.degree)
-
-        # Get spline objects for derivatives
-        spline_x = curve._spline_x
-        spline_y = curve._spline_y
-
-        d1x_spline = spline_x.derivative(1)
-        d1y_spline = spline_y.derivative(1)
-
-        has_second_deriv = degree >= 2
-        has_third_deriv = degree >= 3
-
-        if has_second_deriv:
-            d2x_spline = spline_x.derivative(2)
-            d2y_spline = spline_y.derivative(2)
-
-        if has_third_deriv:
-            d3x_spline = spline_x.derivative(3)
-            d3y_spline = spline_y.derivative(3)
-
-        # Integrate over each knot span
-        total_length = 0.0
-        curvature_integral = 0.0
-        gradient_integral = 0.0
-
-        for a, b in zip(knots[:-1], knots[1:], strict=False):
-            if not (np.isfinite(a) and np.isfinite(b)):
-                continue
-            if b <= a + 1e-12:
-                continue
-
-            # Transform quadrature points to [a, b]
-            half_span = 0.5 * (b - a)
-            mid_point = 0.5 * (a + b)
-            t_values = mid_point + half_span * nodes
-
-            # Evaluate first derivatives (velocity)
-            vx = d1x_spline(t_values)
-            vy = d1y_spline(t_values)
-            speed = np.hypot(vx, vy)
-            speed = np.maximum(speed, 1e-12)  # Avoid division by zero
-
-            # Weighted integration
-            w = weights * half_span
-            total_length += float(np.sum(w * speed))
-
-            if not has_second_deriv:
-                continue
-
-            # Second derivatives (acceleration)
-            ax = d2x_spline(t_values)
-            ay = d2y_spline(t_values)
-
-            # Curvature: κ = (v × a) / |v|³
-            cross = vx * ay - vy * ax
-            kappa = cross / (speed ** 3)
-
-            # Curvature squared integral: ∫κ² |v| dt
-            curvature_integral += float(np.sum(w * (kappa ** 2) * speed))
-
-            # Third derivatives (jerk); zero for a quadratic, whose curvature
-            # still changes along it
-            if has_third_deriv:
-                jx = d3x_spline(t_values)
-                jy = d3y_spline(t_values)
-            else:
-                jx = jy = np.zeros_like(t_values)
-
-            # Curvature derivative with respect to arc length
-            cross_prime = vx * jy - vy * jx
-            dot = vx * ax + vy * ay
-            speed_sq = speed ** 2
-
-            # dκ/ds = (cross' * |v|² - 3 * cross * dot) / |v|⁶
-            numerator = cross_prime * speed_sq - 3.0 * cross * dot
-            dk_ds = numerator / (speed ** 6)
-
-            # Gradient squared integral: ∫(dκ/ds)² |v| dt
-            gradient_integral += float(np.sum(w * (dk_ds ** 2) * speed))
-
-        # Normalize by arc length
-        if total_length <= 1e-12 or not math.isfinite(total_length):
-            return defaults
-
-        curvature_squared = curvature_integral / total_length if curvature_integral > 0 else 0.0
-        curvature_gradient = gradient_integral / total_length if gradient_integral > 0 else 0.0
-
-        return {
-            'length': total_length,
-            'curvature_squared': curvature_squared,
-            'curvature_gradient': curvature_gradient,
-        }
-
-    except Exception:
+    if knots.size < 2 or not np.all(np.isfinite(knots)):
         return defaults
+
+    nodes, weights = _get_gauss_nodes_weights(quadrature_order)
+    degree = int(curve.degree)
+
+    # Get spline objects for derivatives
+    spline_x = curve._spline_x
+    spline_y = curve._spline_y
+
+    d1x_spline = spline_x.derivative(1)
+    d1y_spline = spline_y.derivative(1)
+
+    has_second_deriv = degree >= 2
+    has_third_deriv = degree >= 3
+
+    if has_second_deriv:
+        d2x_spline = spline_x.derivative(2)
+        d2y_spline = spline_y.derivative(2)
+
+    if has_third_deriv:
+        d3x_spline = spline_x.derivative(3)
+        d3y_spline = spline_y.derivative(3)
+
+    # Integrate over each knot span
+    total_length = 0.0
+    curvature_integral = 0.0
+    gradient_integral = 0.0
+
+    for a, b in zip(knots[:-1], knots[1:], strict=False):
+        if not (np.isfinite(a) and np.isfinite(b)):
+            continue
+        if b <= a + 1e-12:
+            continue
+
+        # Transform quadrature points to [a, b]
+        half_span = 0.5 * (b - a)
+        mid_point = 0.5 * (a + b)
+        t_values = mid_point + half_span * nodes
+
+        # Evaluate first derivatives (velocity)
+        vx = d1x_spline(t_values)
+        vy = d1y_spline(t_values)
+        speed = np.hypot(vx, vy)
+        speed = np.maximum(speed, 1e-12)  # Avoid division by zero
+
+        # Weighted integration
+        w = weights * half_span
+        total_length += float(np.sum(w * speed))
+
+        if not has_second_deriv:
+            continue
+
+        # Second derivatives (acceleration)
+        ax = d2x_spline(t_values)
+        ay = d2y_spline(t_values)
+
+        # Curvature: κ = (v × a) / |v|³
+        cross = vx * ay - vy * ax
+        kappa = cross / (speed ** 3)
+
+        # Curvature squared integral: ∫κ² |v| dt
+        curvature_integral += float(np.sum(w * (kappa ** 2) * speed))
+
+        # Third derivatives (jerk); zero for a quadratic, whose curvature
+        # still changes along it
+        if has_third_deriv:
+            jx = d3x_spline(t_values)
+            jy = d3y_spline(t_values)
+        else:
+            jx = jy = np.zeros_like(t_values)
+
+        # Curvature derivative with respect to arc length
+        cross_prime = vx * jy - vy * jx
+        dot = vx * ax + vy * ay
+        speed_sq = speed ** 2
+
+        # dκ/ds = (cross' * |v|² - 3 * cross * dot) / |v|⁶
+        numerator = cross_prime * speed_sq - 3.0 * cross * dot
+        dk_ds = numerator / (speed ** 6)
+
+        # Gradient squared integral: ∫(dκ/ds)² |v| dt
+        gradient_integral += float(np.sum(w * (dk_ds ** 2) * speed))
+
+    # Normalize by arc length
+    if total_length <= 1e-12 or not math.isfinite(total_length):
+        return defaults
+
+    curvature_squared = curvature_integral / total_length if curvature_integral > 0 else 0.0
+    curvature_gradient = gradient_integral / total_length if gradient_integral > 0 else 0.0
+
+    return {
+        'length': total_length,
+        'curvature_squared': curvature_squared,
+        'curvature_gradient': curvature_gradient,
+    }
+
