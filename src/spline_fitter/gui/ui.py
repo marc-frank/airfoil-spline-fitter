@@ -127,7 +127,11 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
             self.reset_panel_widths()
 
     def closeEvent(self, event):
-        """Stop a running fit so its worker thread ends with the window."""
+        """Ask to save unsaved runs; stop a running fit so its worker thread
+        ends with the window."""
+        if not self._project_manager.confirm_discard():
+            event.ignore()
+            return
         if self._is_fitting:
             self._cancel_requested = True
         super().closeEvent(event)
@@ -662,6 +666,9 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._menu_recent.setEnabled(not fitting)
         self._action_paste_airfoil.setEnabled(not fitting)
         self._action_batch.setEnabled(not fitting)
+        # A project opened mid-fit would receive the fit of the airfoil before
+        self._action_open_project.setEnabled(not fitting)
+        self._project_manager.update_run_buttons()
         if hasattr(self, "_settings_history"):
             self._update_undo_actions()
 

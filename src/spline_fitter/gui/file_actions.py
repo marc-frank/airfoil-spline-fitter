@@ -119,6 +119,10 @@ class FileActionsMixin:
                      path: str = "", verb: str = "Loaded") -> bool:
         """Make ``coords`` the airfoil to fit, from a file, the clipboard or
         the NACA generator; whether it worked."""
+        # The new airfoil closes the project: its unsaved runs first
+        if not self._project_manager.confirm_discard():
+            self.statusBar().showMessage("Cancelled: the project stays open")
+            return False
         try:
             # Create airfoil data object with current section count
             self._limit_sections(len(coords))

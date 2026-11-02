@@ -17,7 +17,7 @@ import os
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QDir
-from PyQt6.QtWidgets import QFileDialog
+from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
 from ..formatting import format_duration, number
 from ..optimization.models import (
@@ -30,6 +30,7 @@ from ..optimization.models import (
 )
 from ..project_io import create_optimization_run, create_project, load_project, save_project
 from .explorer import column, is_number
+from .file_actions import PROJECT_SUFFIX
 
 if TYPE_CHECKING:
     from .ui import SplineFitterWindow
@@ -75,6 +76,34 @@ class ProjectManager:
         self._project_modified = False
         self._show_project_label()
         self._window._set_project_save_enabled(False)
+        # The explorer lists no runs of the previous airfoil
+        self._populate_table()
+        self.refresh_comparison_plot()
+
+    def confirm_discard(self) -> bool:
+        """Whether the open project may be closed: asks to save its unsaved
+        runs first. False when the user cancels, or the save does not happen."""
+        if self._project is None or not self._project_modified:
+            return True
+        answer = self._ask_to_save()
+        if answer == QMessageBox.StandardButton.Save:
+            self.on_save_project()
+            return not self._project_modified
+        return answer == QMessageBox.StandardButton.Discard
+
+    def _ask_to_save(self) -> QMessageBox.StandardButton:
+        """Ask whether to save the unsaved runs: Save, Discard or Cancel."""
+        name = os.path.basename(self._project_path) if self._project_path else "the project"
+        box = QMessageBox(self._window)
+        box.setWindowTitle("Unsaved runs")
+        box.setText(f"Save the changes to {name}?")
+        box.setInformativeText("Runs that are not saved are lost.")
+        Button = QMessageBox.StandardButton
+        box.setStandardButtons(Button.Save | Button.Discard | Button.Cancel)
+        box.button(Button.Discard).setText("Don't save")
+        box.setDefaultButton(Button.Save)
+        box.setEscapeButton(Button.Cancel)
+        return Button(box.exec())
 
     # ------------------------------------------------------------------
     # Open / Save
@@ -94,16 +123,30 @@ class ProjectManager:
 
     def open_project(self, file_path: str) -> bool:
         """Open the project at ``file_path``; whether it opened."""
+        if self._window._is_fitting:
+            self._window.statusBar().showMessage("Cancel the running fit to open a file")
+            return False
         try:
             project = load_project(file_path)
+        except Exception as e:
+            self._window.statusBar().showMessage(f"Failed to load project: {e}")
+            self._window._play_error_chime()
+            return False
+        # Asked only once the file has loaded: a broken file closes nothing
+        if not self.confirm_discard():
+            self._window.statusBar().showMessage("Open cancelled.")
+            return False
 
+        try:
             # Set project state
             self._project = project
             self._project_path = file_path
             self._project_modified = False
 
-            # Load airfoil from project
+            # Load airfoil from project; the previous airfoil's fit goes with it
             self._window._airfoil = project.airfoil
+            self._window._fit_result = None
+            self._window._set_save_enabled(False)
             self._window._limit_sections(project.airfoil.num_points)
 
             # Update UI state
@@ -189,6 +232,9 @@ class ProjectManager:
         if not save_path:
             self._window.statusBar().showMessage("Save cancelled.")
             return
+        # Only the suffix makes it open as a project again
+        if not save_path.lower().endswith(PROJECT_SUFFIX):
+            save_path += PROJECT_SUFFIX
 
         try:
             save_project(self._project, save_path)
@@ -328,22 +374,42 @@ class ProjectManager:
         runs = self._project.optimization_runs if self._project else []
         self._window._run_table.set_runs(runs)
         self._comparison_points = None
+        # The table drops selected runs that are gone without a signal (and a
+        # sweep must keep its plot): follow it in the buttons and details
+        if not self._same_runs(self._window._run_table.selected_runs(), self._selected_runs):
+            self._show_selection()
 
-    def on_table_selection_changed(self):
-        """Show the selected run (details and plots); mark the selection on
-        the comparison plot."""
+    @staticmethod
+    def _same_runs(a: list[OptimizationRun], b: list[OptimizationRun]) -> bool:
+        """The same run objects: runs compare equal by value, so a reloaded
+        copy of a run would pass for it."""
+        return len(a) == len(b) and all(x is y for x, y in zip(a, b, strict=True))
+
+    def _show_selection(self):
+        """Take the table's selected runs: enable the run buttons and show
+        their details."""
         runs = self._window._run_table.selected_runs()
         self._selected_runs = runs
-        self._window._btn_delete_run.setEnabled(bool(runs))
-        self._window._btn_load_run.setEnabled(len(runs) == 1)
-
+        self.update_run_buttons()
         if not runs:
             self._window._run_details.set_message("Select a run to view details")
         elif len(runs) == 1:
             self._show_run_details(runs[0])
-            self._load_run_to_plots(runs[0])
         else:
             self._window._run_details.set_message(f"{len(runs)} runs selected")
+
+    def update_run_buttons(self):
+        """Delete and Load settings act on the selected runs, not during a fit."""
+        idle = not self._window._is_fitting
+        self._window._btn_delete_run.setEnabled(idle and bool(self._selected_runs))
+        self._window._btn_load_run.setEnabled(idle and len(self._selected_runs) == 1)
+
+    def on_table_selection_changed(self):
+        """Show the selected run (details and plots); mark the selection on
+        the comparison plot. During a fit the plots show the fit."""
+        self._show_selection()
+        if len(self._selected_runs) == 1 and not self._window._is_fitting:
+            self._load_run_to_plots(self._selected_runs[0])
         self._mark_selected_runs()
 
     def on_load_selected_run(self):
@@ -353,10 +419,15 @@ class ProjectManager:
 
     def on_run_activated(self, run: OptimizationRun):
         """Double-click: apply the run's settings to the sidebar and show it."""
+        if self._window._is_fitting or self._project is None:
+            return
+        runs = self._project.optimization_runs
+        run_number = next((i + 1 for i, r in enumerate(runs) if r is run), None)
+        if run_number is None:  # not a run of this project
+            return
         self._window._apply_run_settings(run)
         self._load_run_to_plots(run)
         cfg, opt = run.spline_config, run.optimization_config
-        run_number = self._project.optimization_runs.index(run) + 1
         self._window.statusBar().showMessage(
             f"Applied the settings of run {run_number} "
             f"({opt.optimizer.display_name}, degree {cfg.degree}, "
@@ -480,6 +551,15 @@ class ProjectManager:
         # Enable save buttons
         self._window._set_save_enabled(True)
 
+    def _clear_fit(self):
+        """Take the shown fit off the plots, as it is no longer a run."""
+        w = self._window
+        w._fit_result = None
+        w._plot_manager.clear_plot_items()
+        w._plot_manager.update_loss_data([], [], [])
+        w._plot_manager.set_loss_curve_data(w._combo_loss_x.currentData())
+        w._set_save_enabled(False)
+
     # ------------------------------------------------------------------
     # Sweep series
     # ------------------------------------------------------------------
@@ -550,18 +630,25 @@ class ProjectManager:
 
     def on_delete_selected_runs(self):
         """Delete selected runs from the project."""
-        if not self._selected_runs or self._project is None:
+        if not self._selected_runs or self._project is None or self._window._is_fitting:
             return
 
-        count = len(self._selected_runs)
-
-        # Remove runs from project
-        for run in self._selected_runs:
-            if run in self._project.optimization_runs:
-                self._project.optimization_runs.remove(run)
+        # Remove runs from project: these objects, not runs equal to them
+        doomed = {id(run) for run in self._selected_runs}
+        runs = self._project.optimization_runs
+        kept = [run for run in runs if id(run) not in doomed]
+        count = len(runs) - len(kept)
+        shown = any(run.result is self._window._fit_result
+                    for run in runs if id(run) in doomed)
+        runs[:] = kept
+        self._selected_runs = []
+        if not count:
+            self._show_selection()
+            return
 
         self._project_modified = True
-        self._selected_runs = []
+        if shown:
+            self._clear_fit()
 
         self._populate_table()
         self._show_project_label()
