@@ -613,13 +613,13 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         else:
             self._lbl_result_caption_dev.setText("Error")
             self._lbl_result_dev.setText(format_error(result.final_error))
-        # Sections times count, or the total when the counts differ (tolerance
-        # mode); the tooltip lists every section's count
+        # The sections and their count, or the total when the counts differ
+        # (tolerance mode); the tooltip lists every section's count
         counts = [len(cp) for cp in result.section_control_points]
         if len(counts) == 1:
             text = str(counts[0])
         elif len(set(counts)) == 1:
-            text = f"{len(counts)} × {counts[0]}"
+            text = f"{len(counts)} sections of {counts[0]}"
         else:
             text = str(sum(counts))
         self._lbl_result_ctrl.setText(text)
