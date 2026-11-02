@@ -125,16 +125,18 @@ Named by what they draw, never by hue.
 | `CURVE` | solid ink line, `Size.CURVE_WIDTH` | The fitted spline (the batten) |
 | `CONSTRUCTION` | dashed pencil grey line, hollow squares (a grey in `GREY_LIGHTNESS`) | Control polygon and control points (CAD convention: squares) |
 | `KNOTS` | sulfur diamonds with a canvas outline (`MODE_COLORS`) | Knots (the ducks that hold the batten) |
-| `COMB_UPPER` | sky blue (`MODE_COLORS`) | Comb on the suction side (upper surface, even sections) |
-| `COMB_LOWER` | rose (`MODE_COLORS`) | Comb on the pressure side (lower surface, odd sections) |
-| `DEVIATION_UPPER` / `DEVIATION_LOWER` | the comb's colors: faint whiskers from the curve, an envelope through their tips | Signed deviation of the data on the upper / lower surface, magnified along the normal; the tolerance band is faint dashed `CONSTRUCTION` |
+| `COMB_UPPER` | sky blue (`MODE_COLORS`) | Comb on the suction side (upper surface, up to the leading edge, whatever the section count) |
+| `COMB_LOWER` | rose (`MODE_COLORS`) | Comb on the pressure side (lower surface, from the leading edge) |
+| `DEVIATION_UPPER` / `DEVIATION_LOWER` | the comb's colors: faint whiskers from the curve, an envelope through their tips with a dot at each tip (one per data point, so it reads apart from the comb) | Signed deviation of the data on the upper / lower surface, magnified along the normal; the tolerance band is faint dashed `CONSTRUCTION` |
 | `TRACE` | light grey dots or line | Convergence and comparison traces |
 | `MARKER` | ink dot with a canvas ring | The current run in a trace |
 | `GRID` | `TEXT_2` at `GRID_ALPHA` | Grid and axes |
 
 The comb follows the pressure-plot convention (suction cool, pressure
 warm). Its teeth are faint (`COMB_TEETH_ALPHA`) because the envelope
-through their tips is what you read.
+through their tips is what you read. A tooth's length is in chords, for
+the quantity measured on the airfoil scaled to a unit chord, so the comb
+looks the same whatever the size of the data.
 
 ### Drawing order (`theme.Z`)
 
@@ -170,7 +172,9 @@ curve is a deviation worth seeing. Every new plot item takes a `Z` value.
 - **Glyphs**: no emoji. Icons are the stroked glyphs from `theme.icon()`
   (`chevron_down`, `chevron_up`, `chevron_right`, `chevron_left`,
   `check`, `dash` (partly checked), `range`, `sort_up`, `sort_down`, `filter`), drawn in `TEXT_2` at `Size.GLYPH`. Text symbols are limited to
-  → (from one value to the next), plus Greek letters for math (κ, dκ/ds).
+  → (from one value to the next), plus Greek letters for math (κ, dκ/ds)
+  and × between numbers ("2 × 10" control points). No middle dots or bullets
+  as separators: use a comma.
 - **The sweep toggle is a dimension line** (`range`, at `Size.GLYPH_LARGE`):
   |←→|, as a drawing marks a span. Glyphs on checkable buttons turn `TEXT` when checked
   (`icon(name, checked_role="TEXT")`).
@@ -202,6 +206,14 @@ Use the named gaps, not numbers:
   a control; a square icon button is `CONTROL_HEIGHT` on both sides. The
   only exception is the caption-style header of a collapsible section.
 - Corner radius `Size.RADIUS` (3 px): crisp, drafted, not pill-shaped.
+- Fixed and least widths are tokens too: `FIELD_MIN_WIDTH` (sidebar fields),
+  `SIDEBAR_MIN_WIDTH` and `EXPLORER_MIN_WIDTH` (how narrow the side panels can
+  be dragged), `SLIDER_WIDTH` (a dialog's slider). Other controls take their
+  natural width.
+- **The window narrows by stacking, not clipping.** The convergence and runs
+  plots sit side by side in a `ReflowRow` (`widgets.py`) that stacks them when
+  the window is too narrow for both toolbars, so they never set the window's
+  minimum width.
 - Sidebar form labels are `Size.LABEL_WIDTH` wide so fields line up across
   sections; add rows with `_add_row()` in `layout.py`.
 
@@ -243,7 +255,7 @@ never call `setStyleSheet` on it.
 | Number readout | object name `Readout` |
 | Primary button | object name `PrimaryButton`. **One per view** (it is "Fit spline" in the main window) |
 | Secondary button | plain `QPushButton` / `QToolButton` |
-| Icon-only button | object name `IconButton` with a `theme.icon()` glyph |
+| Icon-only button | object name `IconButton` with a `theme.icon()` glyph; the stylesheet makes it square |
 | Toggle | checkable `QToolButton`; checked state is `SELECT` |
 | Toggle with settings | `SplitToggle` button + `ArrowButton` opening a `DropDownPanel` |
 | Choice of 2-4 short options | `SegmentedControl` (not a combo box) in the sidebar and dialogs; the plot toolbars keep compact combo boxes |
@@ -253,7 +265,7 @@ never call `setStyleSheet` on it.
 | Plot pens and brushes | `theme.pen(Ink.X, width, dashed, alpha)`, `theme.brush(Ink.X, alpha)` |
 | Numbers spanning decades | `ScientificSpinBox` (`widgets.py`) |
 | Settings dialog | `dialog_form(dialog)` (dialog padding) + `add_form_row(form, "Label", field)`, buttons in a `QDialogButtonBox` |
-| Rich text dialog | `show_document(parent, title, html, w, h)` around `theme.text_browser()`; mark status with `class='ok'`, `'warn'`, `'error'`, numbers with `class='num'` |
+| Rich text dialog | `show_document(parent, title, html, w, h)` around `theme.text_browser()`, which renders its HTML again on a theme change; mark status with `class='ok'`, `'warn'`, `'error'`, numbers with `class='num'` |
 | Slider | `QSlider`; the temperature slider is `TemperatureSlider` (cool-to-warm groove) |
 | Theme setting | `ThemeDialog` (`widgets.py`), from View > Theme... |
 | Scroll and zoom glide | `MotionDialog` (`widgets.py`), from View > Scrolling and zooming... |
@@ -284,10 +296,13 @@ double-click a run to apply its settings).
    method that `PlotManager.restyle()` reapplies.
 5. Orange? Re-read section 2.
 6. Labels: sentence case, no colons, captions uppercase.
-7. Run `pytest tests/test_design_language.py`. Besides colors and heights it
-   checks the wording of every label, item, menu entry, tooltip and status
-   message (sentence case, colons, abbreviations, symbols) and that short
-   choices are segmented controls.
+7. Run `pytest tests/test_design_language.py`. Besides colors and heights
+   (drop-downs, sweep fields and dialogs included; icon buttons square) it
+   checks the wording of every label, item, menu entry, axis label,
+   placeholder, tooltip and status message (sentence case, colons,
+   abbreviations, symbols), that short choices are segmented controls, that
+   ink is used only where section 2 allows, that every plot item and axis
+   follows a theme change, and that the plots start as their toolbars say.
 
 ## 7. Assets
 
