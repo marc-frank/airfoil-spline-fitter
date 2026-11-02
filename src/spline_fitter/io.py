@@ -15,16 +15,33 @@ The coordinates are automatically normalized to:
 """
 import math
 import os
+import re
 
 
 def get_precision(s_val):
-    """Helper to find number of decimal places in a string."""
-    if '.' in s_val:
-        # Handle scientific notation like 1.23e-05 by ignoring the exponent part
-        s_val = s_val.lower().split('e')[0]
-        if '.' in s_val:
-            return len(s_val.split('.')[1])
-    return 0
+    """Decimal places of a number as written: ``0.0123`` has 4, ``1.2346e-03`` has 7
+    and ``1.23e+01`` has 1."""
+    mantissa, _, exponent = s_val.lower().replace('d', 'e').partition('e')
+    decimals = len(mantissa.split('.')[1]) if '.' in mantissa else 0
+    try:
+        return decimals - int(exponent or 0)
+    except ValueError:
+        return decimals
+
+
+def _file_precision(values):
+    """Decimal places of a file's coordinates.
+
+    Plain numbers may drop trailing zeros, so the most decimals any of them
+    has is the precision. Numbers in e-notation keep their significant
+    digits, so the largest ones are rounded the coarsest: the fewest
+    decimals any of them has is the precision.
+    """
+    plain = [get_precision(v) for v in values if 'e' not in v.lower().replace('d', 'e')]
+    scientific = [get_precision(v) for v in values if 'e' in v.lower().replace('d', 'e')]
+    candidates = ([max(plain)] if plain else []) + ([min(scientific)] if scientific else [])
+    return max(0, min(candidates)) if candidates else 0
+
 
 def filter_coordinate_outliers(coords, threshold_factor=5.0):
     """
@@ -70,14 +87,21 @@ def normalize_coords(coords):
     3. Finds LE as the point furthest from the TE center.
     4. Translates, rotates, and scales coordinates to place LE at (0,0) and TE at (1,0).
     """
-    if not coords or len(coords) < 3:
-        return coords
+    return _normalize(coords)[0]
 
+
+def _normalize(coords):
+    """:func:`normalize_coords`, and the factor it scaled lengths by."""
+    if not coords or len(coords) < 3:
+        return coords, 1.0
+
+    scale = 1.0
     # Preliminary check for 0-100 scaling
     large_coord_threshold = 2.0
     large_point_count = sum(1 for x, y in coords if abs(x) > large_coord_threshold or abs(y) > large_coord_threshold)
     if large_point_count > len(coords) / 2:
         coords = [(x / 100.0, y / 100.0) for x, y in coords]
+        scale = 0.01
 
     # 1. Find trailing edge (TE) center
     p_start = coords[0]
@@ -106,7 +130,7 @@ def normalize_coords(coords):
     # 3. Calculate chord length and angle for transformation
     chord_length = math.sqrt((te_center[0] - le[0])**2 + (te_center[1] - le[1])**2)
     if chord_length < 1e-6: # Avoid division by zero for degenerate cases
-        return coords
+        return coords, scale
 
     # Angle of the chord relative to the x-axis
     angle = math.atan2(te_center[1] - le[1], te_center[0] - le[0])
@@ -124,7 +148,20 @@ def normalize_coords(coords):
         # Scale by chord length
         normalized_coords.append((rx / chord_length, ry / chord_length))
 
-    return normalized_coords
+    return normalized_coords, scale / chord_length
+
+
+def _scaled_precision(precision, scale):
+    """Decimal places of data written with ``precision`` decimals once its
+    lengths are multiplied by ``scale``: a 0-100 file with 4 decimals has 6
+    at unit chord. Rounded down unless within a few percent of a whole
+    number, so the rounding error it implies is never too small."""
+    if not scale > 0 or not math.isfinite(scale):
+        return precision
+    value = precision - math.log10(scale)
+    nearest = round(value)
+    return max(0, int(nearest if abs(value - nearest) < 0.05 else math.floor(value)))
+
 
 def _is_point_counts(x, y):
     """Whether a coordinate pair is a Lednicer header: two whole point counts.
@@ -132,6 +169,31 @@ def _is_point_counts(x, y):
     A Selig file's first point is the trailing edge, near (1, 0) or (100, 0).
     """
     return x >= 2 and y >= 2 and x == int(x) and y == int(y)
+
+
+def _is_lednicer(rows):
+    """Whether parsed rows are a Lednicer file: point counts that roughly
+    match the rows after them, which start at the leading edge (a Selig file
+    starts at the trailing edge, as far from the leading edge as x goes)."""
+    if len(rows) <= 4 or not _is_point_counts(rows[0][0], rows[0][1]):
+        return False
+    n_points = len(rows) - 1
+    if abs(rows[0][0] + rows[0][1] - n_points) > max(2, n_points // 10):
+        return False
+    xs = [r[0] for r in rows[1:]]
+    return xs[0] - min(xs) < max(xs) - xs[0]
+
+
+def _is_stray_first_row(rows):
+    """Whether the first row is a name that reads as numbers ("0012 64")
+    rather than a point: it lies far outside the box of all other rows."""
+    if len(rows) <= 4:
+        return False
+    xs, ys = [r[0] for r in rows[1:]], [r[1] for r in rows[1:]]
+    margin = 0.5 * max(max(xs) - min(xs), max(ys) - min(ys))
+    x, y = rows[0][0], rows[0][1]
+    return not (min(xs) - margin <= x <= max(xs) + margin
+                and min(ys) - margin <= y <= max(ys) + margin)
 
 
 def _lednicer_to_selig(coords, n_upper, n_lower):
@@ -150,14 +212,50 @@ def _lednicer_to_selig(coords, n_upper, n_lower):
     return list(reversed(upper)) + lower
 
 
+def read_text(filepath):
+    """The text of a data file: UTF-8 (with or without a byte order mark),
+    UTF-16 (with a byte order mark, or told by its zero bytes), or else
+    Windows-1252, so no character of a name is dropped."""
+    with open(filepath, 'rb') as f:
+        data = f.read()
+    if data.startswith((b'\xff\xfe', b'\xfe\xff')):
+        return data.decode('utf-16', errors='replace')
+    head = data[:200]
+    if b'\x00' in head:
+        big_endian = head[0::2].count(0) > head[1::2].count(0)
+        return data.decode('utf-16-be' if big_endian else 'utf-16-le', errors='replace')
+    try:
+        return data.decode('utf-8-sig')
+    except UnicodeDecodeError:
+        return data.decode('cp1252', errors='replace')
+
+
+_FORTRAN_EXPONENT = re.compile(r'(?<=[0-9.])[dD](?=[+-]?[0-9])')
+
+
+def _number_fields(line):
+    """The fields of a coordinate line, as strings Python reads as floats.
+
+    Fields are separated by whitespace, commas or semicolons. A line without
+    a dot whose fields hold commas uses the decimal comma (``0,5 0,01``).
+    Fortran ``D`` exponents become ``e``; parentheses are dropped.
+    """
+    line = line.replace(';', ' ')
+    if ',' in line:
+        if len(line.split()) >= 2 and '.' not in line:
+            line = line.replace(',', '.')
+        else:
+            line = line.replace(',', ' ')
+    return [_FORTRAN_EXPONENT.sub('e', field.strip('()')) for field in line.split()]
+
+
 def parse_airfoil_data(filepath):
     """
     Parses an airfoil data file, automatically detecting the format.
     Handles Selig and Lednicer formats, comments, and 0-100 scaling.
     Returns the airfoil name from filename, name from content, coordinates, and max precision.
     """
-    with open(filepath, encoding='utf-8', errors='ignore') as f:
-        text = f.read()
+    text = read_text(filepath)
     return parse_airfoil_text(text, os.path.splitext(os.path.basename(filepath))[0])
 
 
@@ -167,9 +265,12 @@ def parse_airfoil_text(text, filename_name=None):
     (for example coordinates copied from a web page). ``filename_name`` is
     returned as the name from the filename, and is the name from content
     when the text has none.
+
+    The precision is the decimal places of the coordinates once normalized
+    to unit chord, so a 0-100 file written with 4 decimals has 6.
     """
     lines = []
-    for line in text.splitlines():
+    for line in text.lstrip('﻿').splitlines():
         # Remove comments and strip whitespace
         line_content = line.split('#', 1)[0].strip()
         if line_content:
@@ -183,10 +284,9 @@ def parse_airfoil_text(text, filename_name=None):
     # Every line holding a coordinate pair, as floats and as written (for precision)
     rows = []
     for i, line in enumerate(lines):
-        parts = line.split()
+        parts = _number_fields(line)
         try:
-            # Clean strings by removing parentheses before float conversion
-            x_str, y_str = parts[0].strip('()'), parts[1].strip('()')
+            x_str, y_str = parts[0], parts[1]
             rows.append((float(x_str), float(y_str), x_str, y_str))
         except (ValueError, IndexError):
             if i == 0:
@@ -194,20 +294,23 @@ def parse_airfoil_text(text, filename_name=None):
             # Otherwise skip malformed coordinate lines
 
     # Lednicer: the first row holds the upper and lower point counts
-    if len(rows) > 4 and _is_point_counts(rows[0][0], rows[0][1]):
+    if _is_lednicer(rows):
         n_upper, n_lower = int(rows[0][0]), int(rows[0][1])
         rows = rows[1:]
         coords = _lednicer_to_selig([(x, y) for x, y, _, _ in rows], n_upper, n_lower)
     else:
+        if content_name == filename_name and _is_stray_first_row(rows):
+            content_name = lines[0]  # A name that reads as numbers
+            rows = rows[1:]
         coords = [(x, y) for x, y, _, _ in rows]
 
     if not coords:
         return None, None, None, 0
 
-    max_precision = max(max(get_precision(x_str), get_precision(y_str)) for _, _, x_str, y_str in rows)
+    precision = _file_precision([v for _, _, x_str, y_str in rows for v in (x_str, y_str)])
     coords = filter_coordinate_outliers(coords)
-    coords = normalize_coords(coords)
-    return filename_name, content_name, coords, max_precision
+    coords, scale = _normalize(coords)
+    return filename_name, content_name, coords, _scaled_precision(precision, scale)
 
 def export_airfoil_data(filepath, coords, name=None, precision=None):
     """
@@ -324,12 +427,14 @@ def parse_spline_data(filepath):
     knots = {}
     continuity = None
     points = []
-    with open(filepath, encoding="utf-8", errors="ignore") as f:
-        lines = f.read().splitlines()
-    for i, line in enumerate(lines):
+    first_line = None
+    for line in read_text(filepath).splitlines():
         text = line.strip()
         if not text:
             continue
+        is_first = first_line is None
+        if is_first:
+            first_line = text
         if text.startswith("#"):
             words = text[1:].split()
             if len(words) >= 2 and words[0] == "degree":
@@ -345,7 +450,7 @@ def parse_spline_data(filepath):
         try:
             points.append((float(parts[0]), float(parts[1])))
         except (ValueError, IndexError):
-            if i == 0:
+            if is_first:
                 name = text
     if degree is None:
         match = re.search(r"\.deg(\d+)\.", os.path.basename(filepath))
@@ -353,6 +458,11 @@ def parse_spline_data(filepath):
     if not counts:
         return {"name": name, "degree": degree, "section_control_points": [points],
                 "section_knots": None, "continuity": continuity}
+    expected = sum(counts.values()) - (len(counts) - 1)
+    if not name and len(points) == expected + 1 and not first_line.startswith("#"):
+        # A name that reads as a point, like "0012 64": one point too many
+        name = first_line
+        points = points[1:]
     sections = []
     offset = 0
     for s in sorted(counts):

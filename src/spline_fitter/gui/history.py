@@ -81,8 +81,9 @@ class SettingsHistory(QObject):
     Widgets are restored in list order, so a setting that limits another
     (the degree limits the control point count) comes first. Changes made
     while ``is_quiet()`` holds, or inside ``quiet()``, are not steps of their
-    own: they become part of the current state (a sweep leaving its best
-    values, the automatic tolerance of a new airfoil).
+    own: they become part of the current state (the automatic tolerance of a
+    new airfoil). Quiet and user changes close together stay apart: the user
+    change is a step either way.
     """
 
     changed = pyqtSignal()
@@ -96,6 +97,8 @@ class SettingsHistory(QObject):
         self._restoring = False
         self._quiet_depth = 0
         self._pending_quiet = False
+        # The state after the latest change, while a step is pending
+        self._latest_state: tuple | None = None
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.setInterval(MERGE_MS)
@@ -113,8 +116,14 @@ class SettingsHistory(QObject):
     def _on_change(self, *_):
         if self._restoring:
             return
-        if self._quiet_depth or self._is_quiet():
-            self._pending_quiet = True
+        quiet = bool(self._quiet_depth or self._is_quiet())
+        pending = self._timer.isActive()
+        if pending and quiet != self._pending_quiet and self._latest_state is not None:
+            # The other kind of change is pending: settle it first, as it
+            # was before this change
+            self._settle(self._latest_state, self._pending_quiet)
+        self._pending_quiet = quiet
+        self._latest_state = self._capture()
         self._timer.start()
         self.changed.emit()
 
@@ -130,8 +139,13 @@ class SettingsHistory(QObject):
     def commit(self) -> None:
         """Make the changes since the last step a step now."""
         self._timer.stop()
-        state = self._capture()
         quiet, self._pending_quiet = self._pending_quiet, False
+        self._latest_state = None
+        self._settle(self._capture(), quiet)
+        self.changed.emit()
+
+    def _settle(self, state: tuple, quiet: bool) -> None:
+        """Make ``state`` part of the current state (quiet) or a new step."""
         if quiet:
             self._states[self._index] = state
         elif state != self._states[self._index]:
@@ -139,7 +153,6 @@ class SettingsHistory(QObject):
             self._states.append(state)
             del self._states[:-LIMIT]
             self._index = len(self._states) - 1
-        self.changed.emit()
 
     def can_undo(self) -> bool:
         return self._index > 0 or self._timer.isActive() and not self._pending_quiet

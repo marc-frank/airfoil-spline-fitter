@@ -154,3 +154,14 @@ def test_fit_airfoil_with_custom_sections():
         result = airfoil.fit_airfoil(pts, 1e-4, sections=sections, le_continuity="G1")
     assert result.continuity == ["G1"]
     assert result.success
+
+
+def test_selig_with_an_integer_first_point_is_not_lednicer(tmp_path):
+    # Coordinates in mm: the blunt trailing edge (1000, 2) is no point-count line
+    pts = np.round(NACA4("4412", closed_te=False).points(21) * 1000)
+    pts[0], pts[-1] = [1000, 2], [1000, -2]
+    body = "\n".join(f"{x:g} {y:g}" for x, y in pts)
+    (tmp_path / "mm.dat").write_text(f"MM AIRFOIL\n{body}\n")
+    name, back = airfoil.read_dat(tmp_path / "mm.dat")
+    assert name == "MM AIRFOIL"
+    assert np.array_equal(back, pts)

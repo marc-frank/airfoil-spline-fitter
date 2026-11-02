@@ -54,6 +54,7 @@ def run_optimization(
         opt_config: Optimization configuration
         airfoil: Airfoil data to fit
         callback: Optional callback(x, error) returning True to stop
+            (Direct LSQ calls it once, with its result)
         should_stop: Optional cancel check for optimizers that can stop
             between callbacks (VarPro LM tolerance mode)
 
@@ -73,4 +74,4 @@ def run_optimization(
             should_stop=should_stop,
         )
 
-    return optimizer.fit(config, opt_config, airfoil)
+    return optimizer.fit(config, opt_config, airfoil, callback=callback)

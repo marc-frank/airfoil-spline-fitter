@@ -19,6 +19,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+# The adapters count evaluations in ..tracking; one set of counters
+from ..tracking import (
+    get_evaluation_count,
+    increment_evaluation,
+    increment_iteration,
+    reset_iteration_tracking,
+)
 from .base import (
     AlgebraicOptimizer,
     BaseOptimizer,
@@ -29,37 +36,6 @@ from .gn_varpro import GNVarProOptimizer
 
 if TYPE_CHECKING:
     from ..models import OptimizerType
-
-
-# Module-level state for iteration tracking
-_evaluation_count: int = 0
-_iteration_count: int = 0
-
-
-def reset_iteration_tracking() -> None:
-    """Reset the global evaluation counter and iteration counter."""
-    global _evaluation_count, _iteration_count
-    _evaluation_count = 0
-    _iteration_count = 0
-
-
-def get_evaluation_count() -> int:
-    """Return the current evaluation count."""
-    return _evaluation_count
-
-
-def increment_evaluation() -> int:
-    """Increment and return the evaluation counter."""
-    global _evaluation_count
-    _evaluation_count += 1
-    return _evaluation_count
-
-
-def increment_iteration() -> int:
-    """Increment and return the iteration counter."""
-    global _iteration_count
-    _iteration_count += 1
-    return _iteration_count
 
 
 def get_optimizer(optimizer_type: OptimizerType) -> BaseOptimizer:

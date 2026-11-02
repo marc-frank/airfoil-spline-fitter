@@ -77,7 +77,7 @@ class FitResult:
     """
 
     control_points: List[np.ndarray]
-    parameters: List[np.ndarray]
+    parameters: np.ndarray
     knots: List[np.ndarray]
     degree: int
     rms_error: float
@@ -229,9 +229,9 @@ def fit(
             ``callback(control_points, rms_error)`` with one control-point array
             per section, also while knots are grown or moved and during dense
             refinement. A callback with a ``knots`` keyword also gets the knot
-            vectors. Return True to stop; the result then holds the last
-            evaluated state (or, while knots are moved, the fit before) and
-            ``success`` is False.
+            vectors. Return True to stop; the result then holds the best
+            state evaluated so far (or, while knots are moved, the fit before)
+            and ``success`` is False.
         knot_placement: ``"uniform"`` keeps the knots where they start
             (evenly spaced with ``num_control_points``). ``"free"`` then moves
             the interior knots to where they reduce the error most
@@ -263,6 +263,8 @@ def fit(
         knot_vectors = [knots] * num_sections if np.ndim(knots[0]) == 0 else list(knots)
     if not np.isfinite(smoothing) or smoothing < 0:
         raise ValueError("Smoothing weight must be finite and nonnegative.")
+    if not np.isfinite(regularization) or regularization < 0:
+        raise ValueError("Regularization must be finite and nonnegative.")
     if max_nfev < 1:
         raise ValueError("max_nfev must be at least 1.")
     if knot_placement not in ("uniform", "free"):
@@ -341,9 +343,10 @@ def solve_with_continuation(
     base_problem = parametric_options(options, problem).problem(
         problem.sections, problem.knots, problem.degree)
     base = solve_problem(base_problem, params, base_problem.theta, **kwargs)
-    if base.message == STOPPED:
-        return base
     theta0 = problem.constraints.theta_from_parametric(base.theta)
+    if base.message == STOPPED:
+        # The same curve as a geometric join (alpha = 1), labelled and shaped like the fit asked for
+        return result_from_problem(problem, base.parameters, theta0, base.nfev, False, STOPPED)
     result = solve_problem(problem, base.parameters, theta0, **kwargs)
     result.nfev += base.nfev
     return result
@@ -363,17 +366,21 @@ def solve_problem(
     """Run Levenberg-Marquardt on a prepared :class:`VarProProblem`."""
     n_eta = problem.total_pts - 1
     nfev = 0
-    last_x: Optional[np.ndarray] = None
+    # Lowest-cost point evaluated: the result if the callback stops the solve
+    best_x: Optional[np.ndarray] = None
+    best_cost = np.inf
 
     def unpack(x):
         return eta_to_t(x[:n_eta], problem.num_sections), x[n_eta:]
 
     def residual(x: np.ndarray) -> np.ndarray:
-        nonlocal nfev, last_x
+        nonlocal nfev, best_x, best_cost
         t_flat, theta = unpack(x)
         r = problem.residual(t_flat, theta)
         nfev += 1
-        last_x = x.copy()
+        cost = float(r @ r)
+        if best_x is None or cost < best_cost:
+            best_x, best_cost = x.copy(), cost
         if report(callback, problem.split_control_points(problem.last_control_points),
                   problem.last_rms_error, problem.knots):
             raise _Stop
@@ -389,7 +396,7 @@ def solve_problem(
         x_final = solution.x
         success, message = bool(solution.success), str(solution.message)
     except _Stop:
-        x_final = last_x
+        x_final = best_x
         success, message = False, STOPPED
     except (ValueError, np.linalg.LinAlgError) as exc:
         raise ValueError(f"VarPro fit failed: {exc}") from exc

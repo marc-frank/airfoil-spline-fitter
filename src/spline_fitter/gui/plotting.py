@@ -118,6 +118,19 @@ def _joined(lines: list) -> tuple[np.ndarray, np.ndarray]:
     return np.concatenate(xs), np.concatenate(ys)
 
 
+def _teeth(base: np.ndarray, tip: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Lines from each base to its tip, a gap (NaN) between them, as (x, y)."""
+    gap = np.full(len(base), np.nan)
+    return (np.column_stack([base[:, 0], tip[:, 0], gap]).ravel(),
+            np.column_stack([base[:, 1], tip[:, 1], gap]).ravel())
+
+
+def _chord(curves: list) -> float:
+    """The chord of the curves (their extent in x), 1 if they have none."""
+    chord = float(np.ptp(np.concatenate([curve.sample(200)[0] for curve in curves])))
+    return chord if chord > 0 else 1.0
+
+
 def _settle(plot: pg.PlotWidget) -> None:
     """Auto-range the plot now: a range found while painting, as pyqtgraph
     does, paints the plot a second time for the axes it changed."""
@@ -265,10 +278,12 @@ class PlotManager:
     @staticmethod
     def _deviation_style(side: str, tips: bool) -> dict:
         """Deviation, drawn like the comb: faint whiskers, and the envelope
-        through their tips, in the color of the surface."""
+        through their tips, in the color of the surface. A dot marks each
+        data point's tip, so it reads apart from a comb shown with it."""
         color = Ink.DEVIATION_UPPER if side == 'upper' else Ink.DEVIATION_LOWER
         if tips:
-            return dict(pen=pen(color, 1.5), z=Z.COMB)
+            return dict(pen=pen(color, 1.5), symbol='o', symbolSize=Size.TRACE_POINT,
+                        symbolBrush=brush(color), symbolPen=None, z=Z.COMB)
         return dict(pen=pen(color, alpha=Ink.COMB_TEETH_ALPHA), z=Z.COMB)
 
     @staticmethod
@@ -369,12 +384,22 @@ class PlotManager:
     # -----------------------------------------------------------------
 
     def set_loss_log_scale(self, log_x: bool, log_y: bool) -> None:
-        """Update the loss plot log/linear scale."""
-        self._loss_plot.getPlotItem().setLogMode(x=log_x, y=log_y)
+        """Update the loss plot log/linear scale, ranging it anew: a view
+        zoomed on the other scale would miss the data."""
+        item = self._loss_plot.getPlotItem()
+        item.setLogMode(x=log_x, y=log_y)
+        item.enableAutoRange()
 
     def set_loss_x_label(self, label: str) -> None:
-        """Update the loss plot X-axis label."""
+        """Update the loss plot X-axis label, ranging it anew for the other
+        quantity along x."""
         self._loss_plot.setLabel("bottom", label)
+        self._loss_plot.getPlotItem().enableAutoRange()
+
+    def clear_loss(self) -> None:
+        """Empty the convergence trace (another airfoil: it was not fitted yet)."""
+        self._loss_x_iters, self._loss_x_time, self._loss_y = [], [], []
+        self._loss_curve.setData([], [])
 
     # -----------------------------------------------------------------
     # Main plot operations
@@ -418,12 +443,14 @@ class PlotManager:
             item.setData([], [])
 
     def plot_airfoil(self, coords: list) -> None:
-        """Plot airfoil coordinate points.
+        """Plot airfoil coordinate points, clearing the fit and the
+        convergence trace of whatever was shown before.
 
         Args:
             coords: List of (x, y) tuples.
         """
         self.clear_plot_items()
+        self.clear_loss()
         self._coords = list(coords)
         self._data_item.setData([p[0] for p in coords], [p[1] for p in coords])
         self._plot.autoRange()
@@ -434,8 +461,8 @@ class PlotManager:
         self._loss_x_time = []
         self._loss_y = []
         self._loss_plot.clear()
-        self._loss_plot.getPlotItem().setLogMode(x=log_x, y=log_y)
-        self._loss_plot.setLabel("bottom", x_label)
+        self.set_loss_log_scale(log_x, log_y)
+        self.set_loss_x_label(x_label)
         self._loss_curve = self._new_loss_curve()
 
     def set_loss_curve_data(self, mode: str) -> None:
@@ -457,19 +484,12 @@ class PlotManager:
         if not x_data or not y_data:
             return
 
-        # Downsample if too many points to avoid UI freeze
-        n = len(x_data)
-        if n > MAX_PLOT_POINTS:
-            step = n // MAX_PLOT_POINTS
-            x_plot = x_data[::step]
-            y_plot = y_data[::step]
-        else:
-            x_plot = x_data
-            y_plot = y_data
-
-        # Ensure same length
-        min_len = min(len(x_plot), len(y_plot))
-        self._loss_curve.setData(x_plot[:min_len], y_plot[:min_len])
+        # Same length, and at most MAX_PLOT_POINTS of them (to avoid a UI
+        # freeze), evenly spread from the first to the latest
+        n = min(len(x_data), len(y_data))
+        keep = np.unique(np.linspace(0, n - 1, min(n, MAX_PLOT_POINTS)).round().astype(int))
+        self._loss_curve.setData(np.asarray(x_data, dtype=float)[keep],
+                                 np.asarray(y_data, dtype=float)[keep])
         _settle(self._loss_plot)
 
     def update_live_plot(
@@ -597,10 +617,7 @@ class PlotManager:
             le = find_leading_edge_index(coords)
             for side, part in (('upper', slice(0, le + 1)), ('lower', slice(le, None))):
                 base, tip = foot[part], tips[part]
-                gap = np.full(len(base), np.nan)
-                self._deviation_items[side, False].setData(
-                    np.column_stack([base[:, 0], tip[:, 0], gap]).ravel(),
-                    np.column_stack([base[:, 1], tip[:, 1], gap]).ravel())
+                self._deviation_items[side, False].setData(*_teeth(base, tip))
                 self._deviation_items[side, True].setData(tip[:, 0], tip[:, 1])
             self._tolerance_item.setData(*self._tolerance_band(fit_result, scale * tolerance)
                                          if tolerance else ([], []))
@@ -645,14 +662,29 @@ class PlotManager:
         _settle(self._plot)
 
     def _draw_combs(self, curves: list, scale: float, density: int, qty: int) -> None:
-        """Draw the curvature comb of every section, alternating in color."""
+        """Draw the curvature comb of every section, by surface: the teeth up
+        to the leading edge on the upper side, the rest on the lower, split
+        as the deviation is, whatever the section count."""
         density = max(5, density)
         try:
-            for start, side in enumerate(('upper', 'lower')):
-                combs = [self._curvature_comb(curve, scale, density, qty)
-                         for curve in curves[start::2]]
-                self._comb_items[side, False].setData(*_joined([c[0] for c in combs]))
-                self._comb_items[side, True].setData(*_joined([c[1] for c in combs]))
+            chord = _chord(curves)
+            combs = [self._curvature_comb(curve, scale, density, qty, chord) for curve in curves]
+            le = find_leading_edge_index([tuple(p) for p in np.concatenate([b for b, _ in combs])])
+            pieces: dict[str, list] = {'upper': [], 'lower': []}
+            start = 0
+            for base, tip in combs:
+                end = start + len(base)
+                for side, lo, hi in (('upper', start, min(end, le + 1)),
+                                     ('lower', max(start, le), end)):
+                    # A single tooth is the end of a section at the leading
+                    # edge, drawn with the section beyond it
+                    if hi - lo >= 2:
+                        part = slice(lo - start, hi - start)
+                        pieces[side].append((base[part], tip[part]))
+                start = end
+            for side, parts in pieces.items():
+                self._comb_items[side, False].setData(*_joined([_teeth(b, t) for b, t in parts]))
+                self._comb_items[side, True].setData(*_joined([t.T for _, t in parts]))
         except Exception:
             # No comb rather than the last fit's
             self.clear_comb_items()
@@ -663,31 +695,26 @@ class PlotManager:
         scale: float,
         density: int,
         quantity: int,
-    ) -> tuple[tuple, tuple]:
-        """The comb of a single curve: its teeth (base, tip, gap) and the
-        envelope through their tips, each as (x, y)."""
+        chord: float = 1.0,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """The comb of a single curve: the bases and the tips of its teeth,
+        each (n, 2).
+
+        A tooth is ``scale`` chords long where the quantity, measured on the
+        airfoil scaled to a unit chord, is 1: d^q kappa/ds^q has the units of
+        1/length^(q+1), so the comb looks the same at any size of the data."""
         t = comb_parameters(curve, density)
         derivs = curve.evaluate_derivatives(t, max_order=1)
-        x, y = derivs['x'], derivs['y']
+        base = np.column_stack([derivs['x'], derivs['y']])
         dx, dy = derivs['dx'], derivs['dy']
-        val = comb_values(curve, t, quantity)
+        val = comb_values(curve, t, quantity) * scale * chord ** (quantity + 2)
 
-        # Compute normals
+        # Normals
         mag = np.hypot(dx, dy)
         with np.errstate(divide='ignore', invalid='ignore'):
-            nx = np.where(mag > 1e-12, dy / mag, 0.0)
-            ny = np.where(mag > 1e-12, -dx / mag, 0.0)
-
-        # Comb tips
-        cx = x + nx * val * scale
-        cy = y + ny * val * scale
-
-        # Build comb segments: base, tip, gap
-        gap = np.full_like(x, np.nan)
-        seg_x = np.column_stack([x, cx, gap]).ravel()
-        seg_y = np.column_stack([y, cy, gap]).ravel()
-
-        return (seg_x, seg_y), (cx, cy)
+            normal = np.column_stack([np.where(mag > 1e-12, dy / mag, 0.0),
+                                      np.where(mag > 1e-12, -dx / mag, 0.0)])
+        return base, base + val[:, None] * normal
 
     def _draw_spline(self, curves: list) -> None:
         """Draw the curves and their control polygons."""

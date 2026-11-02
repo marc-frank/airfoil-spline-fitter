@@ -15,7 +15,7 @@ import numpy as np
 
 def softplus(x: np.ndarray) -> np.ndarray:
     """Numerically stable ``log(1 + exp(x))``."""
-    return np.where(x > 20.0, x, np.log1p(np.exp(np.clip(x, -500.0, 20.0))))
+    return np.where(x > 20.0, x, np.log1p(np.exp(np.clip(x, -ETA_LIMIT, 20.0))))
 
 
 def sigmoid(x: np.ndarray) -> np.ndarray:
@@ -29,6 +29,9 @@ def inverse_softplus(y: np.ndarray) -> np.ndarray:
     y_safe = np.maximum(y, 1e-15)
     return np.where(y_safe > 20.0, y_safe, np.log(np.expm1(np.clip(y_safe, 1e-15, 20.0))))
 
+
+#: Eta beyond which :func:`eta_to_t` holds the gap constant (its derivative is zero there).
+ETA_LIMIT = 700.0
 
 #: Smallest gap :func:`t_to_eta` passes on, relative to the mean gap.
 MIN_RELATIVE_GAP = 1e-3
@@ -51,7 +54,7 @@ def t_to_eta(u: np.ndarray) -> np.ndarray:
 def eta_to_t(eta: np.ndarray, span: float) -> np.ndarray:
     """Chain parameters from 0 to ``span`` for an eta vector."""
     # Huge LM steps must not overflow the cumulative sum.
-    eta = np.clip(np.nan_to_num(eta, nan=0.0), -700.0, 700.0)
+    eta = np.clip(np.nan_to_num(eta, nan=0.0), -ETA_LIMIT, ETA_LIMIT)
     cumsum = np.cumsum(softplus(eta))
     u = np.empty(len(eta) + 1)
     u[0] = 0.0
@@ -65,6 +68,10 @@ def eta_jacobian(eta: np.ndarray, u: np.ndarray, span: float) -> np.ndarray:
     With u_k = span * cumsum(softplus(eta))_k / T:
     ``du_k/deta_j = span * sigmoid(eta_j) / T * ([j < k] - u_k / span)``.
     """
+    eta = np.nan_to_num(np.asarray(eta, dtype=np.float64), nan=0.0)
+    inside = np.abs(eta) <= ETA_LIMIT
+    eta = np.clip(eta, -ETA_LIMIT, ETA_LIMIT)
     total = np.sum(softplus(eta))
     indicator = np.tri(len(u), len(eta), k=-1)
-    return (span * sigmoid(eta) / total)[np.newaxis, :] * (indicator - u[:, np.newaxis] / span)
+    slope = np.where(inside, span * sigmoid(eta) / total, 0.0)
+    return slope[np.newaxis, :] * (indicator - u[:, np.newaxis] / span)

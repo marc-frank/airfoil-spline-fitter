@@ -142,3 +142,111 @@ def test_parse_junction(spec, expected):
 def test_overlapping_end_conditions_are_rejected():
     with pytest.raises(ValueError, match="needs at least"):
         bv.fit(three_sections(), 6, 3, continuity="G3")
+
+
+def lopsided_sections(length=10.0):
+    # Section length ratio about 20, beyond the factor 10 alpha may vary around it
+    s = np.linspace(0, 1, 30)
+    long = np.column_stack((length * s, 0.01 * np.sin(3 * s)))
+    v = np.linspace(0, 0.5, 10)
+    short = np.column_stack((length + v, 0.3 * v ** 2))
+    short[0] = long[-1]
+    return [long, short]
+
+
+@pytest.mark.parametrize("continuity", ["G1", "G2"])
+def test_geometric_fit_starts_from_the_parametric_one_at_any_length_ratio(continuity):
+    sections = lopsided_sections()
+    problem = bv.ChainOptions(continuity=continuity).problem(sections, bv.open_uniform_knots(3, 6), 3)
+    assert problem.constraints._length_ratio(0) > 10
+    theta = problem.constraints.theta_from_parametric(np.zeros(0))
+    assert problem.constraints.shape_values(theta)[0] == pytest.approx((1.0, 0.0, 0.0))
+    parametric = bv.fit(sections, 6, continuity="C" + continuity[1], smoothing=0.0)
+    geometric = bv.fit(sections, 6, continuity=continuity, smoothing=0.0)
+    # G^k includes C^k, so it fits at least as well
+    assert geometric.rms_error <= parametric.rms_error * (1 + 1e-6)
+
+
+def test_initial_alpha_is_the_length_ratio():
+    sections = lopsided_sections()
+    problem = bv.VarProProblem(sections, bv.open_uniform_knots(3, 6), 3, continuity="G1")
+    alpha = problem.constraints.shape_values(problem.theta)[0][0]
+    assert alpha == pytest.approx(problem.constraints._length_ratio(0))
+
+
+def test_stop_during_the_parametric_stage_returns_a_geometric_result():
+    calls = []
+
+    def stop_early(control_points, rms):
+        calls.append(rms)
+        return len(calls) == 3
+
+    sections = naca_sections()
+    result = bv.fit(sections, 8, 5, continuity="G2", callback=stop_early)
+    assert result.message == "Stopped by callback."
+    assert result.continuity == ["G2"] and len(result.theta) == 2
+    assert result.shape_parameters[0] == pytest.approx((1.0, 0.0, 0.0))
+    # Usable as a warm start of the same fit
+    warm = bv.fit(sections, 8, 5, continuity="G2", initial_theta=result.theta, max_nfev=5)
+    assert np.isfinite(warm.rms_error)
+
+
+def test_junction_point_column_is_the_derivative_from_the_right():
+    sections = naca_sections(21)
+    problem = bv.VarProProblem(sections, bv.open_uniform_knots(5, 9), 5, continuity="G1")
+    t = bv.chain.chain_parameters([bv.centripetal_parameters(s) for s in sections], sections)
+    theta = problem.theta + 0.5  # alpha != 1: a kink at the junction
+    junction = int(np.flatnonzero(t == 1.0)[0])
+    J = problem.jacobian(t, theta)
+    h = 1e-7
+    step = np.zeros_like(t)
+    step[junction] = h
+    right = (problem.residual(t + step, theta) - problem.residual(t, theta)) / h
+    left = (problem.residual(t, theta) - problem.residual(t - step, theta)) / h
+    np.testing.assert_allclose(J[:, junction], right, rtol=1e-4, atol=1e-6)
+    assert not np.allclose(J[:, junction], left, rtol=1e-3, atol=1e-6)
+
+
+def stretched_sections(length=5.0):
+    # Section length ratio about 9: alpha used to run to 10 times that under smoothing
+    a = np.linspace(0, np.pi / 2, 25)
+    long = np.column_stack((np.linspace(0, length, 25), 0.05 * length * np.sin(2 * a)))
+    b = np.linspace(0, 1, 12)
+    short = np.column_stack((length + 0.5 * b, 0.3 * b ** 2 - 0.05 * b))
+    short[0] = long[-1]
+    return [long, short]
+
+
+def _position_in_alpha_range(result, sections):
+    from bspline_varpro.constraints import _alpha_range
+
+    problem = bv.VarProProblem(sections, result.knots, result.degree, continuity="G2")
+    centre, half = _alpha_range(problem.constraints._length_ratio(0))
+    return (np.log(result.shape_parameters[0][0]) - centre) / half  # -1 .. 1
+
+
+def test_alpha_stays_inside_its_range_with_smoothing():
+    sections = stretched_sections()
+    result = bv.fit(sections, 7, continuity="G2", max_nfev=400, smoothing=1e-3)
+    assert abs(_position_in_alpha_range(result, sections)) < 0.8
+
+
+def test_alpha_pull_leaves_unsmoothed_fits_alone(monkeypatch):
+    import bspline_varpro.problem as problem_module
+
+    sections = stretched_sections()
+    pulled = bv.fit(sections, 7, continuity="G2", max_nfev=400, smoothing=0.0)
+    monkeypatch.setattr(problem_module, "ALPHA_PULL", 0.0)
+    free = bv.fit(sections, 7, continuity="G2", max_nfev=400, smoothing=0.0)
+    np.testing.assert_array_equal(pulled.theta, free.theta)
+    np.testing.assert_array_equal(np.vstack(pulled.control_points), np.vstack(free.control_points))
+
+
+def test_alpha_pull_jacobian_matches_finite_differences():
+    sections = naca_sections(21)
+    problem = bv.VarProProblem(sections, bv.open_uniform_knots(5, 9), 5, continuity="G2", smoothing=0.1)
+    assert problem.num_pull_rows == 1
+    t = bv.chain.chain_parameters([bv.centripetal_parameters(s) for s in sections], sections)
+    theta = problem.theta + np.array([1.5, -0.3])
+    assert abs(problem.residual(t, theta)[-1]) > 1e-4  # the pull row is active
+    _fd_check(problem, t, theta)

@@ -21,12 +21,18 @@ File format: JSON with the following structure:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
+import os
 import platform
+import shutil
+import tempfile
 import uuid
 from datetime import datetime
 from typing import Any
+
+import numpy as np
 
 from .optimization.models import (
     AirfoilData,
@@ -71,6 +77,15 @@ def _continuity_mode_from_str(s: str) -> ContinuityMode:
     return mapping.get(s.upper(), ContinuityMode.G1)
 
 
+def _json_default(obj: Any) -> Any:
+    """NumPy numbers and arrays (in a fit report, say) as plain JSON values."""
+    if isinstance(obj, np.generic):
+        return obj.item()
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
 # Logger for migration warnings
 _logger = logging.getLogger(__name__)
 
@@ -97,6 +112,8 @@ def _optimizer_type_from_str(s: str) -> OptimizerType:
         _logger.warning("Optimizer %r was retired; showing the run as %s.", s,
                         _RETIRED_OPTIMIZERS[s.lower()].display_name)
         return _RETIRED_OPTIMIZERS[s.lower()]
+    _logger.warning("Unknown optimizer %r; showing the run as %s.", s,
+                    OptimizerType.GN_VARPRO.display_name)
     return OptimizerType.GN_VARPRO
 
 
@@ -134,16 +151,16 @@ def _encode_optimization_config(config: OptimizationConfig) -> dict[str, Any]:
     return {
         "optimizer": config.optimizer.value,
         "max_iterations": config.max_iterations,
-        "smoothing_factor": config.smoothing_factor,
         "smoothing_weight": config.smoothing_weight,
-        "early_stop_patience": config.early_stop_patience,
-        "relative_tolerance": config.relative_tolerance,
         "optimize_le_position": config.optimize_le_position,
         "parameterization": config.parameterization,
         "tolerance": config.tolerance,
         "max_points_per_section": config.max_points_per_section,
         "knot_placement": config.knot_placement,
         "grow_control_points": config.grow_control_points,
+        "custom_parameters": (None if config.custom_parameters is None else
+                              [np.asarray(u, dtype=np.float64).tolist()
+                               for u in config.custom_parameters]),
     }
 
 
@@ -156,7 +173,6 @@ def _encode_fit_result(result: FitResult) -> dict[str, Any]:
         "num_evaluations": result.num_evaluations,
         "elapsed_seconds": result.elapsed_seconds,
         "converged": result.converged,
-        "early_stopped": result.early_stopped,
         "cancelled": result.cancelled,
         "section_knots": result.section_knots,
         "report": result.report,
@@ -176,6 +192,7 @@ def _encode_optimization_run(run: OptimizationRun) -> dict[str, Any]:
     """Encode OptimizationRun to JSON-serializable dict."""
     return {
         "run_id": run.run_id,
+        "number": run.number,
         "timestamp": run.timestamp,
         "spline_config": _encode_spline_config(run.spline_config),
         "optimization_config": _encode_optimization_config(run.optimization_config),
@@ -250,10 +267,7 @@ def _decode_optimization_config(data: dict[str, Any]) -> OptimizationConfig:
     return OptimizationConfig(
         optimizer=_optimizer_type_from_str(data["optimizer"]),
         max_iterations=data.get("max_iterations", 10000),
-        smoothing_factor=data.get("smoothing_factor"),
         smoothing_weight=data.get("smoothing_weight", 1e-3),
-        early_stop_patience=data.get("early_stop_patience", 50),
-        relative_tolerance=data.get("relative_tolerance", 1e-6),
         optimize_le_position=data.get("optimize_le_position", False),
         parameterization=data.get("parameterization", "centripetal"),
         tolerance=data.get("tolerance"),
@@ -263,7 +277,11 @@ def _decode_optimization_config(data: dict[str, Any]) -> OptimizationConfig:
         knot_placement=data.get("knot_placement",
                                 "uniform" if data.get("tolerance") is None else "free"),
         grow_control_points=data.get("grow_control_points", data.get("tolerance") is not None),
-        # Older projects may also contain "fairing", "metric" and "seed"; they are ignored.
+        custom_parameters=(None if data.get("custom_parameters") is None else
+                           [np.asarray(u, dtype=np.float64) for u in data["custom_parameters"]]),
+        # Older projects may also contain "fairing", "metric", "seed",
+        # "smoothing_factor", "early_stop_patience" and "relative_tolerance",
+        # which no optimizer uses; they are ignored.
     )
 
 
@@ -277,10 +295,10 @@ def _decode_fit_result(data: dict[str, Any], section_control_points: list[PointL
         num_evaluations=data["num_evaluations"],
         elapsed_seconds=data["elapsed_seconds"],
         converged=data.get("converged", True),
-        early_stopped=data.get("early_stopped", False),
         cancelled=data.get("cancelled", False),
         section_knots=data.get("section_knots"),
         report=data.get("report"),
+        # Older projects may also contain "early_stopped", which nothing sets.
     )
 
 
@@ -312,6 +330,8 @@ def _decode_optimization_run(data: dict[str, Any]) -> OptimizationRun:
         result=_decode_fit_result(data["result"], section_control_points),
         loss_history=[_decode_iteration_record(r) for r in data["loss_history"]],
         section_control_points=section_control_points,
+        # Files before run numbers: numbered in order by number_runs
+        number=data.get("number", 0),
     )
 
 
@@ -328,11 +348,24 @@ def _decode_metadata(data: dict[str, Any]) -> ProjectMetadata:
 
 def _decode_project(data: dict[str, Any]) -> ProjectFile:
     """Decode ProjectFile from JSON dict."""
+    runs = [_decode_optimization_run(r) for r in data.get("optimization_runs", [])]
+    number_runs(runs)
     return ProjectFile(
         metadata=_decode_metadata(data["metadata"]),
         airfoil=_decode_airfoil(data["airfoil"]),
-        optimization_runs=[_decode_optimization_run(r) for r in data.get("optimization_runs", [])],
+        optimization_runs=runs,
     )
+
+
+def number_runs(runs: list[OptimizationRun], after: int = 0) -> int:
+    """Number the runs that have no number yet (0), in list order, after the
+    highest number among the runs and ``after``; the highest number given."""
+    last = max([after] + [run.number for run in runs])
+    for run in runs:
+        if run.number <= 0:
+            last += 1
+            run.number = last
+    return last
 
 
 # =============================================================================
@@ -411,7 +444,7 @@ def save_project(project: ProjectFile, filepath: str, indent: int = 2) -> None:
     
     Args:
         project: The project to save
-        filepath: Destination path (should end with .splineproj)
+        filepath: Destination path (should end with .asfproj)
         indent: JSON indentation level (default 2, use None for compact)
         
     Raises:
@@ -431,10 +464,24 @@ def save_project(project: ProjectFile, filepath: str, indent: int = 2) -> None:
         optimization_runs=project.optimization_runs,
     )
 
-    data = _encode_project(project)
-
-    with open(filepath, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=indent, ensure_ascii=False)
+    # Encode completely before touching the file, then replace it in one
+    # step, so a failed save leaves the previous project intact
+    text = json.dumps(_encode_project(project), indent=indent, ensure_ascii=False,
+                      default=_json_default)
+    directory = os.path.dirname(os.path.abspath(filepath))
+    fd, temp_path = tempfile.mkstemp(prefix=".", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        if os.path.exists(filepath):
+            shutil.copymode(filepath, temp_path)
+        os.replace(temp_path, filepath)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.remove(temp_path)
+        raise
 
 
 def load_project(filepath: str) -> ProjectFile:
@@ -455,8 +502,11 @@ def load_project(filepath: str) -> ProjectFile:
         data = json.load(f)
 
     # Version check
-    version = data.get("format_version", "1.0.0")
-    major_version = int(version.split(".")[0])
+    version = str(data.get("format_version", "1.0.0"))
+    try:
+        major_version = int(version.split(".")[0])
+    except ValueError:
+        raise ValueError(f"Project file version {version!r} is not valid.") from None
     if major_version > 1:
         raise ValueError(
             f"Project file version {version} is not supported. "
@@ -484,13 +534,13 @@ def get_run_summary(run: OptimizationRun) -> str:
         f"Run ID: {run.run_id[:8]}...",
         f"Time: {run.timestamp}",
         f"Optimizer: {opt.optimizer.display_name}",
-        f"Degree: {cfg.degree}, Control Points: "
-        f"{res.num_control_points if opt.tolerance else cfg.num_control_points}",
+        f"Degree: {cfg.degree}, Control Points: {cfg.num_control_points} per section, "
+        f"{res.num_control_points} fitted",
         f"Continuity: {', '.join(cfg.junction_specs()) or cfg.continuity.name}",
         *([f"Tolerance: {opt.tolerance:.3e}"] if opt.tolerance else []),
         f"Final Error: {res.final_error:.6e}",
         f"Iterations: {res.num_iterations}, Evaluations: {res.num_evaluations}",
-        f"Time: {res.elapsed_seconds:.2f}s",
-        f"Converged: {res.converged}, Early Stopped: {res.early_stopped}",
+        f"Elapsed: {res.elapsed_seconds:.2f}s",
+        f"Converged: {res.converged}",
     ]
     return "\n".join(lines)

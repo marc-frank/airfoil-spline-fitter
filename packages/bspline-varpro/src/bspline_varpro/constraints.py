@@ -15,10 +15,13 @@ phi' = alpha > 0, phi'' = beta, phi''' = gamma (Faa di Bruno)::
 The shape parameters (alpha, beta, gamma) enter C linearly per coordinate, so
 the constraints remain the same for every coordinate and the fit stays separable.
 They are optimized as extra outer variables. alpha is kept within a factor
-ALPHA_RANGE of its natural value, the length ratio of the two sections:
-alpha = ratio * exp(R tanh(a / R)) with R = ln(ALPHA_RANGE). Unbounded, alpha
-can collapse towards 0, which stops the ending section dead at the junction
-and makes the join degenerate (any curvature satisfies "G2" at zero speed).
+ALPHA_RANGE of the interval between 1 (the parametric join) and its natural
+value, the length ratio of the two sections: ln alpha = c + R tanh(a / R)
+with c and R the centre and half width of that interval in ln alpha, so a = 0
+is its middle. Unbounded, alpha can collapse towards 0, which stops the ending
+section dead at the junction and makes the join degenerate (any curvature
+satisfies "G2" at zero speed). The interval always holds alpha = 1, so a
+geometric join can reproduce the parametric one it is started from.
 
 Optional tangent directions fix a derivative up to a positive magnitude,
 ``C'(u) = tau * direction`` with tau = softplus(raw), which only moves d.
@@ -39,17 +42,26 @@ ALPHA_RANGE = 10.0
 _LOG_RANGE = np.log(ALPHA_RANGE)
 
 
+def _alpha_range(ratio: float) -> Tuple[float, float]:
+    """``(centre, half width)`` of the allowed ln alpha for a section length ratio."""
+    low = min(np.log(ratio), 0.0) - _LOG_RANGE
+    high = max(np.log(ratio), 0.0) + _LOG_RANGE
+    return 0.5 * (low + high), 0.5 * (high - low)
+
+
 def _alpha(a: float, ratio: float) -> Tuple[float, float]:
     """``(alpha, d alpha / d a)`` for the bounded speed ratio of a geometric junction."""
-    x = np.tanh(a / _LOG_RANGE)
-    alpha = ratio * float(np.exp(_LOG_RANGE * x))
+    centre, half = _alpha_range(ratio)
+    x = np.tanh(a / half)
+    alpha = float(np.exp(centre + half * x))
     return alpha, alpha * (1.0 - x * x)
 
 
 def _alpha_parameter(alpha: float, ratio: float) -> float:
     """Inverse of :func:`_alpha` (clipped just inside the allowed range)."""
-    x = np.clip(np.log(alpha / ratio) / _LOG_RANGE, -0.999, 0.999)
-    return float(_LOG_RANGE * np.arctanh(x))
+    centre, half = _alpha_range(ratio)
+    x = np.clip((np.log(alpha) - centre) / half, -0.999, 0.999)
+    return float(half * np.arctanh(x))
 
 
 def end_derivative_coefficients(
@@ -239,7 +251,7 @@ class ChainConstraints:
         theta = np.zeros(self.num_params)
         for i, (kind, index, slot) in enumerate(self._layout):
             if kind == "shape" and slot == "alpha":
-                theta[i] = 0.0  # alpha = the section length ratio
+                theta[i] = _alpha_parameter(self._length_ratio(index), self._length_ratio(index))
             elif kind == "tangent":
                 theta[i] = inverse_softplus(np.array(self._section_length(index)))
         return theta
@@ -258,6 +270,24 @@ class ChainConstraints:
     @property
     def has_shape_parameters(self) -> bool:
         return any(kind == "shape" for kind, _, _ in self._layout)
+
+    def alpha_deviations(self, theta: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """``ln(alpha / ratio)`` per geometric junction and its derivative w.r.t. theta.
+
+        Returns ``(values, jacobian)`` shaped (k,) and (k, num_params) for the k
+        alpha parameters: how far each speed ratio is from its natural value,
+        the section length ratio.
+        """
+        rows = [(i, index) for i, (kind, index, slot) in enumerate(self._layout)
+                if kind == "shape" and slot == "alpha"]
+        values = np.zeros(len(rows))
+        jacobian = np.zeros((len(rows), self.num_params))
+        for r, (i, index) in enumerate(rows):
+            ratio = self._length_ratio(index)
+            alpha, dalpha = _alpha(theta[i], ratio)
+            values[r] = np.log(alpha / ratio)
+            jacobian[r, i] = dalpha / alpha
+        return values, jacobian
 
     def shape_values(self, theta: np.ndarray) -> List[Tuple[float, float, float]]:
         """``(alpha, beta, gamma)`` per junction (1, 0, 0 for parametric joins)."""
@@ -350,8 +380,9 @@ class ChainConstraints:
             tau, dtau = float(softplus(theta[i])), float(sigmoid(theta[i]))
             add(place(new_row(), node, 1, side == "end"), tau * unit, dval={i: dtau * unit})
 
-        C = np.array(rows)
-        d = np.array(values)
+        # Shaped (0, total_ctrl) and (0, dim) when nothing is constrained
+        C = np.array(rows).reshape(len(rows), self.total_ctrl)
+        d = np.array(values).reshape(len(values), self.dim)
         dC: List[np.ndarray] = []
         dd: List[np.ndarray] = []
         if with_derivatives:
@@ -372,7 +403,7 @@ def build_constraints(
     sections: List[np.ndarray],
     knots,
     degree: int,
-    continuity: Union[ContinuitySpec, Sequence[ContinuitySpec]] = 1,
+    continuity: Union[ContinuitySpec, Sequence[ContinuitySpec]] = "G1",
     fix_junctions: bool = True,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """``(C, d)`` for a chain with the given continuity and default shape parameters.

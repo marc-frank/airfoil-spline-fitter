@@ -76,8 +76,9 @@ def merge_curves(curves: CurveInput) -> BSpline:
         raise ValueError("All sections must have the same degree to be merged.")
     lengths = [arc_length(curves[0])]
     for a, b in zip(curves[:-1], curves[1:]):
-        da = a(a.t[-degree - 1], nu=1) / (a.t[-degree - 1] - a.t[degree])
-        db = b(b.t[degree], nu=1) / (b.t[-degree - 1] - b.t[degree])
+        # Derivatives w.r.t. each section's normalized parameter (its domain mapped to [0, 1])
+        da = a(a.t[-degree - 1], nu=1) * (a.t[-degree - 1] - a.t[degree])
+        db = b(b.t[degree], nu=1) * (b.t[-degree - 1] - b.t[degree])
         na, nb = np.linalg.norm(da), np.linalg.norm(db)
         smooth = na > 0 and nb > 0 and np.linalg.norm(da / na - db / nb) < 1e-7
         # Equal parametric speed on both sides makes a tangent-continuous junction C1.
@@ -147,8 +148,16 @@ def _distinct(knots: np.ndarray):
     return values, counts
 
 
+def _finite(v: float) -> float:
+    v = float(v)
+    if not np.isfinite(v):
+        raise ValueError("Cannot export non-finite coordinates or knots.")
+    return v
+
+
 def _step_real(v: float) -> str:
-    s = f"{float(v):.16G}"
+    # repr is the shortest text that reads back as the same double
+    s = repr(_finite(v)).upper()
     if "E" in s:
         mantissa, exponent = s.split("E")
         if "." not in mantissa:
@@ -269,7 +278,8 @@ def _hollerith(text: str, limit: int = 60) -> str:
 
 
 def _iges_real(v: float) -> str:
-    return f"{float(v):.15E}"
+    # 17 significant digits read back as the same double
+    return f"{_finite(v):.16E}"
 
 
 def _iges_lines(fields: Sequence[str], letter: str, start: int, width: int = 72,
@@ -309,7 +319,7 @@ def to_iges(curves: CurveInput, name: str = "curves", scale: float = 1.0, units:
         "1H,", "1H;", _hollerith(name), _hollerith(name + ".igs"), _hollerith("bspline-varpro"),
         _hollerith("bspline-varpro"), "32", "38", "6", "308", "15", _hollerith(name), "1.0",
         str(flag), _hollerith(unit_name), "1", "1.0", _hollerith(stamp), "1.0E-07",
-        _iges_real(extent), _hollerith(""), _hollerith(""), "11", "0", _hollerith(stamp),
+        _iges_real(extent), "", "", "11", "0", _hollerith(stamp),  # author, organization: default
     ]
     global_fields = [f + "," for f in global_fields[:-1]] + [global_fields[-1] + ";"]
     global_lines = _iges_lines(global_fields, "G", 1)
@@ -340,6 +350,10 @@ def to_iges(curves: CurveInput, name: str = "curves", scale: float = 1.0, units:
 def to_dxf(curves: CurveInput, scale: float = 1.0, layer: str = "0", units: str = "mm") -> str:
     """DXF R2000 text with one ``SPLINE`` entity per curve.
 
+    AutoCAD reads only minimal DXF R12 files; R2000 (the first version with
+    ``SPLINE``) needs the symbol tables, the model and paper space blocks, the
+    root dictionary and owner handles, so the file has all of them.
+
     Args:
         units: ``"mm"``, ``"m"``, or ``"inch"``, written as ``$INSUNITS``.
     """
@@ -347,23 +361,77 @@ def to_dxf(curves: CurveInput, scale: float = 1.0, layer: str = "0", units: str 
     if units not in insunits:
         raise ValueError("units must be 'mm', 'm', or 'inch'.")
     out: List[str] = []
+    handles = iter(range(1, 1 << 30))
 
     def pair(code: int, value) -> None:
         out.append(f"{code:>3}")
         out.append(str(value))
 
-    handle = 0x100
-    pair(0, "SECTION"); pair(2, "HEADER")
-    pair(9, "$ACADVER"); pair(1, "AC1015")
-    pair(9, "$INSUNITS"); pair(70, insunits[units])
+    def new_handle() -> str:
+        return f"{next(handles):X}"
+
+    def record(kind: str, owner: str, subclass: str, name: str, *extra, handle_code: int = 5) -> str:
+        h = new_handle()
+        pair(0, kind); pair(handle_code, h); pair(330, owner)
+        pair(100, "AcDbSymbolTableRecord"); pair(100, subclass)
+        pair(2, name); pair(70, 0)
+        for code, value in extra:
+            pair(code, value)
+        return h
+
+    def table(name: str, entries, subclass: str = "") -> List[str]:
+        """Symbol table whose records ``entries(table_handle)`` writes; their handles."""
+        h = new_handle()
+        pair(0, "TABLE"); pair(2, name); pair(5, h); pair(330, 0); pair(100, "AcDbSymbolTable")
+        count_at = len(out) + 1
+        pair(70, 0)
+        if subclass:
+            pair(100, subclass); pair(71, 0)
+        written = entries(h)
+        out[count_at] = str(len(written))
+        pair(0, "ENDTAB")
+        return written
+
+    pair(0, "SECTION"); pair(2, "CLASSES"); pair(0, "ENDSEC")
+    pair(0, "SECTION"); pair(2, "TABLES")
+    table("VPORT", lambda t: [])
+    table("LTYPE", lambda t: [
+        record("LTYPE", t, "AcDbLinetypeTableRecord", name, (3, text), (72, 65), (73, 0), (40, 0.0))
+        for name, text in (("ByBlock", ""), ("ByLayer", ""), ("Continuous", "Solid line"))])
+    table("LAYER", lambda t: [
+        record("LAYER", t, "AcDbLayerTableRecord", name, (62, 7), (6, "Continuous"), (370, -3))
+        for name in dict.fromkeys(["0", layer])])
+    table("STYLE", lambda t: [record("STYLE", t, "AcDbTextStyleTableRecord", "Standard", (40, 0.0),
+                                     (41, 1.0), (50, 0.0), (71, 0), (42, 2.5), (3, "txt"), (4, ""))])
+    table("VIEW", lambda t: [])
+    table("UCS", lambda t: [])
+    table("APPID", lambda t: [record("APPID", t, "AcDbRegAppTableRecord", "ACAD")])
+    table("DIMSTYLE", lambda t: [record("DIMSTYLE", t, "AcDbDimStyleTableRecord", "Standard",
+                                        handle_code=105)], subclass="AcDbDimStyleTable")
+    model, paper = table("BLOCK_RECORD", lambda t: [
+        record("BLOCK_RECORD", t, "AcDbBlockTableRecord", name) for name in ("*Model_Space", "*Paper_Space")])
     pair(0, "ENDSEC")
+
+    pair(0, "SECTION"); pair(2, "BLOCKS")
+    for owner, name, paper_space in ((model, "*Model_Space", False), (paper, "*Paper_Space", True)):
+        pair(0, "BLOCK"); pair(5, new_handle()); pair(330, owner); pair(100, "AcDbEntity")
+        if paper_space:
+            pair(67, 1)
+        pair(8, "0"); pair(100, "AcDbBlockBegin"); pair(2, name); pair(70, 0)
+        pair(10, 0.0); pair(20, 0.0); pair(30, 0.0); pair(3, name); pair(1, "")
+        pair(0, "ENDBLK"); pair(5, new_handle()); pair(330, owner); pair(100, "AcDbEntity")
+        if paper_space:
+            pair(67, 1)
+        pair(8, "0"); pair(100, "AcDbBlockEnd")
+    pair(0, "ENDSEC")
+
     pair(0, "SECTION"); pair(2, "ENTITIES")
     for curve in as_curves(curves):
         knots, ctrl, degree = _knots_controls(curve, scale)
         planar = bool(np.allclose(ctrl[:, 2], ctrl[0, 2]))
         pair(0, "SPLINE")
-        pair(5, f"{handle:X}")
-        handle += 1
+        pair(5, new_handle())
+        pair(330, model)
         pair(100, "AcDbEntity")
         pair(8, layer)
         pair(100, "AcDbSpline")
@@ -377,12 +445,27 @@ def to_dxf(curves: CurveInput, scale: float = 1.0, layer: str = "0", units: str 
         pair(42, "1e-10")
         pair(43, "1e-10")
         for k in knots:
-            pair(40, repr(float(k)))
+            pair(40, repr(_finite(k)))
         for p in ctrl:
-            pair(10, repr(float(p[0]))); pair(20, repr(float(p[1]))); pair(30, repr(float(p[2])))
+            pair(10, repr(_finite(p[0]))); pair(20, repr(_finite(p[1]))); pair(30, repr(_finite(p[2])))
+    pair(0, "ENDSEC")
+
+    pair(0, "SECTION"); pair(2, "OBJECTS")
+    root, group = new_handle(), new_handle()
+    pair(0, "DICTIONARY"); pair(5, root); pair(330, 0); pair(100, "AcDbDictionary"); pair(281, 1)
+    pair(3, "ACAD_GROUP"); pair(350, group)
+    pair(0, "DICTIONARY"); pair(5, group); pair(330, root); pair(100, "AcDbDictionary"); pair(281, 1)
     pair(0, "ENDSEC")
     pair(0, "EOF")
-    return "\n".join(out) + "\n"
+
+    body = out
+    out = []
+    pair(0, "SECTION"); pair(2, "HEADER")
+    pair(9, "$ACADVER"); pair(1, "AC1015")
+    pair(9, "$HANDSEED"); pair(5, new_handle())
+    pair(9, "$INSUNITS"); pair(70, insunits[units])
+    pair(0, "ENDSEC")
+    return "\n".join(out + body) + "\n"
 
 
 def write(path: Union[str, Path], curves: CurveInput, **kwargs) -> Path:

@@ -27,6 +27,12 @@ from ..optimization import (
     reset_iteration_tracking,
     run_optimization,
 )
+from ..optimization.models import (
+    ContinuityMode,
+    OptimizationConfig,
+    OptimizerType,
+    SplineConfig,
+)
 from .background import run_in_background
 from .live import LiveProgress
 from .theme import Size
@@ -34,6 +40,72 @@ from .widgets import add_form_row, dialog_form
 
 if TYPE_CHECKING:
     from .ui import SplineFitterWindow
+
+
+# The settings of a new window: their outputs keep the plain name
+# <file>.deg<degree>.spline.dat, as before other settings were named
+DEFAULT_SPLINE = SplineConfig(continuity=ContinuityMode.G3, geometric_continuity=True)
+DEFAULT_OPTIMIZATION = OptimizationConfig(
+    max_iterations=0, knot_placement="uniform", grow_control_points=False)
+
+
+def _num(value: float) -> str:
+    """A number for a file name: short, the same in every locale; small
+    ones (tolerances) as ``1e-4`` or ``2.5e-5``."""
+    if value and abs(value) < 1e-2:
+        mantissa, exponent = f"{value:.2e}".split("e")
+        return f"{mantissa.rstrip('0').rstrip('.')}e{int(exponent)}"
+    return f"{value:.3g}"
+
+
+def output_name(stem: str, config: SplineConfig, opt_config: OptimizationConfig,
+                auto_tolerance: bool = False) -> str:
+    """The batch output file of ``stem`` fitted with these settings.
+
+    The degree is always named; every other setting only when it differs
+    from a new window's, so two runs with different settings never write
+    the same file: ``naca0012.deg5.n30.s3.G2-C1.tol1e-4.spline.dat``.
+    """
+    d_spline, d_opt = DEFAULT_SPLINE, DEFAULT_OPTIMIZATION
+    parts = [stem, f"deg{config.degree}"]
+
+    # Curve
+    count_used = opt_config.tolerance is None or not opt_config.grow_control_points
+    if count_used and config.num_control_points != d_spline.num_control_points:
+        parts.append(f"n{config.num_control_points}")
+    if config.num_sections != d_spline.num_sections:
+        parts.append(f"s{config.num_sections}")
+    specs = config.junction_specs()
+    if specs and specs != [d_spline.junction_specs()[0]] * len(specs):
+        parts.append("-".join(specs) if len(set(specs)) > 1 else specs[0])
+
+    # Method
+    o = opt_config
+    if o.optimizer != d_opt.optimizer:
+        parts.append("lsq" if o.optimizer == OptimizerType.DIRECT_LSQ else o.optimizer.value)
+        if o.parameterization != d_opt.parameterization:
+            parts.append(o.parameterization.replace("_", "-"))
+    if o.tolerance is not None:
+        parts.append("tol-auto" if auto_tolerance else f"tol{_num(o.tolerance)}")
+    if o.knot_placement != d_opt.knot_placement:
+        parts.append(f"knots-{o.knot_placement}")
+    if o.grow_control_points != d_opt.grow_control_points:
+        parts.append("grow" if o.grow_control_points else "no-grow")
+    if o.smoothing_weight != d_opt.smoothing_weight:
+        parts.append(f"smooth{_num(o.smoothing_weight)}")
+    if o.smoothing_factor != d_opt.smoothing_factor and o.smoothing_factor is not None:
+        parts.append(f"sfactor{_num(o.smoothing_factor)}")
+    if o.max_points_per_section != d_opt.max_points_per_section:
+        parts.append(f"sub{o.max_points_per_section}")
+    if o.optimize_le_position != d_opt.optimize_le_position:
+        parts.append("free-le")
+    if o.max_iterations != d_opt.max_iterations:
+        parts.append(f"max{o.max_iterations}")
+    if o.early_stop_patience != d_opt.early_stop_patience:
+        parts.append(f"patience{o.early_stop_patience}")
+    if o.relative_tolerance != d_opt.relative_tolerance:
+        parts.append(f"rtol{_num(o.relative_tolerance)}")
+    return ".".join(parts) + ".spline.dat"
 
 
 class BatchController:
@@ -48,7 +120,7 @@ class BatchController:
         """Open the batch-conversion dialog (File -> Batch Convert)."""
         dialog = QDialog(self._window)
         dialog.setWindowTitle("Batch convert")
-        dialog.setMinimumWidth(480)
+        dialog.setMinimumWidth(Size.DIALOG_MIN_WIDTH)
         form = dialog_form(dialog)
         note = QLabel("Fit every .dat file in the source folder with the current settings\n"
                       "and save each as .spline.dat in the target folder.")
@@ -121,10 +193,24 @@ class BatchController:
 
         self._window._cancel_requested = False
         self._window._set_fitting_ui(True)
+        try:
+            self._convert(files, config, opt_config)
+        finally:
+            # Back to the window's own airfoil and fit
+            w = self._window
+            w._set_fitting_ui(False)
+            if w._airfoil is not None:
+                w._plot_manager.plot_airfoil(w._airfoil.coordinates)
+                if w._fit_result is not None:
+                    w._plot_manager.plot_fitted_spline(w._fit_result)
+                    w._refresh_curvature_comb()
 
+    def _convert(self, files: list[str], config, opt_config) -> None:
+        """Fit and export every file (UI locked), and report how it went."""
         start_time = time.perf_counter()
         done = 0
         failed = 0
+        skipped = 0
 
         for idx, fname in enumerate(files, 1):
             if self._window._cancel_requested:
@@ -148,19 +234,18 @@ class BatchController:
                 )
 
                 # Check for existing output
-                base_name = airfoil.filename or airfoil.name
-                out_path = os.path.join(
-                    self._batch_dst_dir,
-                    f"{base_name}.deg{config.degree}.spline.dat"
-                )
+                auto_tolerance = self._window._check_auto_tolerance.isChecked()
+                out_path = os.path.join(self._batch_dst_dir, output_name(
+                    airfoil.filename or airfoil.name, config, opt_config, auto_tolerance))
 
                 if os.path.exists(out_path):
+                    skipped += 1
                     self._window.statusBar().showMessage(f"[{idx}/{len(files)}] Skip: {out_path}")
                     QApplication.processEvents()
                     continue
 
                 file_opt_config = opt_config
-                if opt_config.tolerance is not None and self._window._check_auto_tolerance.isChecked():
+                if opt_config.tolerance is not None and auto_tolerance:
                     file_opt_config = dc_replace(
                         opt_config, tolerance=default_tolerance(airfoil.coordinates, airfoil.precision),
                     )
@@ -243,17 +328,13 @@ class BatchController:
         elapsed = time.perf_counter() - start_time
 
         if self._window._cancel_requested:
-            msg = f"Batch cancelled after {format_duration(elapsed)}. Completed {done}/{len(files)}, failed {failed}."
+            msg = (f"Batch cancelled after {format_duration(elapsed)}. "
+                   f"Completed {done}/{len(files)}, failed {failed}.")
         else:
             msg = f"Batch complete: {done} files in {format_duration(elapsed)} ({failed} failed)"
-
-        # Back to the window's own airfoil and fit
-        w = self._window
-        if w._airfoil is not None:
-            w._plot_manager.plot_airfoil(w._airfoil.coordinates)
-            if w._fit_result is not None:
-                w._plot_manager.plot_fitted_spline(w._fit_result)
-                w._refresh_curvature_comb()
-
+        if skipped:
+            # Files fitted with these settings before: say so, or a rerun
+            # would seem to do nothing
+            msg += (f" | Skipped {skipped} already in the target folder "
+                    "with these settings")
         self._window.statusBar().showMessage(msg)
-        self._window._set_fitting_ui(False)

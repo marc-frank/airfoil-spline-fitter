@@ -78,7 +78,7 @@ from PyQt6.QtWidgets import (
 
 from ..formatting import decimal_point, format_duration, number
 from ..optimization.models import OptimizationRun, OptimizerType
-from .theme import Palette, Size, brush, icon, mono_font
+from .theme import Palette, Size, brush, icon, mono_font, theme_changed
 
 # =============================================================================
 # Columns
@@ -151,7 +151,8 @@ def _opt(run):
 
 
 COLUMNS: tuple[Column, ...] = (
-    Column("Run", lambda run: run.index, tip="Order in which the runs were done"),
+    Column("Run", lambda run: run.number,
+           tip="Order in which the runs were done; a number stays when other runs are deleted"),
     # Method
     Column("Optimizer", lambda run: _opt(run).optimizer.display_name),
     Column("Goal", lambda run: "Tolerance" if _opt(run).tolerance is not None else "Fixed count",
@@ -181,7 +182,8 @@ COLUMNS: tuple[Column, ...] = (
     Column("Optimize junctions", lambda run: _opt(run).optimize_le_position,
            applies=_has_junctions),
     # Fit metrics
-    Column("Error", lambda run: run.result.final_error, ".3e", log=True, metric=True),
+    Column("Error", lambda run: run.result.comparison_error, ".3e", log=True, metric=True,
+           tip="RMS distance of the points to the curve, the same measure for every run"),
     Column("Max deviation", _report("max_deviation"), ".3e", log=True, metric=True),
     Column("RMS deviation", _report("rms_deviation"), ".3e", log=True, metric=True),
     Column("Fitted control points", lambda run: run.result.num_control_points, metric=True,
@@ -206,16 +208,6 @@ def column(name: str) -> Column:
 # =============================================================================
 
 
-@dataclass(frozen=True)
-class _Row:
-    """A run with its number in the project, which the Run column shows."""
-    run: OptimizationRun
-    index: int
-
-    def __getattr__(self, name):
-        return getattr(self.run, name)
-
-
 class RunTableModel(QStandardItemModel):
     """The runs of a project, one per row, one column per ``COLUMNS`` entry.
 
@@ -226,7 +218,7 @@ class RunTableModel(QStandardItemModel):
 
     def __init__(self, parent=None):
         super().__init__(0, len(COLUMNS), parent)
-        self._rows: list[_Row] = []
+        self._rows: list[OptimizationRun] = []
         self._cells: list[list] = []
         # Pivoted, a column per run: every cell centered under the others
         self.centered = False
@@ -237,7 +229,7 @@ class RunTableModel(QStandardItemModel):
 
     def set_runs(self, runs: list[OptimizationRun]) -> None:
         self.beginResetModel()
-        self._rows = [_Row(run, i + 1) for i, run in enumerate(runs)]
+        self._rows = list(runs)
         self._cells = [[c.cell(row) for c in COLUMNS] for row in self._rows]
         # Filled quietly: the reset tells the views once
         self.blockSignals(True)
@@ -269,7 +261,7 @@ class RunTableModel(QStandardItemModel):
         return horizontal | Qt.AlignmentFlag.AlignVCenter
 
     def run(self, row: int) -> OptimizationRun:
-        return self._rows[row].run
+        return self._rows[row]
 
     def value(self, row: int, col: int):
         return self._cells[row][col]
@@ -531,7 +523,9 @@ class ColumnFilterPopup(QFrame):
         self.add_button.clicked.connect(lambda: self.keep(add=True))
         self.values.itemChanged.connect(self._on_value_changed)
         self.select_all.clicked.connect(self._on_select_all)
-        self.setFixedWidth(max(260, self.sizeHint().width()))
+        self.setFixedWidth(max(Size.POPUP_MIN_WIDTH, self.sizeHint().width()))
+        # The greyed values take TEXT_3 of the theme in effect
+        theme_changed.changed.connect(self._show_values)
 
     def _items(self) -> list[QListWidgetItem]:
         return [self.values.item(i) for i in range(self.values.count())]

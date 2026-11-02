@@ -3,7 +3,8 @@ Airfoil Spline Fitter - Main Entry Point
 =========================================
 
 Launch the application with:
-    python -m spline_fitter
+    python -m spline_fitter          (installed)
+    python -m src.spline_fitter      (from a source checkout)
 
 Command Line Arguments:
     --help                  Show this help message

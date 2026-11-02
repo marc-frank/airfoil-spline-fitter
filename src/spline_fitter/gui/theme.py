@@ -233,6 +233,12 @@ class Size:
     GLYPH_LARGE = 16          # glyphs with more detail: the sweep range
     RADIUS = 3
     LABEL_WIDTH = 92          # label column of every sidebar form
+    FIELD_MIN_WIDTH = 70      # narrowest a sidebar field gets
+    SIDEBAR_MIN_WIDTH = 300   # narrowest the sidebar can be dragged
+    EXPLORER_MIN_WIDTH = 180  # narrowest the project explorer can be dragged
+    SLIDER_WIDTH = 220        # least width of a dialog's slider
+    DIALOG_MIN_WIDTH = 480    # least width of a dialog with folder fields
+    POPUP_MIN_WIDTH = 260     # least width of a column filter drop-down
     CURVE_WIDTH = 2
     LINE_WIDTH = 1
     DATA_SIZE = 4
@@ -440,8 +446,9 @@ QPushButton#PrimaryButton:hover {{ background: {P.INK_HOVER}; border-color: {P.I
 QPushButton#PrimaryButton:pressed {{ background: {P.INK_PRESSED}; border-color: {P.INK_PRESSED}; }}
 QPushButton#PrimaryButton:disabled {{ background: {P.RULE}; border-color: {P.RULE}; color: {P.TEXT_3}; }}
 
-/* Icon-only buttons */
-QPushButton#IconButton {{ background: transparent; border-color: transparent; padding: 0 6px; }}
+/* Icon-only buttons: square, CONTROL_HEIGHT on both sides */
+QPushButton#IconButton {{ background: transparent; border-color: transparent; padding: 0;
+    min-width: {h}px; max-width: {h}px; }}
 QPushButton#IconButton:hover {{ background: {P.FIELD_HOVER}; }}
 
 /* Fields */
@@ -821,9 +828,32 @@ def readout_heading(title: str) -> str:
     return f"<span style='color: {Palette.TEXT}'>{html.escape(title)}</span>"
 
 
+class _ThemedBrowser(QTextBrowser):
+    """A text browser whose HTML is styled with the theme. The document
+    stylesheet only applies when HTML is parsed, so after a theme change it
+    parses its HTML again, keeping the scroll position."""
+
+    def __init__(self):
+        super().__init__()
+        self._html: str | None = None
+        self.document().setDocumentMargin(Size.PAD_LARGE)
+        self._restyle()
+        theme_changed.changed.connect(self._restyle)
+
+    def setHtml(self, text: str) -> None:
+        self._html = text
+        super().setHtml(text)
+
+    def _restyle(self) -> None:
+        self.document().setDefaultStyleSheet(html_css())
+        if self._html is not None:
+            bar = self.verticalScrollBar()
+            position = bar.value()
+            super().setHtml(self._html)
+            bar.setValue(position)
+
+
 def text_browser() -> QTextBrowser:
-    """A text browser whose HTML is styled with the theme."""
-    browser = QTextBrowser()
-    browser.document().setDefaultStyleSheet(html_css())
-    browser.document().setDocumentMargin(Size.PAD_LARGE)
-    return browser
+    """A text browser whose HTML is styled with the theme, and restyled
+    when it changes."""
+    return _ThemedBrowser()

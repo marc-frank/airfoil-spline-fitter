@@ -125,13 +125,15 @@ def format_count(value: int, singular: str, plural: str | None = None) -> str:
         plural: Plural form (defaults to singular + 's')
         
     Returns:
-        Formatted string like "1 point" or "5 points"
+        Formatted string like "1 point" or "1,500 points"
     """
     if plural is None:
         plural = singular + "s"
 
     noun = singular if value == 1 else plural
-    return f"{value:,} {noun}"
+    # Group thousands with whichever of comma and dot is not the decimal point
+    separator = "." if _decimal_point == "," else ","
+    return f"{value:,} {noun}".replace(",", separator)
 
 
 def format_percentage(value: float, precision: int = 1) -> str:

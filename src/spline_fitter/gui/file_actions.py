@@ -119,6 +119,10 @@ class FileActionsMixin:
                      path: str = "", verb: str = "Loaded") -> bool:
         """Make ``coords`` the airfoil to fit, from a file, the clipboard or
         the NACA generator; whether it worked."""
+        # The new airfoil closes the project: its unsaved runs first
+        if not self._project_manager.confirm_discard():
+            self.statusBar().showMessage("Cancelled: the project stays open")
+            return False
         try:
             # Create airfoil data object with current section count
             self._limit_sections(len(coords))
@@ -381,8 +385,12 @@ class FileActionsMixin:
                 self.statusBar().showMessage("Save cancelled.")
                 return
 
+            # The continuity of the fit shown: a run picked in the explorer
+            # may have other sections and junctions than the sidebar
+            run = self._project_manager.run_of(self._fit_result)
             try:
-                continuity = self._get_spline_config().junction_specs()
+                config = run.spline_config if run is not None else self._get_spline_config()
+                continuity = config.junction_specs()
             except ValueError:
                 continuity = None
             export_spline_data(
