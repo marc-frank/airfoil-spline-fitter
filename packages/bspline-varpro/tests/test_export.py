@@ -307,3 +307,28 @@ def test_dxf_has_the_structure_autocad_needs(fitted):
     assert [r[2] for r in records("BLOCK")] == ["*Model_Space", "*Paper_Space"]
     root = next(r for r in records("DICTIONARY") if r[330] == "0")
     assert root[3] == "ACAD_GROUP"
+
+
+@pytest.mark.parametrize("layer, units, scale", [("0", "mm", 1.0), ("Profile", "inch", 250.0)])
+def test_dxf_passes_the_ezdxf_audit(fitted, layer, units, scale):
+    """A real DXF reader loads the file without repairs (skipped without ezdxf)."""
+    pytest.importorskip("ezdxf")
+    import io
+    from ezdxf import recover
+
+    curves = fitted.curves() + [export.merge_curves(fitted)]
+    text = export.to_dxf(curves, layer=layer, units=units, scale=scale)
+    doc, auditor = recover.read(io.BytesIO(text.encode("ascii")))
+    assert not auditor.errors and not auditor.fixes
+    audit = doc.audit()
+    assert not audit.errors and not audit.fixes
+    assert doc.header["$INSUNITS"] == {"mm": 4, "inch": 1}[units]
+    assert layer in doc.layers
+    splines = list(doc.modelspace().query("SPLINE"))
+    assert len(splines) == len(curves)
+    for entity, curve in zip(splines, curves):
+        assert entity.dxf.layer == layer
+        tool = entity.construction_tool()
+        u = np.linspace(curve.t[curve.k], curve.t[-curve.k - 1], 41)
+        got = np.array([tool.point(v) for v in u])[:, :2]
+        assert np.max(np.abs(got - curve(u) * scale)) < 1e-9 * scale
