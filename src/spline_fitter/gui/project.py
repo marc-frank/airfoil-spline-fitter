@@ -521,7 +521,8 @@ class ProjectManager:
                            for name, get in fixed.items() if name not in swept)):
                 continue
             values = tuple(self._get_run_axis_value(run, name) for name in swept)
-            by_values[values] = (self._get_run_axis_value(run, axis), run.result.final_error)
+            by_values[values] = (self._get_run_axis_value(run, axis),
+                                 run.result.comparison_error)
         points = sorted(by_values.values())
         return [p[0] for p in points], [p[1] for p in points]
 

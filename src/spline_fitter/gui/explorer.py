@@ -181,7 +181,8 @@ COLUMNS: tuple[Column, ...] = (
     Column("Optimize junctions", lambda run: _opt(run).optimize_le_position,
            applies=_has_junctions),
     # Fit metrics
-    Column("Error", lambda run: run.result.final_error, ".3e", log=True, metric=True),
+    Column("Error", lambda run: run.result.comparison_error, ".3e", log=True, metric=True,
+           tip="RMS distance of the points to the curve, the same measure for every run"),
     Column("Max deviation", _report("max_deviation"), ".3e", log=True, metric=True),
     Column("RMS deviation", _report("rms_deviation"), ".3e", log=True, metric=True),
     Column("Fitted control points", lambda run: run.result.num_control_points, metric=True,

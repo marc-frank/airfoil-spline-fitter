@@ -211,6 +211,7 @@ class FittingController:
             converged=result.success and not w._cancel_requested,
             cancelled=w._cancel_requested,
             section_knots=result.section_knots,
+            rms_error=result.rms_error,
         )
         self._attach_report(fit_result, opt_config, airfoil)
         return fit_result
@@ -413,7 +414,7 @@ class FittingController:
             progress = (idx + 1) / total_fits * 100
             elapsed = time.perf_counter() - sweep_start_time
             if self._sweep_results and self._sweep_results[-1][0] == values:
-                last_error = self._sweep_results[-1][1].final_error
+                last_error = self._sweep_results[-1][1].comparison_error
                 w.statusBar().showMessage(
                     f"Sweep: {idx + 1}/{total_fits} ({number(progress, '.0f')}%) | "
                     f"{label}, error {format_error(last_error)} | "
@@ -443,7 +444,7 @@ class FittingController:
                 f"Sweep complete: {len(self._sweep_results)} fits "
                 f"in {format_duration(elapsed)} | "
                 f"Best: {describe(best_values)}, "
-                f"error {format_error(best_result.final_error)}"
+                f"error {format_error(best_result.comparison_error)}"
             )
         else:
             msg = "Sweep failed: no fit succeeded"
@@ -463,6 +464,7 @@ class FittingController:
         # Several swept parameters put several fits at one x value
         plots.set_comparison_data(x, y, connected=len(set(x)) == len(x))
         best_values, best_result = min(self._sweep_results,
-                                       key=lambda vr: vr[1].final_error)
-        plots.set_comparison_marker([best_values[self._sweep_x]], [best_result.final_error])
+                                       key=lambda vr: vr[1].comparison_error)
+        plots.set_comparison_marker([best_values[self._sweep_x]],
+                                    [best_result.comparison_error])
         return best_values, best_result
