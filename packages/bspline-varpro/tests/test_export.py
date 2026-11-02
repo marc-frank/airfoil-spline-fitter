@@ -229,3 +229,81 @@ def test_iges_names_are_ascii_and_fit_one_record(tmp_path, fitted):
     assert len(_iges_parameters(text)) == 2
     global_section = "".join(line[:72] for line in text.splitlines() if line[72] == "G")
     assert "60HGottingen xxx" in global_section
+
+
+def test_merge_is_c1_for_sections_on_different_parameter_ranges():
+    a = BSpline(np.r_[[0.0] * 4, 0.5, [2.0] * 4],
+                np.array([[0, 0], [0.2, 0], [0.5, 0.1], [0.8, 0.05], [1, 0.0]]), 3)
+    end, tangent = a(2.0), a(2.0, nu=1)
+    d = tangent / np.linalg.norm(tangent)
+    b = BSpline(np.r_[[0.0] * 4, [1.0] * 4],
+                np.array([end, end + 0.3 * d, end + 0.6 * d + [0.3, 0.2], end + [1.0, 0.5]]), 3)
+    merged = export.merge_curves([a, b])
+    values, counts = np.unique(merged.t, return_counts=True)
+    assert counts[1:-1].max() <= merged.k - 1
+    for c in (a, b):
+        _, dist = diagnostics.project(c(np.linspace(c.t[c.k], c.t[-c.k - 1], 101)), merged)
+        assert np.max(dist) < 1e-11
+
+
+def _awkward_curve():
+    # Values that need 17 significant digits to read back
+    ctrl = np.array([[0.1 + 0.2, 1 / 3], [2 / 3, 1e-5 / 3], [1.0, np.pi]])
+    return BSpline(np.r_[[0.0] * 3, [1 / 3] * 3], ctrl, 2)
+
+
+def test_step_and_iges_reals_read_back_exactly():
+    curve = _awkward_curve()
+    (degree, knots, points), = _step_curves(export.to_step([curve]))
+    assert np.array_equal(knots, curve.t) and np.array_equal(points[:, :2], curve.c)
+    fields, = _iges_parameters(export.to_iges([curve]))
+    values = np.array([float(v) for v in fields[7:]])
+    assert np.array_equal(values[:6], curve.t)
+    assert np.array_equal(values[9:18].reshape(3, 3)[:, :2], curve.c)
+    bad = BSpline(curve.t, np.where(curve.c == 1.0, np.nan, curve.c), 2)
+    for writer in (export.to_step, export.to_iges, export.to_dxf):
+        with pytest.raises(ValueError, match="non-finite"):
+            writer([bad])
+
+
+def test_iges_author_and_organization_are_default():
+    text = export.to_iges([_awkward_curve()])
+    global_section = "".join(line[:72] for line in text.splitlines() if line[72] == "G")
+    assert global_section.startswith("1H,,1H;,")
+    # Parameters 3 onwards; 21 and 22 are the author and organization
+    fields = global_section[len("1H,,1H;,"):].rstrip().rstrip(";").split(",")
+    assert fields[18:20] == ["", ""]
+    assert "0H" not in fields
+
+
+def test_dxf_has_the_structure_autocad_needs(fitted):
+    pairs = _dxf_pairs(export.to_dxf(fitted, layer="Profile"))
+    sections = [pairs[i + 1][1] for i, p in enumerate(pairs) if p == (0, "SECTION")]
+    assert sections == ["HEADER", "CLASSES", "TABLES", "BLOCKS", "ENTITIES", "OBJECTS"]
+    tables = [pairs[i + 1][1] for i, p in enumerate(pairs) if p == (0, "TABLE")]
+    assert tables == ["VPORT", "LTYPE", "LAYER", "STYLE", "VIEW", "UCS", "APPID", "DIMSTYLE", "BLOCK_RECORD"]
+
+    header_end = pairs.index((0, "ENDSEC"))
+    handles = [int(v, 16) for c, v in pairs[header_end:] if c in (5, 105)]
+    assert len(handles) == len(set(handles))
+    seed = pairs[pairs.index((9, "$HANDSEED")) + 1]
+    assert seed[0] == 5 and int(seed[1], 16) > max(handles)
+    owners = {int(v, 16) for c, v in pairs if c == 330}
+    assert owners <= set(handles) | {0}
+
+    def records(kind):
+        """Group-code dicts (first value per code) of every object of a kind."""
+        starts = [i for i, p in enumerate(pairs) if p == (0, kind)]
+        ends = [next(j for j in range(i + 1, len(pairs)) if pairs[j][0] == 0) for i in starts]
+        return [dict(reversed(pairs[i + 1:j])) for i, j in zip(starts, ends)]
+
+    for table in records("TABLE"):
+        entries = [r for r in records(table[2]) if r.get(330) == table[5]]
+        assert int(table[70]) == len(entries)
+    model = next(r for r in records("BLOCK_RECORD") if r[2] == "*Model_Space")
+    assert {r[2] for r in records("LAYER")} == {"0", "Profile"}
+    for spline in records("SPLINE"):
+        assert spline[330] == model[5] and spline[8] == "Profile"
+    assert [r[2] for r in records("BLOCK")] == ["*Model_Space", "*Paper_Space"]
+    root = next(r for r in records("DICTIONARY") if r[330] == "0")
+    assert root[3] == "ACAD_GROUP"
