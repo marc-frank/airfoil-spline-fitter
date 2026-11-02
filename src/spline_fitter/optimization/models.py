@@ -520,6 +520,9 @@ class OptimizationRun:
         result: Optimization result (errors, timing, convergence)
         loss_history: Complete history of all evaluations
         section_control_points: Final fitted control points per section
+        number: Number of the run in its project, in the order the runs
+            were done; kept when other runs are deleted. 0 until numbered
+            (see ``project_io.number_runs``).
     """
     run_id: str
     timestamp: str
@@ -528,6 +531,7 @@ class OptimizationRun:
     result: FitResult
     loss_history: list[IterationRecord]
     section_control_points: list[PointList]
+    number: int = 0
 
 
 @dataclass

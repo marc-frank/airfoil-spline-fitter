@@ -177,6 +177,7 @@ def _encode_optimization_run(run: OptimizationRun) -> dict[str, Any]:
     """Encode OptimizationRun to JSON-serializable dict."""
     return {
         "run_id": run.run_id,
+        "number": run.number,
         "timestamp": run.timestamp,
         "spline_config": _encode_spline_config(run.spline_config),
         "optimization_config": _encode_optimization_config(run.optimization_config),
@@ -313,6 +314,8 @@ def _decode_optimization_run(data: dict[str, Any]) -> OptimizationRun:
         result=_decode_fit_result(data["result"], section_control_points),
         loss_history=[_decode_iteration_record(r) for r in data["loss_history"]],
         section_control_points=section_control_points,
+        # Files before run numbers: numbered in order by number_runs
+        number=data.get("number", 0),
     )
 
 
@@ -329,11 +332,24 @@ def _decode_metadata(data: dict[str, Any]) -> ProjectMetadata:
 
 def _decode_project(data: dict[str, Any]) -> ProjectFile:
     """Decode ProjectFile from JSON dict."""
+    runs = [_decode_optimization_run(r) for r in data.get("optimization_runs", [])]
+    number_runs(runs)
     return ProjectFile(
         metadata=_decode_metadata(data["metadata"]),
         airfoil=_decode_airfoil(data["airfoil"]),
-        optimization_runs=[_decode_optimization_run(r) for r in data.get("optimization_runs", [])],
+        optimization_runs=runs,
     )
+
+
+def number_runs(runs: list[OptimizationRun], after: int = 0) -> int:
+    """Number the runs that have no number yet (0), in list order, after the
+    highest number among the runs and ``after``; the highest number given."""
+    last = max([after] + [run.number for run in runs])
+    for run in runs:
+        if run.number <= 0:
+            last += 1
+            run.number = last
+    return last
 
 
 # =============================================================================
