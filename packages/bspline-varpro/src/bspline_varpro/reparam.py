@@ -30,9 +30,22 @@ def inverse_softplus(y: np.ndarray) -> np.ndarray:
     return np.where(y_safe > 20.0, y_safe, np.log(np.expm1(np.clip(y_safe, 1e-15, 20.0))))
 
 
+#: Smallest gap :func:`t_to_eta` passes on, relative to the mean gap.
+MIN_RELATIVE_GAP = 1e-3
+
+
 def t_to_eta(u: np.ndarray) -> np.ndarray:
-    """Eta vector (one shorter than ``u``) reproducing the given chain parameters."""
-    return inverse_softplus(np.maximum(np.diff(np.asarray(u, dtype=np.float64)), 1e-15))
+    """Eta vector (one shorter than ``u``) reproducing the given chain parameters.
+
+    Gaps below ``MIN_RELATIVE_GAP`` times the mean gap are widened to it. The
+    derivative of a gap w.r.t. its eta is about the gap itself, so a gap that
+    collapsed in an earlier fit (a point pushed onto its neighbour by a loop
+    of a curve with too few control points) would stay collapsed in every fit
+    warm-started from it, the point held at the wrong place on the curve.
+    """
+    gaps = np.diff(np.asarray(u, dtype=np.float64))
+    floor = max(MIN_RELATIVE_GAP * float(np.mean(gaps)), 1e-15) if len(gaps) else 1e-15
+    return inverse_softplus(np.maximum(gaps, floor))
 
 
 def eta_to_t(eta: np.ndarray, span: float) -> np.ndarray:
