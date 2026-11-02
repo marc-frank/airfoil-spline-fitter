@@ -237,6 +237,8 @@ class Size:
     SIDEBAR_MIN_WIDTH = 300   # narrowest the sidebar can be dragged
     EXPLORER_MIN_WIDTH = 180  # narrowest the project explorer can be dragged
     SLIDER_WIDTH = 220        # least width of a dialog's slider
+    DIALOG_MIN_WIDTH = 480    # least width of a dialog with folder fields
+    POPUP_MIN_WIDTH = 260     # least width of a column filter drop-down
     CURVE_WIDTH = 2
     LINE_WIDTH = 1
     DATA_SIZE = 4

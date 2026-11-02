@@ -6,6 +6,7 @@ new features cannot drift from the Loft design language.
 import io
 import os
 import re
+import sys
 import tokenize
 from pathlib import Path
 
@@ -273,6 +274,49 @@ def test_theme_setting_restyles_the_running_app(tmp_path, monkeypatch):
         app.processEvents()
 
 
+def test_filter_preview_follows_a_theme_change(tmp_path, monkeypatch):
+    """The values a typed condition rules out stay greyed in the new TEXT_3."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt6.QtCore import QSettings
+    from PyQt6.QtWidgets import QApplication
+
+    from spline_fitter.gui import theme
+    from spline_fitter.gui.explorer import COLUMN_NAMES
+    from spline_fitter.gui.ui import SplineFitterWindow
+    from spline_fitter.optimization.models import (
+        FitResult,
+        OptimizationConfig,
+        SplineConfig,
+    )
+
+    ini = str(tmp_path / "settings.ini")
+    monkeypatch.setattr(theme, "_settings", lambda: QSettings(ini, QSettings.Format.IniFormat))
+    app = QApplication.instance() or QApplication([])
+    w = SplineFitterWindow()
+    before = (theme.Scheme.MODE, theme.Scheme.TEMPERATURE)
+    try:
+        w.show()
+        w.new_naca_airfoil("2412")
+        for ctrl in (8, 12):
+            upper = [(1 - i / (ctrl - 1), 0.05 * (i % 2)) for i in range(ctrl)]
+            w._project_manager.add_optimization_run(
+                SplineConfig(num_control_points=ctrl),
+                OptimizationConfig(max_iterations=0),
+                FitResult([upper, upper[::-1]], 5, 1e-4, 3, 9, 0.5), [])
+        popup = w._run_table.open_filter(COLUMN_NAMES.index("Control points"))
+        popup.condition.setText("<10")
+        greyed = [popup.values.item(i) for i in range(popup.values.count())
+                  if popup.values.item(i).text() == "12"]
+        assert greyed
+        theme.set_theme("light", 60)
+        app.processEvents()
+        assert greyed[0].foreground().color().name().lower() == theme.Palette.TEXT_3.lower()
+    finally:
+        theme.set_theme(*before)
+        w.deleteLater()
+        app.processEvents()
+
+
 def test_plots_start_as_their_toolbars_set_them():
     """The convergence plot's axes match the toolbar before the first fit,
     and every main-plot item has a drawing order from Z."""
@@ -298,9 +342,10 @@ def test_plots_start_as_their_toolbars_set_them():
         app.processEvents()
 
 
-def test_window_narrows_by_stacking_the_bottom_plots():
-    """The convergence and runs plots stack when the window is too narrow
-    for both toolbars, so they do not set the window's minimum width."""
+def test_window_narrows_by_stacking_rows():
+    """The plot toolbar's groups and the convergence and runs plots stack
+    when the window is too narrow for them side by side, so the center asks
+    for no more width than its widest group."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PyQt6.QtWidgets import QApplication
 
@@ -310,20 +355,53 @@ def test_window_narrows_by_stacking_the_bottom_plots():
     w = SplineFitterWindow()
     try:
         w.show()
-        row = w._bottom_plots
-        widths = [row.layout().itemAt(i).minimumSize().width() for i in range(2)]
-        assert row.minimumSizeHint().width() == max(widths)
+        rows = (w._plot_toolbar, w._bottom_plots)
+        widths = [[row.layout().itemAt(i).minimumSize().width() for i in range(2)]
+                  for row in rows]
+        for row, groups in zip(rows, widths, strict=True):
+            assert row.minimumSizeHint().width() == max(groups)
         center = w._main_splitter.widget(1)
-        assert center.minimumSizeHint().width() < sum(widths)
+        margins = center.layout().contentsMargins()
+        assert center.minimumSizeHint().width() == (
+            max(max(groups) for groups in widths) + margins.left() + margins.right())
         w.resize(w.minimumSizeHint().width(), 900)
         app.processEvents()
-        assert row.is_stacked()
-        w.resize(3000, 900)
+        assert all(row.is_stacked() for row in rows)
+        w.resize(4000, 900)
         app.processEvents()
-        assert not row.is_stacked()
+        assert not any(row.is_stacked() for row in rows)
     finally:
         w.deleteLater()
         app.processEvents()
+
+
+@pytest.mark.skipif(sys.platform not in ("win32", "darwin") and not os.environ.get("DISPLAY"),
+                    reason="needs the platform's own fonts")
+def test_window_fits_half_a_full_hd_screen():
+    """With the explorer shown, the window is at most 960 px wide at its
+    narrowest. Measured with the platform's own fonts in a process of its
+    own (the offscreen platform's stand-in fonts are wider); nothing shows."""
+    import subprocess
+
+    code = (
+        "import os\n"
+        "from PyQt6.QtWidgets import QApplication\n"
+        "app = QApplication([])\n"
+        "from spline_fitter.gui.ui import SplineFitterWindow\n"
+        "w = SplineFitterWindow()\n"
+        "w._action_toggle_explorer.setChecked(True)\n"
+        "w.ensurePolished()\n"
+        "print(w.minimumSizeHint().width(), w._explorer_panel.isVisibleTo(w), flush=True)\n"
+        "os._exit(0)\n")
+    env = {k: v for k, v in os.environ.items() if k != "QT_QPA_PLATFORM"}
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(ROOT / "src"), str(ROOT / "packages" / "bspline-varpro" / "src")])
+    done = subprocess.run([sys.executable, "-c", code], env=env, cwd=ROOT,
+                          capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr[-2000:]
+    width, explorer = done.stdout.split()
+    assert explorer == "True"
+    assert int(width) <= 960
 
 
 def test_ink_is_scarce():
@@ -403,8 +481,8 @@ PRODUCT = "Airfoil Spline Fitter"
 ABBREVIATIONS = re.compile(
     r"\b(?:Avg|avg|Min|dev|pts|iters?|Iter|evals?|Evals|err|tol|sw|LE|TE|Ctrl pts)\b"
     r"|\b[a-z]+/[a-z]+\b(?!\))")
-# Symbols beyond the arrow, the Greek letters of math and the times sign
-SYMBOLS = re.compile("[˜✓✗≥≤∫…≈·•]")
+# Symbols beyond the arrow and the Greek letters of math
+SYMBOLS = re.compile("[˜✓✗≥≤∫…≈·•×]")
 
 
 def _decoded(code: str) -> str:

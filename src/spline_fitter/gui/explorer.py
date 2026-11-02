@@ -78,7 +78,7 @@ from PyQt6.QtWidgets import (
 
 from ..formatting import decimal_point, format_duration, number
 from ..optimization.models import OptimizationRun, OptimizerType
-from .theme import Palette, Size, brush, icon, mono_font
+from .theme import Palette, Size, brush, icon, mono_font, theme_changed
 
 # =============================================================================
 # Columns
@@ -531,7 +531,9 @@ class ColumnFilterPopup(QFrame):
         self.add_button.clicked.connect(lambda: self.keep(add=True))
         self.values.itemChanged.connect(self._on_value_changed)
         self.select_all.clicked.connect(self._on_select_all)
-        self.setFixedWidth(max(260, self.sizeHint().width()))
+        self.setFixedWidth(max(Size.POPUP_MIN_WIDTH, self.sizeHint().width()))
+        # The greyed values take TEXT_3 of the theme in effect
+        theme_changed.changed.connect(self._show_values)
 
     def _items(self) -> list[QListWidgetItem]:
         return [self.values.item(i) for i in range(self.values.count())]

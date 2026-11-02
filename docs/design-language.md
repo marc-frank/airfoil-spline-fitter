@@ -172,9 +172,9 @@ curve is a deviation worth seeing. Every new plot item takes a `Z` value.
 - **Glyphs**: no emoji. Icons are the stroked glyphs from `theme.icon()`
   (`chevron_down`, `chevron_up`, `chevron_right`, `chevron_left`,
   `check`, `dash` (partly checked), `range`, `sort_up`, `sort_down`, `filter`), drawn in `TEXT_2` at `Size.GLYPH`. Text symbols are limited to
-  → (from one value to the next), plus Greek letters for math (κ, dκ/ds)
-  and × between numbers ("2 × 10" control points). No middle dots or bullets
-  as separators: use a comma.
+  → (from one value to the next), plus Greek letters for math (κ, dκ/ds).
+  Products are spelled out ("2 sections of 10", not "2 × 10"), and items
+  are separated by a comma, not a middle dot or bullet.
 - **The sweep toggle is a dimension line** (`range`, at `Size.GLYPH_LARGE`):
   |←→|, as a drawing marks a span. Glyphs on checkable buttons turn `TEXT` when checked
   (`icon(name, checked_role="TEXT")`).
@@ -208,12 +208,15 @@ Use the named gaps, not numbers:
 - Corner radius `Size.RADIUS` (3 px): crisp, drafted, not pill-shaped.
 - Fixed and least widths are tokens too: `FIELD_MIN_WIDTH` (sidebar fields),
   `SIDEBAR_MIN_WIDTH` and `EXPLORER_MIN_WIDTH` (how narrow the side panels can
-  be dragged), `SLIDER_WIDTH` (a dialog's slider). Other controls take their
-  natural width.
-- **The window narrows by stacking, not clipping.** The convergence and runs
-  plots sit side by side in a `ReflowRow` (`widgets.py`) that stacks them when
-  the window is too narrow for both toolbars, so they never set the window's
-  minimum width.
+  be dragged), `SLIDER_WIDTH` (a dialog's slider), `DIALOG_MIN_WIDTH` (a dialog
+  with folder fields), `POPUP_MIN_WIDTH` (a column filter drop-down). Other
+  controls take their natural width.
+- **The window narrows by stacking, not clipping.** Rows that hold groups side
+  by side are a `ReflowRow` (`widgets.py`), which stacks the groups when the
+  row is too narrow: the main plot's toolbar (the display toggles, and the
+  live preview setting) and the convergence and runs plots. The center then
+  asks for no more width than its widest group, and the window, explorer
+  shown, fits half a 1920 px screen.
 - Sidebar form labels are `Size.LABEL_WIDTH` wide so fields line up across
   sections; add rows with `_add_row()` in `layout.py`.
 

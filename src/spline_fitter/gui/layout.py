@@ -169,7 +169,7 @@ class WindowLayoutMixin:
         center_layout.setSpacing(Size.GAP)
 
         # Main plot (airfoil visualization) with its display toolbar
-        center_layout.addLayout(self._build_plot_toolbar())
+        center_layout.addWidget(self._build_plot_toolbar())
         self._plot = FramedPlot(parent=center_panel, viewBox=SmoothViewBox())
         style_plot(self._plot)
         self._plot.getPlotItem().setAspectLocked(True, ratio=1)
@@ -385,8 +385,9 @@ class WindowLayoutMixin:
 
     # -- Plot Toolbar ------------------------------------------------------
 
-    def _build_plot_toolbar(self) -> QHBoxLayout:
-        """Build the display toolbar above the main plot."""
+    def _build_plot_toolbar(self) -> ReflowRow:
+        """Build the display toolbar above the main plot: the display
+        toggles, and the live preview setting beside or under them."""
         toolbar = QHBoxLayout()
         toolbar.setSpacing(Size.GAP)
         toolbar.setContentsMargins(0, 0, 0, 0)
@@ -486,12 +487,16 @@ class WindowLayoutMixin:
         deviation_row.addWidget(self._check_deviation)
         deviation_row.addWidget(self._btn_deviation_settings)
         toolbar.addLayout(deviation_row)
-
         toolbar.addStretch()
 
+        # The live preview setting, at the right of the display toggles, or
+        # under them when the plot is too narrow for both
+        live = QHBoxLayout()
+        live.setSpacing(Size.GAP)
+        live.setContentsMargins(0, 0, 0, 0)
         live_label = QLabel("Live preview")
         live_label.setObjectName("FormLabel")
-        toolbar.addWidget(live_label)
+        live.addWidget(live_label)
         self._combo_live = QComboBox()
         self._combo_live.addItems(["Minimal", "Moderate", "Detailed"])
         self._combo_live.setCurrentIndex(1)
@@ -504,9 +509,16 @@ class WindowLayoutMixin:
             "Minimal: only at the end. Moderate: once a second.\n"
             "Detailed: every iteration (slower)."
         )
-        toolbar.addWidget(self._combo_live)
+        live.addWidget(self._combo_live)
+        live.addStretch()
 
-        return toolbar
+        row = ReflowRow(Size.GAP)
+        self._plot_toolbar = row
+        for layout, stretch in ((toolbar, 1), (live, 0)):
+            group = QWidget()
+            group.setLayout(layout)
+            row.add_widget(group, stretch)
+        return row
 
     # -- Loss Toolbar ------------------------------------------------------
 
@@ -967,6 +979,8 @@ class WindowLayoutMixin:
         self._lbl_result_time = QLabel()
         for readout in (self._lbl_result_dev, self._lbl_result_ctrl, self._lbl_result_time):
             readout.setObjectName("Readout")
+        # "12 sections of 100" breaks into lines rather than widen the sidebar
+        self._lbl_result_ctrl.setWordWrap(True)
         for col, (caption, value) in enumerate((
             (self._lbl_result_caption_dev, self._lbl_result_dev),
             (QLabel("Control points"), self._lbl_result_ctrl),

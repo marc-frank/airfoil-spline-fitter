@@ -48,7 +48,7 @@ class BatchController:
         """Open the batch-conversion dialog (File -> Batch Convert)."""
         dialog = QDialog(self._window)
         dialog.setWindowTitle("Batch convert")
-        dialog.setMinimumWidth(480)
+        dialog.setMinimumWidth(Size.DIALOG_MIN_WIDTH)
         form = dialog_form(dialog)
         note = QLabel("Fit every .dat file in the source folder with the current settings\n"
                       "and save each as .spline.dat in the target folder.")
