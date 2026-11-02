@@ -121,10 +121,24 @@ class BatchController:
 
         self._window._cancel_requested = False
         self._window._set_fitting_ui(True)
+        try:
+            self._convert(files, config, opt_config)
+        finally:
+            # Back to the window's own airfoil and fit
+            w = self._window
+            w._set_fitting_ui(False)
+            if w._airfoil is not None:
+                w._plot_manager.plot_airfoil(w._airfoil.coordinates)
+                if w._fit_result is not None:
+                    w._plot_manager.plot_fitted_spline(w._fit_result)
+                    w._refresh_curvature_comb()
 
+    def _convert(self, files: list[str], config, opt_config) -> None:
+        """Fit and export every file (UI locked), and report how it went."""
         start_time = time.perf_counter()
         done = 0
         failed = 0
+        skipped = 0
 
         for idx, fname in enumerate(files, 1):
             if self._window._cancel_requested:
@@ -155,6 +169,7 @@ class BatchController:
                 )
 
                 if os.path.exists(out_path):
+                    skipped += 1
                     self._window.statusBar().showMessage(f"[{idx}/{len(files)}] Skip: {out_path}")
                     QApplication.processEvents()
                     continue
@@ -243,17 +258,13 @@ class BatchController:
         elapsed = time.perf_counter() - start_time
 
         if self._window._cancel_requested:
-            msg = f"Batch cancelled after {format_duration(elapsed)}. Completed {done}/{len(files)}, failed {failed}."
+            msg = (f"Batch cancelled after {format_duration(elapsed)}. "
+                   f"Completed {done}/{len(files)}, failed {failed}.")
         else:
             msg = f"Batch complete: {done} files in {format_duration(elapsed)} ({failed} failed)"
-
-        # Back to the window's own airfoil and fit
-        w = self._window
-        if w._airfoil is not None:
-            w._plot_manager.plot_airfoil(w._airfoil.coordinates)
-            if w._fit_result is not None:
-                w._plot_manager.plot_fitted_spline(w._fit_result)
-                w._refresh_curvature_comb()
-
+        if skipped:
+            # Outputs are named by file and degree only: other settings
+            # into the same folder would otherwise silently do nothing
+            msg += (f" | Skipped {skipped} already in the target folder "
+                    "(outputs are named by file and degree)")
         self._window.statusBar().showMessage(msg)
-        self._window._set_fitting_ui(False)

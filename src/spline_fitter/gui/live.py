@@ -103,11 +103,13 @@ class LiveProgress:
                 status += f" | Max deviation of last refit {format_error(self._deviation)}"
         else:
             status += f"Best error {format_error(min(self._logger.errors))}"
+        # Cleared before the step is published: a tick that draws it in
+        # between sets the event after this, never before
+        self._drawn.clear()
         self._latest.update(x=np.array(x, copy=True), preview=preview, new=True, status=status)
 
         if self.mode == DETAILED:
             # Hand the step to the GUI and wait until it is drawn
-            self._drawn.clear()
             request_tick()
             while not self._drawn.wait(0.05):
                 if w._cancel_requested:

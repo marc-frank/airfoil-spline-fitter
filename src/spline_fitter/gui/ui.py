@@ -658,12 +658,17 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._btn_cancel.setVisible(fitting)
         self._btn_open.setEnabled(not fitting)
         self._action_open.setEnabled(not fitting)
+        self._action_open_project.setEnabled(not fitting)
         self._action_new_naca.setEnabled(not fitting)
         self._menu_recent.setEnabled(not fitting)
         self._action_paste_airfoil.setEnabled(not fitting)
         self._action_batch.setEnabled(not fitting)
         if hasattr(self, "_settings_history"):
             self._update_undo_actions()
+        # The explorer shows runs while fitting but loads, applies and deletes none
+        runs = self._run_table.selected_runs()
+        self._btn_load_run.setEnabled(not fitting and len(runs) == 1)
+        self._btn_delete_run.setEnabled(not fitting and bool(runs))
 
         # Toggle controls
         self._sweep_degree.setEnabled(not fitting)
