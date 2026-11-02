@@ -6,8 +6,11 @@ Analyze Fit Times vs Control Points
 Plots how long optimization fits take as a function of the number of control points.
 This helps understand the computational cost scaling.
 
+Control points are the fitted chain's (junction points counted once), so
+tolerance-mode runs, which choose their own count, are placed correctly.
+
 Usage:
-    python scripts/analyze_fit_times.py
+    python scripts/analyze_fit_times.py <project.asfproj>
 """
 
 import sys
@@ -60,7 +63,11 @@ def analyze_fit_times(data: Dict[str, Any]) -> Dict[str, List[tuple]]:
     for run in runs:
         opt = run["optimization_config"]["optimizer"]
         cfg = run["spline_config"]
-        ctrl = cfg["num_control_points"]
+        sections = run.get("section_control_points")
+        if sections:
+            ctrl = sum(len(s) for s in sections) - (len(sections) - 1)
+        else:
+            ctrl = cfg["num_control_points"]
         elapsed = run["result"].get("elapsed_seconds", 0.0)
         
         optimizer_data[opt].append((ctrl, elapsed))
@@ -230,9 +237,11 @@ def print_summary(optimizer_data: Dict[str, List[tuple]]):
 
 
 def main():
-    # Load project file from docs
-    script_dir = Path(__file__).parent
-    project_path = script_dir.parent / "docs" / "AG 25.asfproj"
+    # Project file from the command line
+    if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
+        print(__doc__)
+        sys.exit(1)
+    project_path = Path(sys.argv[1])
     
     if not project_path.exists():
         print(f"Error: File not found: {project_path}")
@@ -249,7 +258,7 @@ def main():
     print_summary(optimizer_data)
     
     # Generate plots
-    output_dir = script_dir.parent / "docs"
+    output_dir = project_path.parent
     
     # Individual optimizer plots
     plot_fit_times(optimizer_data, output_dir / "fit_times_by_optimizer.png")

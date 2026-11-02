@@ -4,7 +4,8 @@ Remove Evaluation Numbers from Project Files
 =============================================
 
 Migrates old .asfproj files that have per-evaluation loss_history records
-to the new iteration-only format.
+to the new iteration-only format. The app reads both formats; this only
+makes old files smaller.
 
 This script:
 1. Loads the old project file (with 'eval' field in loss_history)
@@ -26,8 +27,9 @@ import sys
 import os
 import json
 import shutil
+import tempfile
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple
 
 
 def migrate_loss_history(loss_history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -62,7 +64,7 @@ def migrate_loss_history(loss_history: List[Dict[str, Any]]) -> List[Dict[str, A
     return [by_iteration[k] for k in sorted(by_iteration.keys())]
 
 
-def migrate_project(data: Dict[str, Any]) -> Dict[str, Any]:
+def migrate_project(data: Dict[str, Any]) -> Tuple[Dict[str, Any], int, int]:
     """
     Migrate a project's loss history from per-evaluation to per-iteration.
     
@@ -70,7 +72,7 @@ def migrate_project(data: Dict[str, Any]) -> Dict[str, Any]:
         data: Parsed JSON project data
         
     Returns:
-        Migrated project data
+        (migrated project data, records before, records after)
     """
     runs = data.get("optimization_runs", [])
     original_records = 0
@@ -132,8 +134,16 @@ def main():
     
     # Save
     print(f"Saving: {output_path}")
-    with open(output_path, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=2)
+    # Write a temporary file and swap it in, so a failure leaves the target intact
+    text = json.dumps(data, indent=2, ensure_ascii=False)
+    fd, temp_path = tempfile.mkstemp(prefix=".", suffix=".tmp", dir=output_path.resolve().parent)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(text)
+        os.replace(temp_path, output_path)
+    except BaseException:
+        os.remove(temp_path)
+        raise
     
     output_size = output_path.stat().st_size
     size_reduction = (1 - output_size / input_size) * 100 if input_size > 0 else 0
