@@ -474,3 +474,19 @@ def test_blanks_sort_last_in_either_order(window, order):
     window._run_table.sort_by(_index("Control points"), order)
     numbers = [int(c) for c in _column(window, "Control points")]
     assert numbers == sorted(numbers, reverse=order == Qt.SortOrder.DescendingOrder)
+
+
+def test_a_closed_filter_drop_down_leaves_no_theme_connection(window):
+    from PyQt6.QtCore import QCoreApplication, QEvent
+
+    from spline_fitter.gui.theme import theme_changed
+
+    _add(window, 10, 3e-4)
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    receivers = theme_changed.receivers(theme_changed.changed)
+    for _ in range(3):
+        popup = window._run_table.open_filter(_index("Control points"))
+        assert theme_changed.receivers(theme_changed.changed) == receivers + 1
+        popup.close()  # deleted on close
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert theme_changed.receivers(theme_changed.changed) == receivers

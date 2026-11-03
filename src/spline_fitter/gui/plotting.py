@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import numpy as np
 import pyqtgraph as pg
+from PyQt6.QtCore import pyqtSlot
 
 from ..analysis import foot_points, scipy_curves
 from ..geometry import find_leading_edge_index
@@ -142,6 +143,8 @@ class _ShapePlot(FramedPlot):
         construction line."""
         return (Ink.TRACE, False) if key == "thickness" else (Ink.CONSTRUCTION, True)
 
+    # A slot, so the connection ends with the chart (a closed report)
+    @pyqtSlot()
     def restyle(self) -> None:
         """Apply the theme's colors to the axes, the legend and the lines."""
         style_plot(self)

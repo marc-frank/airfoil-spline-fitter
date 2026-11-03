@@ -55,6 +55,7 @@ from PyQt6.QtCore import (
     Qt,
     QTransposeProxyModel,
     pyqtSignal,
+    pyqtSlot,
 )
 from PyQt6.QtGui import QAction, QBrush, QRegion, QStandardItem, QStandardItemModel
 from PyQt6.QtWidgets import (
@@ -557,6 +558,8 @@ class ColumnFilterPopup(QFrame):
         """The unchecked values, with what the typed condition rules out."""
         return self._excluded | self._ruled_out(self._terms)
 
+    # A slot, so the connection ends with the drop-down (deleted on close)
+    @pyqtSlot()
     def _show_values(self) -> None:
         """Check the values that are not unchecked; grey what the typed
         condition rules out."""

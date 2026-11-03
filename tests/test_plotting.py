@@ -164,3 +164,27 @@ def test_shape_chart_follows_a_theme_change(tmp_path, monkeypatch):
         theme.set_theme(*before)
         plot.deleteLater()
         _APP[0].processEvents()
+
+
+def test_a_deleted_shape_chart_leaves_no_theme_connection():
+    """A closed report's chart does not stay connected to theme changes."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt6.QtCore import QCoreApplication, QEvent
+    from PyQt6.QtWidgets import QApplication
+
+    from spline_fitter.gui.plotting import shape_plot
+    from spline_fitter.gui.theme import theme_changed
+
+    if not _APP:
+        _APP.append(QApplication.instance() or QApplication([]))
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    receivers = theme_changed.receivers(theme_changed.changed)
+    x = np.linspace(0, 1, 20)
+    for _ in range(3):
+        plot = shape_plot({"x": x, "thickness": 0.1 * x, "camber": 0.02 * x,
+                           "max_thickness": 0.1, "max_thickness_x": 1.0,
+                           "max_camber": 0.02, "max_camber_x": 1.0})
+        assert theme_changed.receivers(theme_changed.changed) == receivers + 1
+        plot.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert theme_changed.receivers(theme_changed.changed) == receivers
