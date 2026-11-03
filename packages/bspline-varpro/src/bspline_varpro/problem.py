@@ -48,8 +48,13 @@ from typing import List, Optional, Sequence, Tuple, Union
 import numpy as np
 from scipy.linalg import LinAlgWarning, block_diag, lu_factor, lu_solve
 
-from .basis import (basis_derivative_matrix, basis_matrix, bending_energy_rows, centripetal_parameters,
-                    validate_knots)
+from .basis import (
+    basis_derivative_matrix,
+    basis_matrix,
+    bending_energy_rows,
+    centripetal_parameters,
+    validate_knots,
+)
 from .chain import chain_data, chain_parameters, groups
 from .constraints import ChainConstraints, ContinuitySpec, End, parse_junctions
 
@@ -201,9 +206,12 @@ class VarProProblem:
         # a geometric join's alpha: those pairs are left out.
         chords = np.linalg.norm(np.diff(self.data, axis=0), axis=1)
         moving = chords > 1e-12 * max(float(np.max(chords, initial=0.0)), 1e-300)
-        reference = chain_parameters([centripetal_parameters(sec) for sec in self.sections], self.sections)
-        section = np.minimum(np.floor(0.5 * (reference[:-1] + reference[1:])), self.num_sections - 1)
-        self._speed_pairs = np.flatnonzero(moving[:-1] & moving[1:] & (section[:-1] == section[1:]))
+        reference = chain_parameters([centripetal_parameters(sec) for sec in self.sections],
+                                     self.sections)
+        section = np.minimum(np.floor(0.5 * (reference[:-1] + reference[1:])),
+                             self.num_sections - 1)
+        self._speed_pairs = np.flatnonzero(moving[:-1] & moving[1:]
+                                           & (section[:-1] == section[1:]))
         self._log_chords = np.log(np.where(moving, chords, 1.0))
         self._speed_reference = self._speed_change(reference)[0]
         self.speed_pull = SPEED_PULL * float(np.sqrt(spread))
@@ -286,8 +294,8 @@ class VarProProblem:
         Shape ``(dim * (total_pts + len(penalty_root)) + num_pull_rows + num_speed_rows,)``:
         then come the rows pulling the speed ratio of each geometric junction
         towards its natural value, and last those keeping the curve's speed
-        between consecutive data points changing smoothly. Also records ``last_control_points`` and the data-only
-        ``last_rms_error``.
+        between consecutive data points changing smoothly. Also records
+        ``last_control_points`` and the data-only ``last_rms_error``.
         """
         N, P, _, _ = self.solve(t_flat, theta=theta)
         data_residual = N @ P - self.data
@@ -304,7 +312,8 @@ class VarProProblem:
         i = self._speed_pairs
         return log_speed[i + 1] - log_speed[i], gaps
 
-    def _speed(self, t_flat: np.ndarray) -> Tuple[np.ndarray, Optional[np.ndarray], Optional[np.ndarray]]:
+    def _speed(self, t_flat: np.ndarray
+               ) -> Tuple[np.ndarray, Optional[np.ndarray], Optional[np.ndarray]]:
         """Speed rows, then for the Jacobian whether each row is active and the
         weighted inverse gaps ``pull / g``."""
         if self.num_speed_rows == 0:

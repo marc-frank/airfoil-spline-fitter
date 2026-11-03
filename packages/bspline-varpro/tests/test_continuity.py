@@ -163,7 +163,8 @@ def test_geometric_fit_starts_from_the_parametric_one_at_any_length_ratio(contin
     assert problem.constraints.shape_values(theta)[0] == pytest.approx((1.0, 0.0, 0.0))
     # No ridge either: converged, the error is small enough for the 1e-12 ridge to
     # trade against it, and the objective, not the data error alone, decreases
-    parametric = bv.fit(sections, 6, continuity="C" + continuity[1], smoothing=0.0, regularization=0.0)
+    parametric = bv.fit(sections, 6, continuity="C" + continuity[1], smoothing=0.0,
+                        regularization=0.0)
     geometric = bv.fit(sections, 6, continuity=continuity, smoothing=0.0, regularization=0.0)
     # G^k includes C^k, so it fits at least as well
     assert geometric.rms_error <= parametric.rms_error * (1 + 1e-6)

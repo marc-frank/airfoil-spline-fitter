@@ -294,7 +294,8 @@ def polish_knots(
         return np.hstack([reduced_jacobian(problem, eta, theta),
                           problem.matrix_jacobian(t_flat, theta, changes) @ knots_by_xi(xi)])
 
-    xi0 = np.concatenate([to_xi(k, floor) for k, r, floor in zip(result.knots, counts, floors) if r > 0])
+    xi0 = np.concatenate([to_xi(k, floor)
+                          for k, r, floor in zip(result.knots, counts, floors) if r > 0])
     x0 = np.concatenate([t_to_eta(result.parameters), result.theta, xi0])
     try:
         solution = levenberg_marquardt(residual_at, jacobian, x0, max_nfev=max_nfev)

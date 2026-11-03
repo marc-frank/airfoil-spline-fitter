@@ -295,9 +295,9 @@ def test_levenberg_marquardt_without_a_limit_ends_on_a_non_finite_cost(jacobian)
         return np.array([x[0] - 2.0]) if x[0] < 1e-3 else np.array([np.nan])
 
     outcome = []
+    derivative = (lambda x: np.array([[1.0]])) if jacobian == "exact" else "2-point"
     worker = threading.Thread(target=lambda: outcome.append(levenberg_marquardt(
-        residual, (lambda x: np.array([[1.0]])) if jacobian == "exact" else "2-point", np.zeros(1))),
-        daemon=True)
+        residual, derivative, np.zeros(1))), daemon=True)
     worker.start()
     worker.join(timeout=10)
     assert outcome, "levenberg_marquardt did not return"

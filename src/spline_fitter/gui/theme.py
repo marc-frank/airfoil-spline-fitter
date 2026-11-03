@@ -34,7 +34,18 @@ import os
 import tempfile
 
 import pyqtgraph as pg
-from PyQt6.QtCore import QLocale, QObject, QPointF, QRect, QRectF, QSettings, QSize, Qt, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import (
+    QLocale,
+    QObject,
+    QPointF,
+    QRect,
+    QRectF,
+    QSettings,
+    QSize,
+    Qt,
+    pyqtSignal,
+    pyqtSlot,
+)
 from PyQt6.QtGui import (
     QColor,
     QFont,
@@ -614,8 +625,10 @@ def apply_theme(app: QApplication | None = None) -> None:
     mode = settings.value("theme/mode", Scheme.MODE)
     Scheme.MODE = mode if mode in Scheme.MODES else "system"
     Scheme.TEMPERATURE = max(-100, min(100, _int_setting(settings, "theme/temperature", 0)))
-    Motion.SCROLL_MS = _motion_ms(_int_setting(settings, "motion/scroll_ms", Motion.DEFAULT_SCROLL_MS))
-    Motion.ZOOM_MS = _motion_ms(_int_setting(settings, "motion/zoom_ms", Motion.DEFAULT_ZOOM_MS))
+    Motion.SCROLL_MS = _motion_ms(
+        _int_setting(settings, "motion/scroll_ms", Motion.DEFAULT_SCROLL_MS))
+    Motion.ZOOM_MS = _motion_ms(
+        _int_setting(settings, "motion/zoom_ms", Motion.DEFAULT_ZOOM_MS))
     # Whether the platform's own palette is dark, for a system that does not
     # say which scheme it follows
     global _PLATFORM_DARK

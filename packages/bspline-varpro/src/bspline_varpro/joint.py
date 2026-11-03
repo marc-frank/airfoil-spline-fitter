@@ -191,7 +191,9 @@ def solve_joint(
     message = "Maximum iterations reached."
     converged = False
     iteration = 0
-    for iteration in (itertools.count(1) if max_iterations is None else range(1, max_iterations + 1)):
+    iterations = (itertools.count(1) if max_iterations is None
+                  else range(1, max_iterations + 1))
+    for iteration in iterations:
         data_r = r[:n_data_rows].reshape(-1, dim)
         T = tangent[free]
         g_t = np.sum(T * data_r[free], axis=1)

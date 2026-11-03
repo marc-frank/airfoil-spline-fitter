@@ -236,8 +236,8 @@ def fit(
             per section, also while knots are grown or moved and during dense
             refinement. A callback with a ``knots`` keyword also gets the knot
             vectors (as does one taking ``**kwargs``). Return True to stop; the
-            result then holds the best state evaluated so far (or, while knots are moved, the fit before)
-            and ``success`` is False.
+            result then holds the best state evaluated so far (or, while knots
+            are moved, the fit before) and ``success`` is False.
         knot_placement: ``"uniform"`` keeps the knots where they start
             (evenly spaced with ``num_control_points``). ``"free"`` then moves
             the interior knots to where they reduce the error most

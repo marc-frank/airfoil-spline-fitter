@@ -303,7 +303,8 @@ def test_converged_fit_does_not_bulge_between_data_points(monkeypatch, speed_pul
     gaps = np.diff(start[1])
     gaps[len(gaps) // 2] *= 40
     start[1] = np.concatenate([[0.0], np.cumsum(gaps)]) / np.sum(gaps)
-    result = bv.fit([upper, lower], 14, 5, continuity="G2", smoothing=1e-7, initial_parameters=start)
+    result = bv.fit([upper, lower], 14, 5, continuity="G2", smoothing=1e-7,
+                    initial_parameters=start)
     deviation = _between_points(result, NACA4(code).points(20001))
     assert (deviation > 1e-3) if bulge else (deviation < 1e-4)
 
@@ -314,7 +315,8 @@ def test_knot_polish_does_not_pack_knots_closer_than_the_data():
     # to gaps of 0.0002 against a closest data spacing of 0.0012)
     sections = naca_sections(61, code="2412")
     start = bv.fit(sections, degree=5, continuity="G2", smoothing=1e-7,
-                   knots=[bv.clamped_knots(5, [0.3, 0.45, 0.46, 0.6]), bv.clamped_knots(5, [0.3, 0.5, 0.7])])
+                   knots=[bv.clamped_knots(5, [0.3, 0.45, 0.46, 0.6]),
+                          bv.clamped_knots(5, [0.3, 0.5, 0.7])])
     spacing = [np.min(np.diff(np.unique(np.concatenate([[0.0], local, [1.0]]))))
                for _, local in bv.chain.groups(start.parameters, 2)]
     polished = start

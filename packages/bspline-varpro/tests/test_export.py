@@ -338,7 +338,8 @@ def test_closed_curves_are_flagged_closed():
     sharp = airfoil.fit_airfoil(NACA4("0012").points(41), 1e-4)
     curves = [export.merge_curves(sharp)] + sharp.curves()
     text = export.to_step(curves)
-    flags = re.findall(r"B_SPLINE_CURVE_WITH_KNOTS\('(?:[^']|'')*',\d+,\([^)]*\),\.\w+\.,(\.[TF]\.),", text)
+    flags = re.findall(r"B_SPLINE_CURVE_WITH_KNOTS\('(?:[^']|'')*',\d+,\([^)]*\),"
+                       r"\.\w+\.,(\.[TF]\.),", text)
     assert flags == [".T.", ".F.", ".F."]
     assert [fields[4] for fields in _iges_parameters(export.to_iges(curves))] == ["1", "0", "0"]
 
