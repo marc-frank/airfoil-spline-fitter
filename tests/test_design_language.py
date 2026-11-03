@@ -27,6 +27,8 @@ FORBIDDEN = {
         r"\b(?:mkPen|mkBrush|setBackground|setForeground)\s*\(\s*[\"'][a-z]"
         r"|\b(?:color|pen|brush|symbolPen|symbolBrush|background|foreground)\s*=\s*[\"'][a-z]+[\"']"),
     "palette() color": re.compile(r"palette\(\w"),
+    "palette": re.compile(r"\bsetPalette\b|\bQPalette\b"),
+    "font size": re.compile(r"\bsetPointSizeF?\b|\bsetPixelSize\b|font-size\s*:"),
     "RGB tuple": re.compile(r"\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*\)"),
     # Four numbers in a tuple, not a call's arguments (setContentsMargins(0, 0, 0, 0));
     # the tokens of _code_lines are joined by spaces
@@ -42,7 +44,9 @@ FORBIDDEN = {
 @pytest.mark.parametrize("code", [
     "(255, 110, 16, 128)", '"#FF6E10AA"', "Qt.GlobalColor.red", "pg.mkPen('r')",
     'pen = "orange"', "(1.0, 0.43, 0.06)", "pg.mkColor(3)", "pg.mkBrush(255, 0, 0)",
-    "x = (255, 110, 16, 128)",
+    "x = (255, 110, 16, 128)", "label.setPalette(pal)", "pal = QPalette()",
+    "font.setPointSize(12)", "font.setPointSizeF(8.5)", "font.setPixelSize(11)",
+    '"font-size: 11px"',
 ])
 def test_forbidden_patterns_catch_every_color_form(code):
     assert any(p.search(code) for p in FORBIDDEN.values()), code
@@ -209,10 +213,26 @@ def test_temperature_tints_warm_and_cool(scheme, dark):
 def test_text_stays_readable(scheme, dark, temperature):
     scheme._set_tokens(dark, temperature)
     P = scheme.Palette
-    for surface in (P.CANVAS, P.WINDOW, P.PANEL, P.FIELD):
+    # Text sits on every surface, on a hovered field and on a selection
+    for surface in (P.CANVAS, P.WINDOW, P.PANEL, P.FIELD, P.FIELD_HOVER, P.SELECT):
         assert _contrast(P.TEXT, surface) >= 7
         assert _contrast(P.TEXT_2, surface) >= 4.5
         assert _contrast(P.TEXT_3, surface) >= 2.5
+    # The disabled primary button: TEXT_3 on RULE
+    assert _contrast(P.TEXT_3, P.RULE) >= 2.5
+
+
+@pytest.mark.parametrize("dark", [True, False], ids=["dark", "light"])
+@pytest.mark.parametrize("temperature", [-100, 0, 100])
+def test_status_colors_stay_readable(scheme, dark, temperature):
+    """OK, WARN and ERROR color text in reports (on PANEL) and messages (on
+    WINDOW), so they are held to the contrast of body text."""
+    scheme._set_tokens(dark, temperature)
+    P = scheme.Palette
+    low = [(name, surface, round(_contrast(getattr(P, name), getattr(P, surface)), 2))
+           for name in ("OK", "WARN", "ERROR") for surface in ("CANVAS", "WINDOW", "PANEL")
+           if _contrast(getattr(P, name), getattr(P, surface)) < 4.5]
+    assert not low, low
 
 
 def test_theme_setting_restyles_the_running_app(tmp_path, monkeypatch):
@@ -658,3 +678,240 @@ def test_decimals_follow_the_locale():
         assert spin.valueFromText("2,5e-05") == 2.5e-05
     finally:
         formatting.set_decimal_point(before)
+
+
+def _visible_controls(root):
+    """The inputs and buttons shown in a window, as the height test counts them."""
+    from PyQt6.QtWidgets import (
+        QAbstractButton,
+        QAbstractSpinBox,
+        QCheckBox,
+        QComboBox,
+        QLineEdit,
+    )
+    return [
+        c for c in root.findChildren((QAbstractButton, QAbstractSpinBox, QComboBox, QLineEdit))
+        if c.isVisible() and not isinstance(c, QCheckBox)
+        and c.objectName() != "SectionHeader"
+        and not isinstance(c.parent(), (QAbstractSpinBox, QComboBox))
+    ]
+
+
+def test_dialog_controls_share_one_height(monkeypatch):
+    """The dialogs the window opens (new NACA airfoil, batch convert, a
+    report) and the explorer's column filter keep CONTROL_HEIGHT too."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt6.QtWidgets import QApplication, QDialog
+
+    from spline_fitter.gui.explorer import COLUMN_NAMES
+    from spline_fitter.gui.theme import Size
+    from spline_fitter.gui.ui import SplineFitterWindow
+    from spline_fitter.gui.widgets import show_document
+
+    app = QApplication.instance() or QApplication([])
+    w = SplineFitterWindow()
+    measured: dict[str, list] = {}
+
+    def exec_(dialog):
+        dialog.show()
+        app.processEvents()
+        measured[dialog.windowTitle()] = [
+            (type(c).__name__, c.objectName(), c.height()) for c in _visible_controls(dialog)]
+        dialog.reject()
+        return QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(QDialog, "exec", exec_)
+    try:
+        w.show()
+        w._on_new_naca()
+        w._batch_controller.on_batch_dialog()
+        show_document(w, "Fit report", "<p>Report</p>", 400, 300)
+        popup = w._run_table.open_filter(COLUMN_NAMES.index("Control points"))
+        app.processEvents()
+        measured["filter"] = [(type(c).__name__, c.objectName(), c.height())
+                              for c in _visible_controls(popup)]
+        assert set(measured) >= {"New NACA airfoil", "Batch convert", "Fit report", "filter"}
+        assert all(measured.values()), measured
+        wrong = {title: [c for c in controls if c[2] != Size.CONTROL_HEIGHT]
+                 for title, controls in measured.items()}
+        assert not any(wrong.values()), wrong
+    finally:
+        w.deleteLater()
+        app.processEvents()
+
+
+def test_closed_dialogs_stop_following_the_theme(monkeypatch):
+    """A report, the theme and the motion dialog are freed on close, so they
+    do not pile up and restyle on every later theme change."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt6.QtCore import QCoreApplication, QEvent, QTimer
+    from PyQt6.QtWidgets import QApplication, QDialog
+
+    from spline_fitter.gui.theme import theme_changed
+    from spline_fitter.gui.ui import SplineFitterWindow
+    from spline_fitter.gui.widgets import show_document
+
+    app = QApplication.instance() or QApplication([])
+    w = SplineFitterWindow()
+    real_exec = QDialog.exec
+
+    def exec_closing(dialog):
+        QTimer.singleShot(0, dialog.accept)
+        return real_exec(dialog)
+
+    monkeypatch.setattr(QDialog, "exec", exec_closing)
+    try:
+        app.processEvents()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        receivers = theme_changed.receivers(theme_changed.changed)
+        for _ in range(3):
+            show_document(w, "Fit report", "<p>Report</p>", 300, 200)
+            w._action_theme.trigger()
+            w._action_motion.trigger()
+        app.processEvents()
+        # What the main loop does for objects freed with deleteLater
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        assert not w.findChildren(QDialog)
+        assert theme_changed.receivers(theme_changed.changed) == receivers
+    finally:
+        w.deleteLater()
+        app.processEvents()
+
+
+def test_temperature_leaves_neutral_by_key_and_wheel(tmp_path, monkeypatch):
+    """Only a drag snaps to neutral: an arrow key or a wheel notch moves off it."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt6.QtCore import QPoint, QPointF, QSettings, Qt
+    from PyQt6.QtGui import QWheelEvent
+    from PyQt6.QtTest import QTest
+    from PyQt6.QtWidgets import QApplication
+
+    from spline_fitter.gui import theme
+    from spline_fitter.gui.widgets import ThemeDialog
+
+    ini = str(tmp_path / "settings.ini")
+    monkeypatch.setattr(theme, "_settings", lambda: QSettings(ini, QSettings.Format.IniFormat))
+    app = QApplication.instance() or QApplication([])
+    before = (theme.Scheme.MODE, theme.Scheme.TEMPERATURE)
+    theme.set_theme(temperature=0)
+    dialog = ThemeDialog()
+    try:
+        dialog.show()
+        slider = dialog._slider
+        QTest.keyClick(slider, Qt.Key.Key_Right)
+        assert slider.value() == 1
+        slider.setValue(0)
+        wheel = QWheelEvent(QPointF(5, 5), QPointF(slider.mapToGlobal(QPoint(5, 5))),
+                            QPoint(0, 0), QPoint(0, 120), Qt.MouseButton.NoButton,
+                            Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False)
+        QApplication.sendEvent(slider, wheel)
+        assert 0 < slider.value() <= ThemeDialog.SNAP
+        # A drag still snaps
+        slider.setValue(20)
+        slider.setSliderDown(True)
+        slider.setSliderPosition(3)
+        assert slider.value() == 0
+        slider.setSliderDown(False)
+        # Closing applies a value still waiting for the slider to pause
+        slider.setValue(30)
+        dialog.accept()
+        assert theme.Scheme.TEMPERATURE == 30
+    finally:
+        theme.set_theme(*before)
+        app.processEvents()
+
+
+def test_unreadable_saved_settings_fall_back_to_defaults(tmp_path):
+    """A saved value that is not a number does not stop the app from starting."""
+    from PyQt6.QtCore import QSettings
+
+    from spline_fitter.gui import theme
+
+    ini = str(tmp_path / "settings.ini")
+    saved = QSettings(ini, QSettings.Format.IniFormat)
+    for key in ("theme/temperature", "motion/zoom_ms"):
+        saved.setValue(key, "warm")
+    saved.setValue("motion/scroll_ms", 200)
+    saved.sync()
+    settings = QSettings(ini, QSettings.Format.IniFormat)
+    assert theme._int_setting(settings, "theme/temperature", 0) == 0
+    assert theme._int_setting(settings, "motion/zoom_ms", 650) == 650
+    assert theme._int_setting(settings, "motion/scroll_ms", 350) == 200
+
+
+def test_light_and_dark_settings_reach_qt(tmp_path, monkeypatch):
+    """A light or dark setting is handed to Qt (title bar, native dialogs);
+    the system setting hands the choice back, and a system that names no
+    scheme is followed by its palette."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt6.QtCore import QSettings, Qt
+    from PyQt6.QtGui import QStyleHints
+    from PyQt6.QtWidgets import QApplication
+
+    from spline_fitter.gui import theme
+
+    if not hasattr(QStyleHints, "setColorScheme"):
+        pytest.skip("Qt before 6.8 cannot set the color scheme")
+    ini = str(tmp_path / "settings.ini")
+    monkeypatch.setattr(theme, "_settings", lambda: QSettings(ini, QSettings.Format.IniFormat))
+    app = QApplication.instance() or QApplication([])
+    theme.apply_theme(app)
+    # The offscreen platform ignores a requested scheme: stand in for one that does not
+    system = Qt.ColorScheme.Unknown
+    requested = [system]
+    monkeypatch.setattr(QStyleHints, "colorScheme", lambda self: requested[-1])
+    monkeypatch.setattr(QStyleHints, "setColorScheme",
+                        lambda self, s: requested.append(system if s == Qt.ColorScheme.Unknown
+                                                         else s))
+    before = (theme.Scheme.MODE, theme.Scheme.TEMPERATURE)
+    try:
+        theme.set_theme("light")
+        assert requested[-1] == Qt.ColorScheme.Light and not theme.Scheme.DARK
+        theme.set_theme("dark")
+        assert requested[-1] == Qt.ColorScheme.Dark and theme.Scheme.DARK
+        theme.set_theme("system")
+        assert requested[-1] == system
+        assert theme.Scheme.DARK == theme._PLATFORM_DARK
+        system = Qt.ColorScheme.Light
+        requested.append(system)
+        theme.set_theme("system")
+        assert not theme.Scheme.DARK
+    finally:
+        theme.set_theme(*before)
+        app.processEvents()
+
+
+@pytest.mark.parametrize("text", ["inf", "infinity", "-inf", "nan", "1e400", "1_0"])
+def test_scientific_spin_box_rejects_what_is_not_a_finite_number(text):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    import math
+
+    from PyQt6.QtGui import QValidator
+    from PyQt6.QtWidgets import QApplication
+
+    from spline_fitter.gui.widgets import ScientificSpinBox
+
+    app = QApplication.instance() or QApplication([])  # noqa: F841
+    spin = ScientificSpinBox()
+    spin.setRange(0, math.inf)
+    spin.setValue(0.001)
+    assert spin.validate(text, len(text))[0] == QValidator.State.Invalid
+    spin.lineEdit().setText(text)
+    spin.interpretText()
+    assert spin.value() == 0.001
+
+
+def test_scientific_spin_box_keeps_tiny_values():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    import math
+
+    from PyQt6.QtWidgets import QApplication
+
+    from spline_fitter.gui.widgets import ScientificSpinBox
+
+    app = QApplication.instance() or QApplication([])  # noqa: F841
+    spin = ScientificSpinBox()
+    spin.setRange(0, math.inf)
+    for value in (3e-16, 1e-30, 2.5e-300):
+        spin.setValue(value)
+        assert spin.value() == value

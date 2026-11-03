@@ -25,6 +25,22 @@ def window():
     app.processEvents()
 
 
+def test_showing_the_window_leaves_nothing_to_undo(window):
+    """Measuring the sidebar at the first show toggles every sweep: that
+    changes no setting, so Edit > Undo stays disabled."""
+    from PyQt6.QtTest import QTest
+    from PyQt6.QtWidgets import QApplication
+
+    from spline_fitter.gui.history import MERGE_MS
+
+    states = [box.sweep_state() for box in window._sweep_group]
+    window.show()
+    QTest.qWait(MERGE_MS + 200)
+    QApplication.processEvents()
+    assert not window._action_undo.isEnabled()
+    assert [box.sweep_state() for box in window._sweep_group] == states
+
+
 def _continuity(window, mode):
     window._combo_cont.setCurrentIndex(window._combo_cont.findData(mode))
 
