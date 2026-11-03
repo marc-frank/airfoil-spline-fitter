@@ -5,7 +5,7 @@ import time
 from dataclasses import replace as dc_replace
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QDir
+from PyQt6.QtCore import QDir, Qt
 from PyQt6.QtWidgets import (
     QApplication,
     QDialog,
@@ -117,6 +117,8 @@ class BatchController:
     def on_batch_dialog(self):
         """Open the batch-conversion dialog (File -> Batch Convert)."""
         dialog = QDialog(self._window)
+        # Freed on close, not kept as a child of the window
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dialog.setWindowTitle("Batch convert")
         dialog.setMinimumWidth(Size.DIALOG_MIN_WIDTH)
         form = dialog_form(dialog)

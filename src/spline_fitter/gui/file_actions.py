@@ -14,7 +14,7 @@ import os
 import threading
 
 import numpy as np
-from PyQt6.QtCore import QDir, QMimeData, QRegularExpression
+from PyQt6.QtCore import QDir, QMimeData, QRegularExpression, Qt
 from PyQt6.QtGui import QRegularExpressionValidator
 from PyQt6.QtWidgets import (
     QApplication,
@@ -256,6 +256,9 @@ class FileActionsMixin:
     def _on_new_naca(self):
         """Ask for a NACA 4-digit code and make that airfoil the one to fit."""
         dialog = QDialog(self)
+        # Freed on close (later, by the event loop: its fields are read
+        # right after exec returns)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dialog.setWindowTitle("New NACA airfoil")
         form = dialog_form(dialog)
         edit_code = QLineEdit(self._settings.value("naca_code", "2412"))
@@ -419,6 +422,9 @@ class FileActionsMixin:
             return
 
         dialog = QDialog(self)
+        # Freed on close (later, by the event loop: its fields are read
+        # right after exec returns)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dialog.setWindowTitle("Export CAD")
         form = dialog_form(dialog)
         combo_format = QComboBox()
