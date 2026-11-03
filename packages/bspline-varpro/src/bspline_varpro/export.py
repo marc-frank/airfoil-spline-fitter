@@ -46,6 +46,12 @@ def _knots_controls(curve: BSpline, scale: float):
     return np.asarray(curve.t, dtype=np.float64), ctrl3, k
 
 
+def _closed(ctrl: np.ndarray) -> bool:
+    """Whether a clamped curve ends where it starts (its end control points coincide)."""
+    scale = max(1.0, float(np.max(np.abs(ctrl))))
+    return bool(np.linalg.norm(ctrl[-1] - ctrl[0]) <= 1e-12 * scale)
+
+
 def arc_length(curve: BSpline, a: float = None, b: float = None, quad_order: int = 16) -> float:
     """Arc length by Gauss-Legendre quadrature on every knot span."""
     k = curve.k
@@ -242,7 +248,7 @@ def to_step(curves: CurveInput, name: str = "curves", scale: float = 1.0, units:
         curve_ids.append(add(
             f"B_SPLINE_CURVE_WITH_KNOTS({_step_string(f'{name} {i + 1}')},{degree},("
             + ",".join(f"#{p}" for p in point_ids)
-            + "),.UNSPECIFIED.,.F.,.F.,("
+            + f"),.UNSPECIFIED.,{'.T.' if _closed(ctrl) else '.F.'},.F.,("
             + ",".join(str(c) for c in counts) + "),("
             + ",".join(_step_real(v) for v in values) + "),.UNSPECIFIED.)"))
     curve_set = add("GEOMETRIC_CURVE_SET('curves',(" + ",".join(f"#{c}" for c in curve_ids) + "))")
@@ -272,9 +278,12 @@ def _ascii(text: str) -> str:
 
 
 def _hollerith(text: str, limit: int = 60) -> str:
-    """IGES Hollerith string, ASCII and at most ``limit`` characters so it fits one record."""
+    """IGES Hollerith string, ASCII and at most ``limit`` characters so it fits one record.
+
+    An empty string is an empty field (the default value), not a zero-length ``0H``.
+    """
     text = _ascii(text)[:limit]
-    return f"{len(text)}H{text}"
+    return f"{len(text)}H{text}" if text else ""
 
 
 def _iges_real(v: float) -> str:
@@ -329,7 +338,7 @@ def to_iges(curves: CurveInput, name: str = "curves", scale: float = 1.0, units:
         de_seq = 2 * i + 1
         k_upper = len(ctrl) - 1
         planar = int(np.allclose(ctrl[:, 2], ctrl[0, 2]))
-        fields = ["126", str(k_upper), str(degree), str(planar), "0", "1", "0"]
+        fields = ["126", str(k_upper), str(degree), str(planar), str(int(_closed(ctrl))), "1", "0"]
         fields += [_iges_real(v) for v in knots]
         fields += ["1.0"] * len(ctrl)
         fields += [_iges_real(v) for p in ctrl for v in p]
@@ -347,6 +356,22 @@ def to_iges(curves: CurveInput, name: str = "curves", scale: float = 1.0, units:
     return "\n".join(start + global_lines + directory + parameter + [terminate]) + "\n"
 
 
+_DXF_FORBIDDEN = set('<>/\\":;?*|=`')
+
+
+def _dxf_name(text: str) -> str:
+    r"""Symbol-table name for an ASCII DXF: non-ASCII characters as ``\U+XXXX``.
+
+    Characters outside the Basic Multilingual Plane, which the escape cannot
+    hold, become ``_``.
+    """
+    if not text or set(text) & _DXF_FORBIDDEN or any(ord(c) < 32 for c in text):
+        raise ValueError(f"Invalid DXF layer name {text!r}: it must not be empty or contain "
+                         "control characters or any of < > / \\ \" : ; ? * | = `.")
+    return "".join(c if ord(c) < 127 else f"\\U+{ord(c):04X}" if ord(c) <= 0xFFFF else "_"
+                   for c in text)
+
+
 def to_dxf(curves: CurveInput, scale: float = 1.0, layer: str = "0", units: str = "mm") -> str:
     """DXF R2000 text with one ``SPLINE`` entity per curve.
 
@@ -355,11 +380,14 @@ def to_dxf(curves: CurveInput, scale: float = 1.0, layer: str = "0", units: str 
     root dictionary and owner handles, so the file has all of them.
 
     Args:
+        layer: Layer of the splines; non-ASCII characters are written as
+            ``\\U+XXXX`` escapes, as AutoCAD does in R2000 files.
         units: ``"mm"``, ``"m"``, or ``"inch"``, written as ``$INSUNITS``.
     """
     insunits = {"mm": 4, "m": 6, "inch": 1}
     if units not in insunits:
         raise ValueError("units must be 'mm', 'm', or 'inch'.")
+    layer = _dxf_name(layer)
     out: List[str] = []
     handles = iter(range(1, 1 << 30))
 

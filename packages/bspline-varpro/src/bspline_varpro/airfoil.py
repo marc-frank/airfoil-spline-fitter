@@ -96,16 +96,19 @@ def read_dat(path: Union[str, Path]) -> Tuple[str, np.ndarray]:
     surfaces from the leading to the trailing edge. The counts split the surfaces
     when they account for every point; otherwise the split is where x jumps back
     from the trailing to the leading edge. The name is the first line unless that
-    line is a coordinate pair, then the file's stem.
+    line is a coordinate pair, then the file's stem; a first line of two integers
+    far outside the coordinates (a numeric title such as ``0012 9``) is the name.
     """
     path = Path(path)
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     name = path.stem
     rows: List[List[float]] = []
+    first_line_is_row = False
     for i, line in enumerate(lines):
         parts = line.replace(",", " ").split()
         try:
             rows.append([float(parts[0]), float(parts[1])])
+            first_line_is_row = first_line_is_row or i == 0
         except (ValueError, IndexError):
             if i == 0:
                 name = line.strip()
@@ -118,7 +121,8 @@ def read_dat(path: Union[str, Path]) -> Tuple[str, np.ndarray]:
     # start nearer the smallest x than the largest
     x = points[1:, 0]
     starts_at_le = len(x) > 0 and x[0] - np.min(x) < np.max(x) - x[0]
-    if (len(points) > 4 and min(n_upper, n_lower) >= 2 and np.all(points[0] == np.round(points[0]))
+    integer_first = np.all(points[0] == np.round(points[0]))
+    if (len(points) > 4 and min(n_upper, n_lower) >= 2 and integer_first
             and starts_at_le):
         points = points[1:]
         if n_upper + n_lower != len(points):
@@ -127,6 +131,15 @@ def read_dat(path: Union[str, Path]) -> Tuple[str, np.ndarray]:
         if np.allclose(upper[0], lower[0]):
             lower = lower[1:]
         points = np.vstack([upper[::-1], lower])
+    elif first_line_is_row and integer_first and len(points) > 4:
+        # A numeric title such as "0012 9" reads as a coordinate pair; it lies far
+        # outside the airfoil, a real first point (the trailing edge) does not
+        rest = points[1:]
+        lo, hi = np.min(rest, axis=0), np.max(rest, axis=0)
+        margin = np.max(hi - lo)
+        if np.any(points[0] < lo - margin) or np.any(points[0] > hi + margin):
+            name = lines[0].strip()
+            points = rest
     return name, points
 
 
@@ -369,6 +382,9 @@ def thickness_and_camber(curves: CurveInput, stations: int = 201,
         ``max_camber_x`` (the camber of largest magnitude, with its sign),
         all in fractions of the ``chord``.
 
+    The upper surface is the one above the other, whichever way the chain
+    runs (Selig order or reversed).
+
     Raises:
         ValueError: The leading edge is at an end of the chain (not an airfoil).
     """
@@ -384,8 +400,13 @@ def thickness_and_camber(curves: CurveInput, stations: int = 201,
     if chord <= 0:
         raise ValueError("Trailing edge not behind the leading edge along x.")
     local = (pts - [pts[front, 0], te[1]]) / chord
-    # Split at the smallest x, so each surface has one y at every x
+    # Split at the smallest x, so each surface has one y at every x. Selig order
+    # runs counter-clockwise (upper surface first); a clockwise chain lists the
+    # lower surface first.
     upper, lower = local[:front + 1], local[front:]
+    x, y = local[:, 0], local[:, 1]
+    if np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1)) < 0:
+        upper, lower = lower, upper
 
     def surface(side: np.ndarray, x: np.ndarray) -> np.ndarray:
         order = np.argsort(side[:, 0], kind="stable")

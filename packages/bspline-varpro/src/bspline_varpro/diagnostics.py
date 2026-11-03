@@ -176,7 +176,8 @@ def fairness(
 
     Args:
         min_amplitude: Curvature reversals smaller than this fraction of the
-            chain's maximum |curvature| are not counted as extrema.
+            chain's maximum |curvature| are not counted as extrema, nor are
+            those at the level of rounding noise (a straight chain has none).
 
     Returns:
         ``curvature_extrema``: interior curvature extrema of all sections
@@ -188,7 +189,12 @@ def fairness(
     grids = [_span_grid(c, samples_per_span) for c in curves]
     kappas = [curvature(c, g) for c, g in zip(curves, grids)]
     max_kappa = float(max(np.max(np.abs(k)) for k in kappas))
-    extrema = sum(_count_turns(k, min_amplitude * max_kappa) for k in kappas)
+    # Rounding alone gives curvatures of about eps / size: on a straight chain,
+    # whose largest curvature is that noise, a relative threshold counts it
+    ctrl = np.concatenate([np.asarray(c.c)[:len(c.t) - c.k - 1] for c in curves])
+    size = float(np.max(np.ptp(ctrl, axis=0))) or 1.0
+    noise = 1e3 * np.finfo(np.float64).eps / size
+    extrema = sum(_count_turns(k, max(min_amplitude * max_kappa, noise)) for k in kappas)
     roughness = 0.0
     max_slope = 0.0
     for curve, grid in zip(curves, grids):

@@ -96,3 +96,11 @@ def test_max_deviation_follows_points_across_a_junction():
     sections = [np.array([[0.0, 0.0], [0.5, 0.0], [1.5, 0.0]]), np.array([[1.5, 0.0], [2.0, 0.0]])]
     assert dg.max_deviation(sections, [a, b]) < 1e-14
     assert all(np.max(d) < 1e-14 for d in dg.section_deviations(sections, [a, b]))
+
+
+def test_straight_chain_has_no_curvature_extrema():
+    # The relative threshold counted rounding noise in the zero curvature as extrema
+    line = BSpline(np.r_[[0.0] * 6, [1.0] * 6], np.linspace([0, 0], [0.3, 0.017], 6), 5)
+    other = BSpline(np.r_[[0.0] * 4, [1.0] * 4], np.linspace([0.3, 0.017], [1.0, -0.2], 4), 3)
+    assert dg.fairness([line])["curvature_extrema"] == 0
+    assert dg.fairness([line, other])["curvature_extrema"] == 0

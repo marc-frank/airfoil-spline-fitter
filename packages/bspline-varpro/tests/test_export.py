@@ -332,3 +332,30 @@ def test_dxf_passes_the_ezdxf_audit(fitted, layer, units, scale):
         u = np.linspace(curve.t[curve.k], curve.t[-curve.k - 1], 41)
         got = np.array([tool.point(v) for v in u])[:, :2]
         assert np.max(np.abs(got - curve(u) * scale)) < 1e-9 * scale
+
+
+def test_closed_curves_are_flagged_closed():
+    sharp = airfoil.fit_airfoil(NACA4("0012").points(41), 1e-4)
+    curves = [export.merge_curves(sharp)] + sharp.curves()
+    text = export.to_step(curves)
+    flags = re.findall(r"B_SPLINE_CURVE_WITH_KNOTS\('(?:[^']|'')*',\d+,\([^)]*\),\.\w+\.,(\.[TF]\.),", text)
+    assert flags == [".T.", ".F.", ".F."]
+    assert [fields[4] for fields in _iges_parameters(export.to_iges(curves))] == ["1", "0", "0"]
+
+
+def test_iges_empty_name_is_a_default_field():
+    text = export.to_iges([_awkward_curve()], name="")
+    global_section = "".join(line[:72] for line in text.splitlines() if line[72] == "G")
+    fields = global_section[len("1H,,1H;,"):].rstrip().rstrip(";").split(",")
+    assert fields[0] == "" and fields[9] == ""
+    assert "0H" not in fields
+
+
+def test_dxf_layer_names_are_escaped_or_rejected(tmp_path, fitted):
+    path = export.write(tmp_path / "part.dxf", fitted, layer="Profilé \U0001d4d0")
+    pairs = _dxf_pairs(path.read_text(encoding="ascii"))
+    assert (8, r"Profil\U+00E9 _") in pairs
+    assert pairs.count((2, r"Profil\U+00E9 _")) == 1  # the layer table entry
+    for bad in ("", "a/b", "x:y", "tab\there"):
+        with pytest.raises(ValueError, match="layer"):
+            export.to_dxf(fitted, layer=bad)
