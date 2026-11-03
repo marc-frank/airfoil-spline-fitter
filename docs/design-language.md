@@ -125,15 +125,15 @@ Named by what they draw, never by hue.
 | `CURVE` | solid ink line, `Size.CURVE_WIDTH` | The fitted spline (the batten) |
 | `CONSTRUCTION` | dashed pencil grey line, hollow squares (a grey in `GREY_LIGHTNESS`) | Control polygon and control points (CAD convention: squares) |
 | `KNOTS` | sulfur diamonds with a canvas outline (`MODE_COLORS`) | Knots (the ducks that hold the batten) |
-| `COMB_UPPER` | sky blue (`MODE_COLORS`) | Comb on the suction side (upper surface, up to the leading edge, whatever the section count) |
-| `COMB_LOWER` | rose (`MODE_COLORS`) | Comb on the pressure side (lower surface, from the leading edge) |
-| `DEVIATION_UPPER` / `DEVIATION_LOWER` | the comb's colors: faint whiskers from the curve, an envelope through their tips with a dot at each tip (one per data point, so it reads apart from the comb) | Signed deviation of the data on the upper / lower surface, magnified along the normal; the tolerance band is faint dashed `CONSTRUCTION` |
+| `COMB_EVEN` | sky blue (`MODE_COLORS`) | Comb on the first, third, ... spline section (a single section is all sky blue) |
+| `COMB_ODD` | rose (`MODE_COLORS`) | Comb on the second, fourth, ... spline section |
+| `DEVIATION_EVEN` / `DEVIATION_ODD` | the comb's colors: faint whiskers from the curve, an envelope through their tips with a dot at each tip (one per data point, so it reads apart from the comb) | Signed deviation of each data point from its nearest section, magnified along the normal; the tolerance band is faint dashed `CONSTRUCTION` |
 | `TRACE` | light grey dots or line | Convergence and comparison traces |
 | `MARKER` | ink dot with a canvas ring | The current run in a trace |
 | `GRID` | `TEXT_2` at `GRID_ALPHA` | Grid and axes |
 
-The comb follows the pressure-plot convention (suction cool, pressure
-warm). Its teeth are faint (`COMB_TEETH_ALPHA`) because the envelope
+The comb alternates cool and warm by spline section, so each section's
+extent reads at a glance, and the deviation follows it. Its teeth are faint (`COMB_TEETH_ALPHA`) because the envelope
 through their tips is what you read. A tooth's length is in chords, for
 the quantity measured on the airfoil scaled to a unit chord, so the comb
 looks the same whatever the size of the data.

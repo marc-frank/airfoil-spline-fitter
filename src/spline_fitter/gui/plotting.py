@@ -15,7 +15,6 @@ import pyqtgraph as pg
 from PyQt6.QtCore import pyqtSlot
 
 from ..analysis import foot_points, scipy_curves
-from ..geometry import find_leading_edge_index
 from ..optimization.models import FitResult, SplineConfig
 from ..spline import BSplineCurve2D, compute_signed_curvature
 from .motion import SmoothViewBox
@@ -231,18 +230,19 @@ class PlotManager:
         self._curve_item = self._new_item(self._curve_style())
         self._polygon_item = self._new_item(self._polygon_style())
         self._knot_item = self._new_item(self._knot_style())
-        # The comb of the upper (even) and lower (odd) sections, by
-        # (side, tips): the teeth, and the envelope through their tips
-        self._comb_items = {(side, tips): self._new_item(self._comb_style(side, tips))
-                            for side in ('upper', 'lower') for tips in (False, True)}
+        # The comb of the even (first, third, ...) and odd sections, by
+        # (parity, tips): the teeth, and the envelope through their tips
+        self._comb_items = {(parity, tips): self._new_item(self._comb_style(parity, tips))
+                            for parity in (0, 1) for tips in (False, True)}
         # The curves of the last fit drawn, as (fit, curves)
         self._last_curves: tuple = (None, [])
         self.show_knots = False
         # Deviation of the data, magnified along the curve's normal: by
-        # (side, tips) the whiskers from the curve and the envelope through
-        # their tips, and the tolerance band at the same magnification
-        self._deviation_items = {(side, tips): self._new_item(self._deviation_style(side, tips))
-                                 for side in ('upper', 'lower') for tips in (False, True)}
+        # (parity of the nearest section, tips) the whiskers from the curve
+        # and the envelope through their tips, and the tolerance band at the
+        # same magnification
+        self._deviation_items = {(parity, tips): self._new_item(self._deviation_style(parity, tips))
+                                 for parity in (0, 1) for tips in (False, True)}
         self._tolerance_item = self._new_item(self._tolerance_style())
         # The measured points, and the deviations of the last fit measured as
         # (fit, coords, (distance, foot, normal))
@@ -334,20 +334,20 @@ class PlotManager:
                     symbolBrush=brush(Ink.KNOTS), symbolPen=pen(Palette.CANVAS), z=Z.KNOTS)
 
     @staticmethod
-    def _comb_style(which: str, tips: bool) -> dict:
+    def _comb_style(parity: int, tips: bool) -> dict:
         """Comb of a section: faint teeth, and the envelope through their tips.
-        Suction side cool, pressure side warm ('upper_0', 'lower_1', ...)."""
-        color = Ink.COMB_UPPER if which.startswith('upper') else Ink.COMB_LOWER
+        Alternating by section: the first, third, ... cool, the others warm."""
+        color = Ink.COMB_ODD if parity else Ink.COMB_EVEN
         if tips:
             return dict(pen=pen(color, 1.5), z=Z.COMB)
         return dict(pen=pen(color, alpha=Ink.COMB_TEETH_ALPHA), z=Z.COMB)
 
     @staticmethod
-    def _deviation_style(side: str, tips: bool) -> dict:
+    def _deviation_style(parity: int, tips: bool) -> dict:
         """Deviation, drawn like the comb: faint whiskers, and the envelope
-        through their tips, in the color of the surface. A dot marks each
-        data point's tip, so it reads apart from a comb shown with it."""
-        color = Ink.DEVIATION_UPPER if side == 'upper' else Ink.DEVIATION_LOWER
+        through their tips, in the color of the nearest section. A dot marks
+        each data point's tip, so it reads apart from a comb shown with it."""
+        color = Ink.DEVIATION_ODD if parity else Ink.DEVIATION_EVEN
         if tips:
             return dict(pen=pen(color, 1.5), symbol='o', symbolSize=Size.TRACE_POINT,
                         symbolBrush=brush(color), symbolPen=None, z=Z.COMB)
@@ -373,10 +373,10 @@ class PlotManager:
         apply(self._curve_item, self._curve_style())
         apply(self._polygon_item, self._polygon_style())
         apply(self._knot_item, self._knot_style())
-        for (side, tips), item in self._comb_items.items():
-            apply(item, self._comb_style(side, tips))
-        for (side, tips), item in self._deviation_items.items():
-            apply(item, self._deviation_style(side, tips))
+        for (parity, tips), item in self._comb_items.items():
+            apply(item, self._comb_style(parity, tips))
+        for (parity, tips), item in self._deviation_items.items():
+            apply(item, self._deviation_style(parity, tips))
         apply(self._tolerance_item, self._tolerance_style())
         apply(self._loss_curve, self._loss_style())
         apply(self._comparison_curve, self._comparison_style(self._comparison_connected))
@@ -658,8 +658,10 @@ class PlotManager:
         whisker from the point's foot on the curve along the normal, outward
         for a point outside, magnified so the tolerance (or, without one, the
         largest deviation) is ``deviation_height`` of the chord away; the
-        envelope through the tips, by surface; and the tolerance band at the
-        same magnification. ``cache`` keeps the measurement of a finished
+        envelope through the tips; and the tolerance band at the
+        same magnification. Each point is drawn in the color of its nearest
+        section; where the nearest section changes, the envelopes of both
+        share the point. ``cache`` keeps the measurement of a finished
         fit for the next time it is drawn; ``live`` refines the foot points
         of the live preview's previous step."""
         height = self.deviation_height
@@ -676,7 +678,7 @@ class PlotManager:
                 found = foot_points(coords, fit_result)
                 if cache:
                     self._last_deviations = (fit_result, coords, found)
-            dev, foot, normal, _ = found
+            dev, foot, normal, _, section = found
             reference = tolerance or float(np.max(np.abs(dev)))
             chord = float(np.ptp([p[0] for p in coords]))
             if reference <= 0 or chord <= 0:
@@ -684,11 +686,18 @@ class PlotManager:
                 return
             scale = height * chord / reference
             tips = foot + (scale * dev)[:, None] * normal
-            le = find_leading_edge_index(coords)
-            for side, part in (('upper', slice(0, le + 1)), ('lower', slice(le, None))):
-                base, tip = foot[part], tips[part]
-                self._deviation_items[side, False].setData(*_teeth(base, tip))
-                self._deviation_items[side, True].setData(tip[:, 0], tip[:, 1])
+            # Runs of points nearest the same section; each run after the
+            # first starts at the last point of the one before
+            breaks = np.flatnonzero(np.diff(section)) + 1
+            starts = np.concatenate([[0], breaks - 1])
+            ends = np.concatenate([breaks, [len(section)]])
+            pieces: dict[int, list] = {0: [], 1: []}
+            for lo, hi in zip(starts, ends):
+                pieces[int(section[hi - 1]) % 2].append((foot[lo:hi], tips[lo:hi]))
+            for parity, parts in pieces.items():
+                self._deviation_items[parity, False].setData(
+                    *_joined([_teeth(b, t) for b, t in parts]))
+                self._deviation_items[parity, True].setData(*_joined([t.T for _, t in parts]))
             self._tolerance_item.setData(*self._tolerance_band(fit_result, scale * tolerance)
                                          if tolerance else ([], []))
         except Exception:
@@ -732,29 +741,18 @@ class PlotManager:
         _settle(self._plot)
 
     def _draw_combs(self, curves: list, scale: float, density: int, qty: int) -> None:
-        """Draw the curvature comb of every section, by surface: the teeth up
-        to the leading edge on the upper side, the rest on the lower, split
-        as the deviation is, whatever the section count."""
+        """Draw the curvature comb of every section, in alternating colors:
+        the first, third, ... section cool, the others warm (a single
+        section is all cool)."""
         density = max(5, density)
         try:
             chord = _chord(curves)
-            combs = [self._curvature_comb(curve, scale, density, qty, chord) for curve in curves]
-            le = find_leading_edge_index([tuple(p) for p in np.concatenate([b for b, _ in combs])])
-            pieces: dict[str, list] = {'upper': [], 'lower': []}
-            start = 0
-            for base, tip in combs:
-                end = start + len(base)
-                for side, lo, hi in (('upper', start, min(end, le + 1)),
-                                     ('lower', max(start, le), end)):
-                    # A single tooth is the end of a section at the leading
-                    # edge, drawn with the section beyond it
-                    if hi - lo >= 2:
-                        part = slice(lo - start, hi - start)
-                        pieces[side].append((base[part], tip[part]))
-                start = end
-            for side, parts in pieces.items():
-                self._comb_items[side, False].setData(*_joined([_teeth(b, t) for b, t in parts]))
-                self._comb_items[side, True].setData(*_joined([t.T for _, t in parts]))
+            pieces: dict[int, list] = {0: [], 1: []}
+            for i, curve in enumerate(curves):
+                pieces[i % 2].append(self._curvature_comb(curve, scale, density, qty, chord))
+            for parity, parts in pieces.items():
+                self._comb_items[parity, False].setData(*_joined([_teeth(b, t) for b, t in parts]))
+                self._comb_items[parity, True].setData(*_joined([t.T for _, t in parts]))
         except Exception:
             # No comb rather than the last fit's
             self.clear_comb_items()

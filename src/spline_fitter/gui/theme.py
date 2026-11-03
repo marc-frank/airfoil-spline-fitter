@@ -95,8 +95,8 @@ MODE_COLORS = {
     "WARN": ("#F2B84B", "#8F5E00"),
     "ERROR": ("#F0605D", "#C02F2B"),
     "KNOTS": ("#F2C94C", "#C99A06"),
-    "COMB_UPPER": ("#49B6E8", "#1E88C7"),
-    "COMB_LOWER": ("#E5689A", "#CC3F78"),
+    "COMB_EVEN": ("#49B6E8", "#1E88C7"),
+    "COMB_ODD": ("#E5689A", "#CC3F78"),
 }
 
 
@@ -173,14 +173,14 @@ class Ink:
     CONSTRUCTION = (0, 0, 0)
     # Knots: the ducks that hold the batten
     KNOTS = (0, 0, 0)
-    # Curvature comb, by surface as on a pressure plot: suction side cool,
-    # pressure side warm (but never the curve's orange)
-    COMB_UPPER = (0, 0, 0)
-    COMB_LOWER = (0, 0, 0)
+    # Curvature comb, by spline section, alternating: the first, third, ...
+    # section cool, the second, fourth, ... warm (but never the curve's orange)
+    COMB_EVEN = (0, 0, 0)
+    COMB_ODD = (0, 0, 0)
     COMB_TEETH_ALPHA = 90      # teeth are faint; the envelope through the tips is the reading
-    # Deviation of the data from the curve, by surface in the comb's colors
-    DEVIATION_UPPER = (0, 0, 0)
-    DEVIATION_LOWER = (0, 0, 0)
+    # Deviation of the data from the curve, by section in the comb's colors
+    DEVIATION_EVEN = (0, 0, 0)
+    DEVIATION_ODD = (0, 0, 0)
     # Convergence and comparison traces; the current run is marked in ink
     TRACE = (0, 0, 0)
     MARKER = rgb(Palette.INK)
@@ -219,7 +219,7 @@ def _set_tokens(dark: bool, temperature: int) -> None:
             setattr(Ink, name, rgb(colors[side]))
     Ink.DATA = rgb(Palette.TEXT)
     Ink.TRACE = Ink.GRID = rgb(Palette.TEXT_2)
-    Ink.DEVIATION_UPPER, Ink.DEVIATION_LOWER = Ink.COMB_UPPER, Ink.COMB_LOWER
+    Ink.DEVIATION_EVEN, Ink.DEVIATION_ODD = Ink.COMB_EVEN, Ink.COMB_ODD
 
 
 _set_tokens(Scheme.DARK, Scheme.TEMPERATURE)

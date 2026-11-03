@@ -149,7 +149,7 @@ def _refine(pts: np.ndarray, curves: list[BSpline], u: np.ndarray) -> np.ndarray
 
 def foot_points(
     points: Sequence[Sequence[float]], result: FitResult, start: np.ndarray | None = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Signed orthogonal distance of every point to the nearest section of a
     fit, with its foot point on the curve and the unit normal there.
 
@@ -165,9 +165,10 @@ def foot_points(
             of points or sections is ignored.
 
     Returns:
-        ``(distance, foot, normal, start)``, shaped (n,), (n, 2), (n, 2), and
-        the parameters of every point on every section, (n, sections), to
-        start from for the next fit.
+        ``(distance, foot, normal, start, section)``, shaped (n,), (n, 2),
+        (n, 2), the parameters of every point on every section, (n, sections),
+        to start from for the next fit, and the index of the nearest section,
+        (n,), for points in the order of the chain.
     """
     pts = np.asarray(points, dtype=np.float64)
     curves = scipy_curves(result)
@@ -177,9 +178,10 @@ def foot_points(
         u = _search(pts, curves)
     best = np.full(len(pts), np.inf)
     foot, tangent = np.zeros_like(pts), np.zeros_like(pts)
+    distances = np.empty((len(pts), len(curves)))
     for i, curve in enumerate(curves):
         at = curve(u[:, i])
-        d = np.hypot(*(pts - at).T)
+        d = distances[:, i] = np.hypot(*(pts - at).T)
         closer = d < best
         best = np.where(closer, d, best)
         foot[closer] = at[closer]
@@ -187,7 +189,12 @@ def foot_points(
     normal = np.column_stack([tangent[:, 1], -tangent[:, 0]])
     normal /= np.maximum(np.hypot(normal[:, 0], normal[:, 1]), 1e-300)[:, None]
     signed = np.copysign(best, np.sum((pts - foot) * normal, axis=1))
-    return signed, foot, normal, u
+    # A point as near two sections (where they join, or at a closed trailing
+    # edge) goes to the first; the points run along the chain, so the section
+    # never goes back
+    tie = 1e-9 * max(float(np.max(np.ptp(pts, axis=0), initial=0.0)), 1e-300)
+    section = np.argmax(distances <= best[:, None] + tie, axis=1)
+    return signed, foot, normal, u, np.maximum.accumulate(section)
 
 
 def signed_deviations(points: Sequence[Sequence[float]], result: FitResult) -> np.ndarray:
