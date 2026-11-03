@@ -413,7 +413,8 @@ class WindowLayoutMixin:
         self._check_comb.setObjectName("SplitToggle")
         self._check_comb.setCheckable(True)
         self._check_comb.setToolTip(
-            "Display curvature as perpendicular lines from the curve.\n"
+            "Display curvature as perpendicular lines from the curve,\n"
+            "blue and pink on alternate spline sections.\n"
             "Use the arrow for quantity, height and density."
         )
 
@@ -466,7 +467,8 @@ class WindowLayoutMixin:
         self._check_deviation.setCheckable(True)
         self._check_deviation.setToolTip(
             "Display the distance of every data point from the curve, magnified\n"
-            "along the normal, outward for a point outside. The dashed lines\n"
+            "along the normal, outward for a point outside, in the color of its\n"
+            "nearest spline section (as the curvature comb). The dashed lines\n"
             "are the tolerance. Use the arrow for the height."
         )
 
