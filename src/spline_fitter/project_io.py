@@ -27,6 +27,7 @@ import logging
 import os
 import platform
 import shutil
+import stat
 import tempfile
 import uuid
 from datetime import datetime
@@ -176,6 +177,7 @@ def _encode_fit_result(result: FitResult) -> dict[str, Any]:
         "cancelled": result.cancelled,
         "section_knots": result.section_knots,
         "report": result.report,
+        "rms_error": result.rms_error,
     }
 
 
@@ -298,6 +300,8 @@ def _decode_fit_result(data: dict[str, Any], section_control_points: list[PointL
         cancelled=data.get("cancelled", False),
         section_knots=data.get("section_knots"),
         report=data.get("report"),
+        # Projects from before it was stored compare by the report or final_error
+        rms_error=data.get("rms_error"),
         # Older projects may also contain "early_stopped", which nothing sets.
     )
 
@@ -314,25 +318,35 @@ def _decode_iteration_record(data: dict[str, Any]) -> IterationRecord:
     )
 
 
-def _decode_optimization_run(data: dict[str, Any]) -> OptimizationRun:
-    """Decode OptimizationRun from JSON dict."""
+def _decode_optimization_run(data: dict[str, Any], where: str) -> OptimizationRun:
+    """Decode OptimizationRun from JSON dict; ``where`` names it in errors."""
     # Decode control points first (needed for FitResult)
-    section_control_points = [
-        [(float(p[0]), float(p[1])) for p in section]
-        for section in data["section_control_points"]
-    ]
+    with _reading(f"{where} control points"):
+        section_control_points = [
+            [(float(p[0]), float(p[1])) for p in section]
+            for section in data["section_control_points"]
+        ]
+    with _reading(f"{where} spline settings"):
+        spline_config = _decode_spline_config(data["spline_config"])
+    with _reading(f"{where} fit settings"):
+        optimization_config = _decode_optimization_config(data["optimization_config"])
+    with _reading(f"{where} result"):
+        result = _decode_fit_result(data["result"], section_control_points)
+    with _reading(f"{where} loss history"):
+        loss_history = [_decode_iteration_record(r) for r in data["loss_history"]]
 
-    return OptimizationRun(
-        run_id=data["run_id"],
-        timestamp=data["timestamp"],
-        spline_config=_decode_spline_config(data["spline_config"]),
-        optimization_config=_decode_optimization_config(data["optimization_config"]),
-        result=_decode_fit_result(data["result"], section_control_points),
-        loss_history=[_decode_iteration_record(r) for r in data["loss_history"]],
-        section_control_points=section_control_points,
-        # Files before run numbers: numbered in order by number_runs
-        number=data.get("number", 0),
-    )
+    with _reading(where):
+        return OptimizationRun(
+            run_id=data["run_id"],
+            timestamp=data["timestamp"],
+            spline_config=spline_config,
+            optimization_config=optimization_config,
+            result=result,
+            loss_history=loss_history,
+            section_control_points=section_control_points,
+            # Files before run numbers: numbered in order by number_runs
+            number=int(data.get("number", 0)),
+        )
 
 
 def _decode_metadata(data: dict[str, Any]) -> ProjectMetadata:
@@ -348,13 +362,33 @@ def _decode_metadata(data: dict[str, Any]) -> ProjectMetadata:
 
 def _decode_project(data: dict[str, Any]) -> ProjectFile:
     """Decode ProjectFile from JSON dict."""
-    runs = [_decode_optimization_run(r) for r in data.get("optimization_runs", [])]
+    with _reading("Run list"):
+        runs_data = list(data.get("optimization_runs", []))
+    runs = [_decode_optimization_run(r, f"Run {i}") for i, r in enumerate(runs_data, start=1)]
     number_runs(runs)
-    return ProjectFile(
-        metadata=_decode_metadata(data["metadata"]),
-        airfoil=_decode_airfoil(data["airfoil"]),
-        optimization_runs=runs,
-    )
+    with _reading("Metadata"):
+        metadata = _decode_metadata(data["metadata"])
+    with _reading("Airfoil"):
+        airfoil = _decode_airfoil(data["airfoil"])
+    return ProjectFile(metadata=metadata, airfoil=airfoil, optimization_runs=runs)
+
+
+class ProjectFormatError(ValueError):
+    """A project file that is not as this application writes them."""
+
+
+@contextlib.contextmanager
+def _reading(where: str):
+    """Report a missing or malformed field as a ProjectFormatError naming
+    the part of the file it is in."""
+    try:
+        yield
+    except ProjectFormatError:
+        raise
+    except KeyError as e:
+        raise ProjectFormatError(f"{where}: the {e.args[0]!r} field is missing.") from e
+    except (TypeError, ValueError, IndexError, AttributeError) as e:
+        raise ProjectFormatError(f"{where}: {e}.") from e
 
 
 def number_runs(runs: list[OptimizationRun], after: int = 0) -> int:
@@ -468,6 +502,9 @@ def save_project(project: ProjectFile, filepath: str, indent: int = 2) -> None:
     # step, so a failed save leaves the previous project intact
     text = json.dumps(_encode_project(project), indent=indent, ensure_ascii=False,
                       default=_json_default)
+    # Said up front: replacing it fails with the temporary file's name
+    if os.path.exists(filepath) and not os.access(filepath, os.W_OK):
+        raise PermissionError(f"{filepath} is read-only.")
     directory = os.path.dirname(os.path.abspath(filepath))
     fd, temp_path = tempfile.mkstemp(prefix=".", suffix=".tmp", dir=directory)
     try:
@@ -480,6 +517,8 @@ def save_project(project: ProjectFile, filepath: str, indent: int = 2) -> None:
         os.replace(temp_path, filepath)
     except BaseException:
         with contextlib.suppress(OSError):
+            # It took the mode of a read-only project, which Windows cannot remove
+            os.chmod(temp_path, stat.S_IREAD | stat.S_IWRITE)
             os.remove(temp_path)
         raise
 
@@ -498,8 +537,14 @@ def load_project(filepath: str) -> ProjectFile:
         IOError: If the file cannot be read
         ValueError: If the file format is invalid
     """
-    with open(filepath, encoding='utf-8') as f:
-        data = json.load(f)
+    # An editor may have saved it with a byte order mark
+    with open(filepath, encoding='utf-8-sig') as f:
+        try:
+            data = json.load(f)
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            raise ProjectFormatError(f"The file is not a project file: {e}.") from None
+    if not isinstance(data, dict):
+        raise ProjectFormatError("The file is not a project file: it holds no project.")
 
     # Version check
     version = str(data.get("format_version", "1.0.0"))

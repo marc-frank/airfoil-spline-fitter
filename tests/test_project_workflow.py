@@ -452,3 +452,45 @@ def test_tolerance_runs_ignore_the_smoothing_weight(window):
     _add(window, 10, smoothing_weight=0.01)
     _add(window, 10, smoothing_weight=0.02)  # a fixed count uses the weight
     assert len(window._project_manager.project.optimization_runs) == 3
+
+
+def test_a_failed_open_leaves_no_undo_step(window, tmp_path, monkeypatch):
+    _add(window, 10)
+    _add(window, 14)
+    other = tmp_path / "other.asfproj"
+    _saved(window, other)
+    window._spin_ctrl.setValue(20)
+    history = window._settings_history
+    history.commit()
+    before = (list(history._states), history._index)
+
+    def fail(run):
+        raise RuntimeError("cannot plot")
+    monkeypatch.setattr(window._project_manager, "_load_run_to_plots", fail)
+    assert not window.open_path(str(other))
+    history.commit()
+    assert (history._states, history._index) == before
+    history.undo()  # the step before the user's change, not a step of the failed open
+    assert window._spin_ctrl.value() != 20
+
+
+def test_save_dialogs_offer_a_file_name_the_system_accepts(window, monkeypatch):
+    from dataclasses import replace
+
+    from PyQt6.QtCore import QDir
+    from PyQt6.QtWidgets import QFileDialog, QInputDialog
+    _add(window, 10)
+    window._fit_result = window._project_manager.project.optimization_runs[0].result
+    window._airfoil = replace(window._airfoil, name="E387 t/c=9%: smoothed",
+                              filename="E387 t/c=9%: smoothed")
+    offered = []
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        lambda parent, title, path, *a, **k: (offered.append(path), ("", ""))[1])
+    monkeypatch.setattr(QInputDialog, "getInt", lambda *a, **k: (40, True))
+    window._project_manager.on_save_project_as()
+    window._on_save_fitted()
+    window._on_save_spline()
+    assert len(offered) == 3
+    for path in offered:
+        assert os.path.dirname(path) == QDir.homePath()
+        assert os.path.basename(path).startswith("E387 t_c=9%_ smoothed")

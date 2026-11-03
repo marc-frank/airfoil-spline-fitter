@@ -205,22 +205,26 @@ def read_text(filepath):
 
 
 _FORTRAN_EXPONENT = re.compile(r'(?<=[0-9.])[dD](?=[+-]?[0-9])')
+# A sign right after a digit starts the next number of fixed-width columns
+# ("0.95000-0.01200"); an exponent's sign follows its letter instead
+_GLUED_SIGN = re.compile(r'(?<=[0-9.])(?=[+-][0-9.])')
 
 
 def _number_fields(line):
     """The fields of a coordinate line, as strings Python reads as floats.
 
-    Fields are separated by whitespace, commas or semicolons. A line without
-    a dot whose fields hold commas uses the decimal comma (``0,5 0,01``).
-    Fortran ``D`` exponents become ``e``; parentheses are dropped.
+    Fields are separated by whitespace, commas or semicolons, or by nothing
+    before a sign (fixed-width columns). A line without a dot whose fields
+    hold commas uses the decimal comma (``0,5 0,01``). Fortran ``D``
+    exponents become ``e``; parentheses and quotes are dropped.
     """
-    line = line.replace(';', ' ')
+    line = _GLUED_SIGN.sub(' ', line.replace(';', ' '))
     if ',' in line:
         if len(line.split()) >= 2 and '.' not in line:
             line = line.replace(',', '.')
         else:
             line = line.replace(',', ' ')
-    return [_FORTRAN_EXPONENT.sub('e', field.strip('()')) for field in line.split()]
+    return [_FORTRAN_EXPONENT.sub('e', field.strip('()"\'')) for field in line.split()]
 
 
 def parse_airfoil_data(filepath):
@@ -245,27 +249,38 @@ def parse_airfoil_text(text, filename_name=None):
     """
     lines = []
     for line in text.lstrip('﻿').splitlines():
-        # Remove comments and strip whitespace
+        # Remove comments and strip whitespace; the whole line is kept for
+        # a name, which may hold a # ("NACA 0012 #2")
         line_content = line.split('#', 1)[0].strip()
         if line_content:
-            lines.append(line_content)
+            lines.append((line_content, line.strip()))
 
     if not lines:
         return None, None, None, 0
 
     content_name = filename_name # Default to filename if no name is in the file
+    name_line = lines[0][1]
 
     # Every line holding a coordinate pair, as floats and as written (for precision)
     rows = []
-    for i, line in enumerate(lines):
+    first_is_row = False
+    for i, (line, _) in enumerate(lines):
         parts = _number_fields(line)
         try:
             x_str, y_str = parts[0], parts[1]
             rows.append((float(x_str), float(y_str), x_str, y_str))
+            first_is_row = first_is_row or i == 0
         except (ValueError, IndexError):
             if i == 0:
-                content_name = line  # First line is a name
+                content_name = name_line  # First line is a name
             # Otherwise skip malformed coordinate lines
+
+    # A first line that reads as numbers ("0012 64") is a name when the
+    # rows after it are a Lednicer file, or it lies far from all of them
+    if first_is_row and not _is_lednicer(rows) and (
+            _is_lednicer(rows[1:]) or _is_stray_first_row(rows)):
+        content_name = name_line
+        rows = rows[1:]
 
     # Lednicer: the first row holds the upper and lower point counts
     if _is_lednicer(rows):
@@ -273,9 +288,6 @@ def parse_airfoil_text(text, filename_name=None):
         rows = rows[1:]
         coords = _lednicer_to_selig([(x, y) for x, y, _, _ in rows], n_upper, n_lower)
     else:
-        if content_name == filename_name and _is_stray_first_row(rows):
-            content_name = lines[0]  # A name that reads as numbers
-            rows = rows[1:]
         coords = [(x, y) for x, y, _, _ in rows]
 
     if not coords:

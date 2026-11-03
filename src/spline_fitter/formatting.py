@@ -175,3 +175,13 @@ def sanitize_filename(name: str) -> str:
             result.append("_")
 
     return "".join(result)
+
+
+def file_stem(name: str, default: str = "airfoil") -> str:
+    """A name, such as an airfoil's, as a file name on every system: the
+    characters Windows forbids (path separators among them) become
+    underscores, and trailing dots and spaces go. Unlike
+    :func:`sanitize_filename` it keeps spaces and other letters, so
+    "NACA 2412 t/c 12%" becomes "NACA 2412 t_c 12%"."""
+    stem = "".join("_" if c in '<>:"/\\|?*' or ord(c) < 32 else c for c in name)
+    return stem.strip().rstrip(". ") or default
