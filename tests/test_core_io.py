@@ -129,6 +129,25 @@ def test_a_name_with_a_hash_is_kept_whole(tmp_path):
     assert back == "E387 #2 (smoothed)" and _same_contour(np.array(coords))
 
 
+@pytest.mark.parametrize("name", ["#2 NACA 0012", "# 2412", "\\#odd", "\\name", "NACA \\#3"])
+def test_a_name_that_starts_with_a_hash_round_trips(tmp_path, name):
+    ctrl = [[(1.0, 0.0), (0.5, 0.1), (0.0, 0.0)], [(0.0, 0.0), (0.5, -0.1), (1.0, 0.0)]]
+    path = tmp_path / "x.dat"
+    export_airfoil_data(str(path), [tuple(p) for p in PTS], name=name, precision=6)
+    _, back, coords, _ = parse_airfoil_data(str(path))
+    assert back == name and _same_contour(np.array(coords))
+    spline = tmp_path / "x.deg2.spline.dat"
+    export_spline_data(spline, 2, ctrl, name=name)
+    data = parse_spline_data(spline)
+    assert data["name"] == name and data["section_control_points"] == ctrl
+
+
+def test_a_hash_comment_first_line_of_another_tool_is_still_a_comment():
+    assert _parse("# written by xfoil\nNACA 0012\n" + "\n".join(ROWS))[0] == "NACA 0012"
+    assert _parse("# NACA 0012\n" + "\n".join(ROWS))[0] == "file"
+    assert _parse("\\#3 NACA 0012\n" + "\n".join(ROWS))[0] == "#3 NACA 0012"
+
+
 def test_spline_file_numeric_name_and_leading_blank_line(tmp_path):
     ctrl = [[(1.0, 0.0), (0.5, 0.1), (0.0, 0.0)], [(0.0, 0.0), (0.5, -0.1), (1.0, 0.0)]]
     path = tmp_path / "a.deg2.spline.dat"

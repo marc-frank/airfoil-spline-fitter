@@ -227,6 +227,23 @@ def _number_fields(line):
     return [_FORTRAN_EXPONENT.sub('e', field.strip('()"\'')) for field in line.split()]
 
 
+# A name that starts with "#", which readers would skip as a comment, is
+# written with a backslash before it
+_ESCAPED_NAME = re.compile(r'^\\+#')
+
+
+def _name_line(name):
+    """The header line of a name: one that starts with ``#`` (or with
+    backslashes before one) gets a backslash more, so it is not a comment."""
+    name = str(name).strip()
+    return '\\' + name if re.match(r'^\\*#', name) else name
+
+
+def _name_of_line(line):
+    """The name a header line holds: undoes :func:`_name_line`."""
+    return line[1:] if _ESCAPED_NAME.match(line) else line
+
+
 def parse_airfoil_data(filepath):
     """
     Parses an airfoil data file, automatically detecting the format.
@@ -272,7 +289,7 @@ def parse_airfoil_text(text, filename_name=None):
             first_is_row = first_is_row or i == 0
         except (ValueError, IndexError):
             if i == 0:
-                content_name = name_line  # First line is a name
+                content_name = _name_of_line(name_line)  # First line is a name
             # Otherwise skip malformed coordinate lines
 
     # A first line that reads as numbers ("0012 64") is a name when the
@@ -323,7 +340,7 @@ def export_airfoil_data(filepath, coords, name=None, precision=None):
 
     with open(filepath, "w", encoding="utf-8") as f:
         if name:
-            f.write(str(name).strip() + "\n")
+            f.write(_name_line(name) + "\n")
         for x, y in coords:
             f.write(fmt.format(float(x), float(y)) + "\n")
 
@@ -376,7 +393,7 @@ def export_spline_data(filepath, degree, section_control_points, name=None, prec
 
     with open(filepath, "w", encoding="utf-8") as f:
         if name:
-            f.write(str(name).strip() + "\n")
+            f.write(_name_line(name) + "\n")
         f.write(f"# {SPLINE_FORMAT_TAG}\n")
         f.write(f"# degree {int(degree)}\n")
         f.write(f"# sections {len(section_control_points)}\n")
@@ -437,7 +454,7 @@ def parse_spline_data(filepath):
             points.append((float(parts[0]), float(parts[1])))
         except (ValueError, IndexError):
             if is_first:
-                name = text
+                name = _name_of_line(text)
     if degree is None:
         match = re.search(r"\.deg(\d+)\.", os.path.basename(filepath))
         degree = int(match.group(1)) if match else None
