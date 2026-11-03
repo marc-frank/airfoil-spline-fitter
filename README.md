@@ -30,7 +30,8 @@ Professional B-spline curve fitting tool for airfoil coordinate data.
   stays the chord line
 - **Knot display**, an interactive curvature comb, and the **deviation** of
   every data point from the curve, magnified along the normal with the
-  tolerance band
+  tolerance band; both alternate blue and pink by spline section (one
+  section is all blue), so you can see where each section starts and ends
 - **Two fitting methods**: VarPro Levenberg-Marquardt (tolerance mode, free
   knots, geometric continuity) and Direct LSQ (one constrained least-squares
   solve)
@@ -88,6 +89,9 @@ Typical workflow:
    control-point count. **Show Knots** marks the knots on the curve, and
    **Deviation** shows where the fit departs from the data, also while it
    fits (its arrow sets the height: 5% of the chord at the tolerance).
+   **Curvature comb** and **Deviation** are drawn blue on the first, third,
+   ... spline section and pink on the others; a data point takes the color
+   of the section nearest to it.
 4. **View > Fit Report** (Ctrl+R) shows deviation, fairness, junction,
    thickness and camber measurements, with thickness and camber charted
    along the chord.
