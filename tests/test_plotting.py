@@ -1,4 +1,4 @@
-"""The plot manager: comb scale and sides, and the convergence plot."""
+"""The plot manager: comb scale and colors, and the convergence plot."""
 import os
 
 import numpy as np
@@ -51,18 +51,56 @@ def test_comb_looks_the_same_at_any_size_of_the_data(quantity):
 
 
 @pytest.mark.parametrize("sections", [1, 2, 3, 4])
-def test_comb_sides_split_at_the_leading_edge(manager, sections):
-    """Upper comb on the upper surface and lower on the lower, as the
-    deviation is split, whatever the section count."""
-    manager._draw_combs(_airfoil_curves(sections), 0.05, 60, 0)
-    for side, sign in (("upper", 1), ("lower", -1)):
-        x, y = manager._comb_items[side, True].getData()
-        assert x is not None and len(x) > 10
-        bx, by = (a[0::3] for a in manager._comb_items[side, False].getData())
-        # Away from the leading edge, whose tooth both sides share, and the
-        # closed trailing edge, on the chord
-        away = np.isfinite(bx) & (np.hypot(bx, by) > 0.01) & (bx < 0.99)
-        assert np.all(sign * by[away] > 0), (side, by[away].min(), by[away].max())
+def test_comb_colors_alternate_by_section(manager, sections):
+    """The first, third, ... section's comb in one color, the others in the
+    other; a single section is all in the first."""
+    curves = _airfoil_curves(sections)
+    manager._draw_combs(curves, 0.05, 60, 0)
+    for parity in (0, 1):
+        x, y = manager._comb_items[parity, True].getData()
+        own = curves[parity::2]
+        if not own:
+            assert x is None or len(x) == 0
+            continue
+        # One envelope per section, a gap between them, each on its section
+        assert np.count_nonzero(np.isnan(x)) == len(own) - 1
+        # Every tooth (a base and a tip between gaps) starts on a section of
+        # this color
+        tx, ty = manager._comb_items[parity, False].getData()
+        finite = np.isfinite(tx)
+        first = finite & ~np.concatenate([[False], finite[:-1]])
+        bases = np.column_stack([tx[first], ty[first]])
+        sampled = np.vstack([np.column_stack(c.sample(2000)) for c in own])
+        nearest = np.min(np.hypot(*(bases[:, None, :] - sampled[None]).transpose(2, 0, 1)),
+                         axis=1)
+        assert np.max(nearest) < 1e-3
+
+
+@pytest.mark.parametrize("sections", [1, 2, 3])
+def test_deviation_colors_alternate_by_nearest_section(manager, sections):
+    from spline_fitter.analysis import foot_points
+    from spline_fitter.optimization.models import FitResult
+
+    curves = _airfoil_curves(sections)
+    fit = FitResult([c.control_points for c in curves], 3, 0.0, 0, 0, 0.0,
+                    section_knots=[list(c.knot_vector) for c in curves])
+    coords = [tuple(p) for p in airfoil.NACA4("0012").points(61) + [0.0, 1e-4]]
+    manager.plot_airfoil(coords)
+    manager.deviation_height = 0.05
+    manager._draw_deviation(fit, None)
+    section = foot_points(coords, fit)[4]
+    for parity in (0, 1):
+        x, _ = manager._deviation_items[parity, True].getData()
+        runs = np.flatnonzero(np.diff(section)) + 1
+        mine = [s for s in np.split(section, runs) if s[0] % 2 == parity]
+        if not mine:
+            assert x is None or len(x) == 0
+            continue
+        # A dot per point of each run nearest a section of this color (plus
+        # the point it shares with the run before), a gap between runs
+        shared = sum(1 for s in mine if s[0] != section[0])
+        assert np.count_nonzero(np.isfinite(x)) == sum(len(s) for s in mine) + shared
+        assert np.count_nonzero(np.isnan(x)) == len(mine) - 1
 
 
 def test_a_new_airfoil_clears_the_convergence(manager):

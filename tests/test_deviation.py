@@ -27,7 +27,7 @@ def test_deviation_size_is_the_orthogonal_distance(fit):
 
 def test_point_is_its_foot_plus_the_deviation_along_the_normal(fit):
     points, result = fit
-    dev, foot, normal, _ = foot_points(points, result)
+    dev, foot, normal, _, _ = foot_points(points, result)
     np.testing.assert_allclose(np.hypot(*normal.T), 1.0)
     np.testing.assert_allclose(foot + dev[:, None] * normal, points, atol=1e-12)
 
@@ -95,11 +95,13 @@ def window(monkeypatch):
 def _reach(window, result):
     """Length of every whisker, in data order, after the whiskers start at the feet."""
     manager = window._plot_manager
-    tips = [np.column_stack(manager._deviation_items[side, True].getData())
-            for side in ("upper", "lower")]
-    # The leading edge is on both surfaces
+    # Two sections: the first in the even color, the second in the odd
+    tips = [np.column_stack(manager._deviation_items[parity, True].getData())
+            for parity in (0, 1)]
+    # The point where the nearest section changes is on both
     assert sum(len(t) for t in tips) == len(window._airfoil.coordinates) + 1
-    dev, foot, _, _ = foot_points(window._airfoil.coordinates, result)
+    dev, foot, _, _, section = foot_points(window._airfoil.coordinates, result)
+    assert np.all(np.diff(section) >= 0) and set(section) == {0, 1}
     return dev, np.hypot(*(np.concatenate([tips[0], tips[1][1:]]) - foot).T)
 
 
@@ -109,7 +111,7 @@ def test_whiskers_reach_the_height_at_the_tolerance(window):
     window._fitting_controller.on_fit()
     result = window._fit_result
     assert result is not None
-    assert _empty(manager._deviation_items["upper", True])
+    assert _empty(manager._deviation_items[0, True])
 
     window._check_deviation.setChecked(True)
     tolerance = result.report["tolerance"]
@@ -125,7 +127,7 @@ def test_whiskers_reach_the_height_at_the_tolerance(window):
     np.testing.assert_allclose(doubled, 2 * reach, atol=1e-12)
 
     window._check_deviation.setChecked(False)
-    assert _empty(manager._deviation_items["upper", True])
+    assert _empty(manager._deviation_items[0, True])
     assert _empty(manager._tolerance_item)
 
 
@@ -146,7 +148,7 @@ def test_live_preview_draws_the_deviation(window, monkeypatch):
 
     def recording(self, *args, **kwargs):
         update(self, *args, **kwargs)
-        x, _ = self._deviation_items["upper", True].getData()
+        x, _ = self._deviation_items[0, True].getData()
         drawn.append((kwargs.get("tolerance"), None if x is None else len(x)))
 
     monkeypatch.setattr(PlotManager, "update_live_plot", recording)
@@ -155,8 +157,9 @@ def test_live_preview_draws_the_deviation(window, monkeypatch):
     window._check_deviation.setChecked(True)
     window._fitting_controller.on_fit()
     assert len(drawn) > 3
+    # The first section's whiskers, which run to about the leading edge
     le = int(np.argmin(np.hypot(*np.asarray(window._airfoil.coordinates).T)))
-    assert all(tol and n == le + 1 for tol, n in drawn)
+    assert all(tol and abs(n - (le + 1)) <= 1 for tol, n in drawn)
 
 
 def test_default_height_is_five_percent_of_the_chord(window):
@@ -167,4 +170,4 @@ def test_a_new_fit_clears_the_deviation(window):
     window._fitting_controller.on_fit()
     window._check_deviation.setChecked(True)
     window._plot_manager.clear_plot_items()
-    assert _empty(window._plot_manager._deviation_items["lower", False])
+    assert _empty(window._plot_manager._deviation_items[1, False])
