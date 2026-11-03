@@ -39,7 +39,6 @@ def window():
 def _add(window, ctrl, error, optimizer=OptimizerType.GN_VARPRO, **opt):
     upper = [(1 - i / (ctrl - 1), 0.05 * np.sin(np.pi * i / (ctrl - 1))) for i in range(ctrl)]
     lower = [(x, -y) for x, y in reversed(upper)]
-    opt.setdefault("max_iterations", 0)  # VarPro's own limit, as the sidebar stores it
     result = FitResult([upper, lower], 5, error, 3, 9, 0.5)
     window._project_manager.add_optimization_run(
         SplineConfig(num_control_points=ctrl, continuity=ContinuityMode.G2),
@@ -166,7 +165,7 @@ def test_switching_runs_reuses_the_plot_items(window):
     upper, lower = runs[1].result.section_control_points
     window._project_manager.add_optimization_run(
         SplineConfig(num_control_points=19, num_sections=1, continuity=ContinuityMode.G2),
-        OptimizationConfig(optimizer=OptimizerType.GN_VARPRO, max_iterations=0),
+        OptimizationConfig(optimizer=OptimizerType.GN_VARPRO),
         FitResult([upper + lower[1:]], 5, 1e-6, 3, 9, 0.5), [])
     table.select_runs([runs[2]])
     assert window._plot.getPlotItem().items == items
@@ -428,3 +427,50 @@ def test_pivot_keeps_selection_filters_and_sorting(window):
     assert table.header.filtered == {_index("Optimizer"), _index("Control points")}
     assert _column(window, "Control points") == ["12", "10"]
     assert table.selected_runs() == [runs[2]]
+
+
+def test_clear_filter_drops_a_typed_condition(window):
+    for ctrl, error in ((10, 3e-4), (14, 1e-5), (12, 5e-5)):
+        _add(window, ctrl, error)
+    _add(window, 8, 2e-3, optimizer=OptimizerType.DIRECT_LSQ)
+    table = window._run_table
+    popup = table.open_filter(_index("Control points"))
+    popup.condition.setText(">11")
+    assert _column(window, "Control points") == ["14", "12"]
+    popup._clear()
+    QApplication.processEvents()
+    assert _column(window, "Control points") == ["10", "14", "12", "8"]
+    assert table.column_filters == {} and table.header.filtered == set()
+
+
+def test_global_number_comparison_compares_the_error(window):
+    """The run number or the degree would pass nearly every run: a number
+    comparison in the global filter compares the error; words still match
+    any column."""
+    for ctrl, error in ((10, 3e-4), (14, 1e-5), (12, 5e-5)):
+        _add(window, ctrl, error)
+    _add(window, 8, 2e-3, optimizer=OptimizerType.DIRECT_LSQ)
+    table = window._run_table
+    table.filter_edit.setText(">1e-5")
+    assert _column(window, "Control points") == ["10", "12", "8"]
+    table.filter_edit.setText("<=3e-4")
+    assert _column(window, "Control points") == ["10", "14", "12"]
+    table.filter_edit.setText("varpro <1e-4")
+    assert _column(window, "Control points") == ["14", "12"]
+    table.filter_edit.setText("=free")
+    assert _column(window, "Control points") == ["10", "14", "12"]
+
+
+@pytest.mark.parametrize("order", [Qt.SortOrder.AscendingOrder, Qt.SortOrder.DescendingOrder])
+def test_blanks_sort_last_in_either_order(window, order):
+    for ctrl, error in ((10, 3e-4), (14, 1e-5)):
+        _add(window, ctrl, error)
+    _add(window, 8, 2e-3, optimizer=OptimizerType.DIRECT_LSQ)
+    _add(window, 12, 5e-5)
+    window._run_table.sort_by(_index("Parameterization"), order)
+    assert _column(window, "Parameterization")[0] != ""
+    window._run_table.sort_by(_index("Knots"), order)
+    assert _column(window, "Knots")[-1] == ""
+    window._run_table.sort_by(_index("Control points"), order)
+    numbers = [int(c) for c in _column(window, "Control points")]
+    assert numbers == sorted(numbers, reverse=order == Qt.SortOrder.DescendingOrder)
