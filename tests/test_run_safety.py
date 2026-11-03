@@ -394,9 +394,6 @@ def test_batch_output_names_tell_settings_apart():
     assert names["parametric"] == "naca0012.deg5.C3.spline.dat"
     # Numbers are written the same in every locale
     assert names["smoothing"] == "naca0012.deg5.smooth0.01.spline.dat"
-    # Fits run until they converge: a stored evaluation limit names nothing
-    unlimited = output_name("naca0012", config, replace(opt, max_iterations=500))
-    assert unlimited == "naca0012.deg5.spline.dat"
 
 
 def test_batch_unlocks_the_window_after_an_error(window, tmp_path, monkeypatch):

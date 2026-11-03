@@ -321,7 +321,7 @@ def test_filter_preview_follows_a_theme_change(tmp_path, monkeypatch):
             upper = [(1 - i / (ctrl - 1), 0.05 * (i % 2)) for i in range(ctrl)]
             w._project_manager.add_optimization_run(
                 SplineConfig(num_control_points=ctrl),
-                OptimizationConfig(max_iterations=0),
+                OptimizationConfig(),
                 FitResult([upper, upper[::-1]], 5, 1e-4, 3, 9, 0.5), [])
         popup = w._run_table.open_filter(COLUMN_NAMES.index("Control points"))
         popup.condition.setText("<10")

@@ -151,7 +151,6 @@ def _encode_optimization_config(config: OptimizationConfig) -> dict[str, Any]:
     """Encode OptimizationConfig to JSON-serializable dict."""
     return {
         "optimizer": config.optimizer.value,
-        "max_iterations": config.max_iterations,
         "smoothing_weight": config.smoothing_weight,
         "optimize_le_position": config.optimize_le_position,
         "parameterization": config.parameterization,
@@ -268,7 +267,6 @@ def _decode_optimization_config(data: dict[str, Any]) -> OptimizationConfig:
     """Decode OptimizationConfig from JSON dict."""
     return OptimizationConfig(
         optimizer=_optimizer_type_from_str(data["optimizer"]),
-        max_iterations=data.get("max_iterations", 10000),
         smoothing_weight=data.get("smoothing_weight", 1e-3),
         optimize_le_position=data.get("optimize_le_position", False),
         parameterization=data.get("parameterization", "centripetal"),
@@ -282,8 +280,9 @@ def _decode_optimization_config(data: dict[str, Any]) -> OptimizationConfig:
         custom_parameters=(None if data.get("custom_parameters") is None else
                            [np.asarray(u, dtype=np.float64) for u in data["custom_parameters"]]),
         # Older projects may also contain "fairing", "metric", "seed",
-        # "smoothing_factor", "early_stop_patience" and "relative_tolerance",
-        # which no optimizer uses; they are ignored.
+        # "smoothing_factor", "early_stop_patience", "relative_tolerance" and
+        # "max_iterations" (an evaluation limit; fits now run until they
+        # converge), which no optimizer uses; they are ignored.
     )
 
 

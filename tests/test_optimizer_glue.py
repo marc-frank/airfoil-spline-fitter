@@ -83,8 +83,7 @@ def test_optimizers_package_shares_the_evaluation_counter():
 
 @pytest.mark.parametrize("library_call", ["fit", "fit_to_tolerance"])
 def test_fits_have_no_evaluation_limit(monkeypatch, library_call):
-    """Fits run until they converge: no limit reaches the library, whatever
-    max_iterations a stored configuration carries (kept so old projects load)."""
+    """Fits run until they converge: no limit reaches the library."""
     captured = {}
     original = getattr(bspline_varpro, library_call)
 
@@ -97,11 +96,10 @@ def test_fits_have_no_evaluation_limit(monkeypatch, library_call):
     airfoil = small_airfoil(0.001)
     config = SplineConfig(degree=3, num_control_points=6)
     tolerance = 1e-2 if library_call == "fit_to_tolerance" else None
-    for max_iterations in (0, 7, 10000):
-        GNVarProOptimizer().fit(
-            config, OptimizationConfig(tolerance=tolerance, max_iterations=max_iterations), airfoil)
-        assert "max_nfev" not in captured and "max_iterations" not in captured
+    GNVarProOptimizer().fit(config, OptimizationConfig(tolerance=tolerance), airfoil)
+    assert "max_nfev" not in captured and "max_iterations" not in captured
     assert not {"max_nfev", "max_iterations"} & set(vars(GNVarProConfig()))
+    assert not hasattr(OptimizationConfig(), "max_iterations")
 
 
 def test_fixed_count_steps_cover_the_whole_fit(monkeypatch):
@@ -118,7 +116,7 @@ def test_fixed_count_steps_cover_the_whole_fit(monkeypatch):
     reset_iteration_tracking()
     result = GNVarProOptimizer().fit(
         SplineConfig(degree=3, num_control_points=8),
-        OptimizationConfig(max_iterations=300, grow_control_points=True, knot_placement="free"),
+        OptimizationConfig(grow_control_points=True, knot_placement="free"),
         small_airfoil(0.002), callback=lambda x, e: False)
     assert result.nit == get_evaluation_count()
     assert result.nit > last["result"].nfev
@@ -136,8 +134,7 @@ def test_one_section_ignores_the_junction_continuity():
     single = AirfoilData(coordinates=airfoil.coordinates, sections=(airfoil.coordinates,),
                          junction_indices=(), num_sections=1)
     for optimizer in OptimizerType:
-        result = run_optimization(config, OptimizationConfig(optimizer=optimizer,
-                                                             max_iterations=300), single)
+        result = run_optimization(config, OptimizationConfig(optimizer=optimizer), single)
         assert len(result.section_control_points) == 1
 
 
@@ -179,7 +176,7 @@ def test_every_run_records_its_rms_error():
     config = SplineConfig(degree=3, num_control_points=6)
     tolerance = GNVarProOptimizer().fit(config, OptimizationConfig(tolerance=1e-3), airfoil)
     assert tolerance.rms_error < tolerance.fun
-    fixed = GNVarProOptimizer().fit(config, OptimizationConfig(max_iterations=300), airfoil)
+    fixed = GNVarProOptimizer().fit(config, OptimizationConfig(), airfoil)
     direct = run_optimization(config, OptimizationConfig(optimizer=OptimizerType.DIRECT_LSQ),
                               airfoil)
     assert fixed.rms_error == fixed.fun and direct.rms_error == direct.fun
@@ -196,9 +193,42 @@ def test_runs_compare_by_one_measure():
     assert result.comparison_error == 1.2e-4
 
 
-def test_a_stored_limit_does_not_tell_settings_apart():
-    """max_iterations limits nothing any more, so a run stored with a limit
-    has the same settings as the sidebar's, which stores none."""
-    assert OptimizationConfig(max_iterations=0) == OptimizationConfig()
-    assert OptimizationConfig(max_iterations=300) == OptimizationConfig(max_iterations=10000)
-    assert OptimizationConfig(smoothing_weight=0.02) != OptimizationConfig()
+def test_projects_with_an_evaluation_limit_still_load(tmp_path):
+    """Projects from when fits had an evaluation limit store "max_iterations";
+    it limits nothing now, so loading ignores it and saving leaves it out."""
+    import json
+
+    from spline_fitter.geometry import create_airfoil_data
+    from spline_fitter.optimization.models import FitResult
+    from spline_fitter.project_io import (
+        create_optimization_run,
+        create_project,
+        load_project,
+        save_project,
+    )
+    airfoil = small_airfoil()
+    options = OptimizationConfig(smoothing_weight=0.02)
+    project = create_project(create_airfoil_data(list(airfoil.coordinates), 2))
+    project.optimization_runs.append(create_optimization_run(
+        SplineConfig(degree=3, num_control_points=6), options,
+        FitResult([list(s) for s in airfoil.sections], 3, 1e-4, 3, 9, 0.5), []))
+    path = tmp_path / "old.splineproj"
+    save_project(project, str(path))
+    data = json.loads(path.read_text(encoding="utf-8"))
+
+    def stored_options(node):
+        if isinstance(node, dict):
+            if "optimization_config" in node:
+                yield node["optimization_config"]
+            for value in node.values():
+                yield from stored_options(value)
+        elif isinstance(node, list):
+            for value in node:
+                yield from stored_options(value)
+
+    found = list(stored_options(data))
+    assert found and not any("max_iterations" in o for o in found)
+    for o in found:
+        o["max_iterations"] = 500
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert load_project(str(path)).optimization_runs[0].optimization_config == options

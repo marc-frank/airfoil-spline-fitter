@@ -56,7 +56,7 @@ def _add(window, ctrl, error=1e-4, sections=2, **opt):
     curves = [upper, lower] if sections == 2 else [upper + lower[1:]]
     window._project_manager.add_optimization_run(
         SplineConfig(num_control_points=ctrl, num_sections=sections, continuity=ContinuityMode.G2),
-        OptimizationConfig(optimizer=OptimizerType.GN_VARPRO, max_iterations=0, **opt),
+        OptimizationConfig(optimizer=OptimizerType.GN_VARPRO, **opt),
         FitResult(curves, 5, error, 3, 9, 0.5), [])
 
 

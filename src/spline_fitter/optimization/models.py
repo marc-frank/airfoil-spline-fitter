@@ -254,11 +254,6 @@ class OptimizationConfig:
 
     Attributes:
         optimizer: Which optimization algorithm to use
-        max_iterations: Unused: no optimizer limits its evaluations or
-            iterations, every fit runs until it converges. Kept so stored
-            projects and settings that carry it still load; left out of
-            comparisons, so a stored run's settings equal the same settings
-            applied in the sidebar whatever limit the run recorded.
         early_stop_patience: Iterations without improvement before stopping
         relative_tolerance: Relative improvement threshold for early stopping
         optimize_le_position: If True, every junction's (x, y) is fitted too,
@@ -289,8 +284,6 @@ class OptimizationConfig:
             it can still grow or shrink from there).
     """
     optimizer: OptimizerType = OptimizerType.GN_VARPRO
-    # Limits nothing, so it does not tell two configurations apart
-    max_iterations: int = field(default=10000, compare=False)
     smoothing_factor: float | None = None
     early_stop_patience: int = 50
     relative_tolerance: float = 1e-6
