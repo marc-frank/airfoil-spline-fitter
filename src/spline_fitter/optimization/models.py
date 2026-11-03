@@ -211,14 +211,16 @@ class SplineConfig:
             raise ValueError(
                 f"num_sections must be >= 1, got {self.num_sections}"
             )
-        # One section has no junction for the continuity to apply to
-        if self.num_sections > 1 and self.degree < self.continuity.minimum_degree:
+        object.__setattr__(self, "junction_continuity",
+                           tuple(s.strip().upper() for s in self.junction_continuity))
+        # The continuity applies to the junctions only when the per-junction
+        # entries do not override it (one section has no junction at all)
+        if (self.num_sections > 1 and not self.junction_continuity
+                and self.degree < self.continuity.minimum_degree):
             raise ValueError(
                 f"{self.continuity.name} continuity requires degree >= "
                 f"{self.continuity.minimum_degree}, got {self.degree}"
             )
-        object.__setattr__(self, "junction_continuity",
-                           tuple(s.strip().upper() for s in self.junction_continuity))
         if self.junction_continuity:
             if len(self.junction_continuity) != self.num_sections - 1:
                 raise ValueError(
@@ -252,8 +254,11 @@ class OptimizationConfig:
 
     Attributes:
         optimizer: Which optimization algorithm to use
-        max_iterations: VarPro LM residual evaluation limit, per refit in
-            tolerance mode (0 = its own default)
+        max_iterations: Unused: no optimizer limits its evaluations or
+            iterations, every fit runs until it converges. Kept so stored
+            projects and settings that carry it still load; left out of
+            comparisons, so a stored run's settings equal the same settings
+            applied in the sidebar whatever limit the run recorded.
         early_stop_patience: Iterations without improvement before stopping
         relative_tolerance: Relative improvement threshold for early stopping
         optimize_le_position: If True, every junction's (x, y) is fitted too,
@@ -284,7 +289,8 @@ class OptimizationConfig:
             it can still grow or shrink from there).
     """
     optimizer: OptimizerType = OptimizerType.GN_VARPRO
-    max_iterations: int = 10000
+    # Limits nothing, so it does not tell two configurations apart
+    max_iterations: int = field(default=10000, compare=False)
     smoothing_factor: float | None = None
     early_stop_patience: int = 50
     relative_tolerance: float = 1e-6

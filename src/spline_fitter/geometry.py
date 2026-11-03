@@ -130,7 +130,9 @@ def split_into_sections(
 
     # For n=2, use LE as the junction point
     if num_sections == 2:
-        le_index = find_leading_edge_index(coordinates)
+        # Each side keeps at least two points, also when the farthest point
+        # from the trailing edge is an end point (data that is no airfoil)
+        le_index = min(max(find_leading_edge_index(coordinates), 1), len(coordinates) - 2)
         upper = tuple(coordinates[:le_index + 1])
         lower = tuple(coordinates[le_index:])
         return (upper, lower), (le_index,)

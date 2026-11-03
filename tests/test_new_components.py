@@ -2,38 +2,17 @@
 Tests for newly refactored spline fitter components.
 
 This module tests:
-1. footpoint.py - Vectorized Newton-Raphson foot-point projection
-2. varpro_lsq.py - Variable Projection Gauss-Newton optimizer
-3. centripetal_parametrize - New parametrization function in geometry.py
-4. constraints.py - Consolidated constraint coefficient computation
+1. varpro_lsq.py - Variable Projection Gauss-Newton optimizer
+2. centripetal_parametrize - New parametrization function in geometry.py
+3. constraints.py - Consolidated constraint coefficient computation
 """
 
 import numpy as np
 import pytest
-from scipy.interpolate import BSpline as ScipyBSpline
 
 # =============================================================================
 # Test Fixtures
 # =============================================================================
-
-@pytest.fixture
-def simple_splines():
-    """Create simple test splines using proper clamped knot vector."""
-    from spline_fitter.spline.spline import create_open_uniform_knots
-
-    degree = 3
-    n_ctrl = 8  # Need > degree for valid knots
-    knots = create_open_uniform_knots(degree, n_ctrl)
-
-    # Control points for approximately a quarter circle from (1,0) to (0,1)
-    ctrl_x = np.array([1.0, 0.95, 0.8, 0.5, 0.2, 0.05, 0.0, 0.0])
-    ctrl_y = np.array([0.0, 0.0, 0.15, 0.5, 0.8, 0.95, 1.0, 1.0])
-
-    spline_x = ScipyBSpline(knots, ctrl_x, degree)
-    spline_y = ScipyBSpline(knots, ctrl_y, degree)
-
-    return spline_x, spline_y
-
 
 @pytest.fixture
 def airfoil_like_points():
@@ -54,109 +33,6 @@ def airfoil_like_points():
     lower = list(zip(x_lower.tolist(), y_lower.tolist(), strict=False))
 
     return upper, lower
-
-
-# =============================================================================
-# Tests for footpoint.py
-# =============================================================================
-
-class TestFootpoint:
-    """Tests for the vectorized foot-point projection module."""
-
-    def test_vectorized_footpoint_update_basic(self, simple_splines):
-        """Test basic foot-point update returns valid parameters."""
-        from spline_fitter.optimization.footpoint import vectorized_footpoint_update
-
-        spline_x, spline_y = simple_splines
-
-        # Data points near the curve
-        data_points = np.array([
-            [0.9, 0.1],
-            [0.5, 0.5],
-            [0.1, 0.9],
-        ])
-
-        # Initial parameter guesses (roughly corresponding to positions)
-        t_init = np.array([0.1, 0.5, 0.9])
-
-        # Single update step
-        t_new = vectorized_footpoint_update(
-            t_init, data_points, spline_x, spline_y
-        )
-
-        # Check output shape and range
-        assert t_new.shape == t_init.shape
-        assert np.all(t_new >= 0.0)
-        assert np.all(t_new <= 1.0)
-
-    def test_iterative_footpoint_projection_convergence(self, simple_splines):
-        """Test iterative projection converges to correct foot-points."""
-        from spline_fitter.optimization.footpoint import (
-            iterative_footpoint_projection,
-        )
-
-        spline_x, spline_y = simple_splines
-
-        # Generate points exactly on the curve
-        t_exact = np.array([0.2, 0.4, 0.6, 0.8])
-        on_curve_pts = np.column_stack([
-            spline_x(t_exact),
-            spline_y(t_exact),
-        ])
-
-        # Start with perturbed initial guess
-        t_init = t_exact + np.array([0.05, -0.03, 0.02, -0.04])
-        t_init = np.clip(t_init, 0, 1)
-
-        # Run projection
-        t_final, distances = iterative_footpoint_projection(
-            t_init, on_curve_pts, spline_x, spline_y, max_iter=5
-        )
-
-        # Should converge close to exact parameters
-        np.testing.assert_allclose(t_final, t_exact, atol=1e-6)
-
-        # Distances should be near zero (points are on curve)
-        np.testing.assert_allclose(distances, 0.0, atol=1e-8)
-
-    def test_compute_distances(self, simple_splines):
-        """Test distance computation is correct."""
-        from spline_fitter.optimization.footpoint import compute_distances
-
-        spline_x, spline_y = simple_splines
-
-        # Point exactly on curve at t=0.5
-        curve_pt = np.array([[spline_x(0.5), spline_y(0.5)]])
-        t = np.array([0.5])
-
-        dist = compute_distances(t, curve_pt, spline_x, spline_y)
-        assert dist[0] == pytest.approx(0.0, abs=1e-12)
-
-        # Point off the curve
-        off_curve_pt = np.array([[0.7, 0.7]])
-        dist = compute_distances(np.array([0.5]), off_curve_pt, spline_x, spline_y)
-        assert dist[0] > 0.0
-
-    def test_footpoint_handles_empty_input(self, simple_splines):
-        """Test that empty inputs are handled gracefully."""
-        from spline_fitter.optimization.footpoint import (
-            iterative_footpoint_projection,
-            vectorized_footpoint_update,
-        )
-
-        spline_x, spline_y = simple_splines
-
-        empty_t = np.array([])
-        empty_pts = np.array([]).reshape(0, 2)
-
-        t_new = vectorized_footpoint_update(empty_t, empty_pts, spline_x, spline_y)
-        assert len(t_new) == 0
-
-        t_final, dists = iterative_footpoint_projection(
-            empty_t, empty_pts, spline_x, spline_y
-        )
-        assert len(t_final) == 0
-        assert len(dists) == 0
 
 
 # =============================================================================
