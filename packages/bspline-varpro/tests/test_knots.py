@@ -109,3 +109,14 @@ def test_insert_knot_rejects_excess_multiplicity():
         knots, P = bv.insert_knot(knots, P, 3, 0.5)
     with pytest.raises(ValueError, match="multiplicity"):
         bv.insert_knot(knots, P, 3, 0.5)
+
+
+@pytest.mark.parametrize("t", [
+    np.array([0.0] + [0.2] * 10 + [1.0]),
+    np.array([0.0] + [0.2] * 8 + [0.3] * 8 + [1.0]),
+    np.array([0.0] * 8 + [0.5, 1.0]),
+])
+def test_averaged_knots_of_repeated_parameters_are_valid(t):
+    knots = bv.averaged_knots(t, 12, 3)
+    bv.validate_knots(knots, 3)
+    assert len(knots) == 12 + 3 + 1

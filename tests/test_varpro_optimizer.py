@@ -30,7 +30,7 @@ def test_adapter_returns_app_result_with_data_only_error():
     airfoil = small_airfoil(0.003)
     config = SplineConfig(degree=3, num_control_points=6)
     result = GNVarProOptimizer(GNVarProConfig(smoothing_weight=0.1)).fit(
-        config, OptimizationConfig(max_iterations=500), airfoil)
+        config, OptimizationConfig(), airfoil)
     assert result.success
     assert [len(cp) for cp in result.section_control_points] == [6, 6]
     assert result.x.shape == (2 * 6 * 2,)
@@ -57,20 +57,29 @@ def test_adapter_passes_settings_through_to_library(monkeypatch):
     monkeypatch.setattr(gn_varpro.bspline_varpro, "fit", capture)
     airfoil = small_airfoil(0.002)
     t0 = [np.linspace(0, 1, 19)] * 2
+    evaluations = []
+
+    def stop_soon(x, error):
+        """Fits have no evaluation limit; this one only checks the arguments."""
+        evaluations.append(error)
+        return len(evaluations) >= 50
+
     GNVarProOptimizer(GNVarProConfig(smoothing_weight=1e-4, regularization=1e-11, tolerance=1e-9,
                                      use_exact_jacobian=False)).fit(
         SplineConfig(degree=5, num_control_points=10, continuity=ContinuityMode.G2),
-        OptimizationConfig(max_iterations=300, optimize_le_position=True, custom_parameters=t0),
-        airfoil)
+        OptimizationConfig(optimize_le_position=True, custom_parameters=t0),
+        airfoil, callback=stop_soon)
     assert [np.asarray(s).tolist() for s in airfoil.sections] == [p.tolist() for p in captured["points"]]
     assert captured["num_control_points"] == 10 and captured["degree"] == 5
     assert captured["continuity"] == "C2" and captured["fix_junctions"] is False
     assert captured["smoothing"] == 1e-4 and captured["regularization"] == 1e-11
     assert captured["tolerance"] == 1e-9 and captured["exact_jacobian"] is False
-    assert captured["max_nfev"] == 300 and captured["initial_parameters"] is t0
-    GNVarProOptimizer(GNVarProConfig(max_iterations=7)).fit(
-        SplineConfig(degree=3, num_control_points=6), OptimizationConfig(max_iterations=0), airfoil)
-    assert captured["max_nfev"] == 7 and captured["fix_junctions"] is True
+    assert captured["initial_parameters"] is t0
+    assert "max_nfev" not in captured  # no limit: the fit runs until it converges
+    captured.clear()
+    GNVarProOptimizer().fit(
+        SplineConfig(degree=3, num_control_points=6), OptimizationConfig(), airfoil)
+    assert captured["fix_junctions"] is True and "max_nfev" not in captured
 
 
 def test_single_section_fits_in_both_modes():
@@ -80,10 +89,10 @@ def test_single_section_fits_in_both_modes():
                          junction_indices=(), num_sections=1)
     config = SplineConfig(degree=5, num_control_points=10, num_sections=1,
                           continuity=ContinuityMode.G3, geometric_continuity=True)
-    fixed = GNVarProOptimizer().fit(config, OptimizationConfig(max_iterations=300), single)
+    fixed = GNVarProOptimizer().fit(config, OptimizationConfig(), single)
     assert fixed.section_control_points is not None and len(fixed.section_control_points) == 1
     tolerance = GNVarProOptimizer().fit(
-        config, OptimizationConfig(max_iterations=300, tolerance=1e-3), single)
+        config, OptimizationConfig(tolerance=1e-3), single)
     assert tolerance.section_control_points is not None and len(tolerance.section_control_points) == 1
 
 
@@ -97,7 +106,7 @@ def test_callback_gets_flat_control_points_counts_evaluations_and_can_stop():
         return len(seen) == 4
 
     result = GNVarProOptimizer().fit(SplineConfig(degree=3, num_control_points=8),
-                                     OptimizationConfig(max_iterations=300, knot_placement="uniform",
+                                     OptimizationConfig(knot_placement="uniform",
                                                         grow_control_points=False),
                                      small_airfoil(0.002), callback=callback)
     assert seen == [(32,)] * 4
@@ -110,7 +119,7 @@ def test_engine_uses_configured_smoothing_weight():
     airfoil = small_airfoil(0.003)
     config = SplineConfig(degree=3, num_control_points=8)
     results = [run_optimization(config, OptimizationConfig(optimizer=OptimizerType.GN_VARPRO,
-                                                           max_iterations=300, smoothing_weight=w,
+                                                           smoothing_weight=w,
                                                            knot_placement="uniform",
                                                            grow_control_points=False),
                                 airfoil)

@@ -20,7 +20,7 @@ from PyQt6.QtCore import QDir
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
 from ..analysis import scipy_curves
-from ..formatting import format_duration, number
+from ..formatting import file_stem, format_duration, number
 from ..geometry import create_airfoil_data
 from ..optimization.models import (
     FitResult,
@@ -244,6 +244,7 @@ class ProjectManager:
             "fit": w._fit_result,
             "sections_maximum": w._spin_sections.maximum(),
             "settings": [widget_value(x) for x in w._settings_widgets],
+            "history": w._settings_history.checkpoint(),
             "file_card": [(label.text(), label.toolTip())
                           for label in (w._lbl_file_name, w._lbl_path)],
             "selected": list(self._selected_runs),
@@ -261,6 +262,8 @@ class ProjectManager:
             for widget, value in zip(w._settings_widgets, state["settings"], strict=True):
                 set_widget_value(widget, value)
         w._on_optimizer_changed(w._combo_opt.currentIndex())
+        # The failed open's settings were never a step
+        w._settings_history.rollback(state["history"])
         w._airfoil = state["airfoil"]
         for label, (text, tip) in zip((w._lbl_file_name, w._lbl_path), state["file_card"],
                                       strict=True):
@@ -328,7 +331,7 @@ class ProjectManager:
             or self._window._airfoil.filename
             or "project"
         )
-        default_path = os.path.join(QDir.homePath(), f"{default_name}.asfproj")
+        default_path = os.path.join(QDir.homePath(), f"{file_stem(default_name)}{PROJECT_SUFFIX}")
 
         save_path, _ = QFileDialog.getSaveFileName(
             self._window,

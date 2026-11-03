@@ -97,3 +97,94 @@ def test_switching_the_convergence_axes_ranges_anew(manager):
     view.scaleBy((0.5, 0.5))
     manager.set_loss_log_scale(True, True)
     assert view.autoRangeEnabled() == [True, True]
+
+
+def test_convergence_empties_without_data(manager):
+    """A run without history (or no run) shows no trace, not the last run's."""
+    manager.update_loss_data([1, 2, 3], [0.1, 0.2, 0.3], [1e-1, 1e-2, 1e-3])
+    manager.set_loss_curve_data("iters")
+    manager.update_loss_data([], [], [])
+    manager.set_loss_curve_data("iters")
+    x, _ = manager._loss_curve.getData()
+    assert x is None or len(x) == 0
+
+
+def test_a_fit_that_fails_to_draw_leaves_no_curve(manager):
+    from spline_fitter.optimization.models import FitResult
+
+    curves = _airfoil_curves(1)
+    manager.plot_fitted_spline(FitResult([curves[0].control_points], 3, 0.0, 0, 0, 0.0))
+    assert len(manager._curve_item.getData()[0]) > 0
+
+    class Broken(FitResult):
+        def curves(self):
+            raise ValueError("no curve")
+
+    manager.plot_fitted_spline(Broken([], 3, 0.0, 0, 0, 0.0))
+    for item in (manager._curve_item, manager._polygon_item):
+        x, _ = item.getData()
+        assert x is None or len(x) == 0
+
+
+def test_shape_chart_follows_a_theme_change(tmp_path, monkeypatch):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt6.QtCore import QSettings
+    from PyQt6.QtWidgets import QApplication
+
+    from spline_fitter.gui import theme
+    from spline_fitter.gui.plotting import shape_plot
+
+    ini = str(tmp_path / "settings.ini")
+    monkeypatch.setattr(theme, "_settings", lambda: QSettings(ini, QSettings.Format.IniFormat))
+    if not _APP:
+        _APP.append(QApplication.instance() or QApplication([]))
+    theme.apply_theme(_APP[0])
+    before = (theme.Scheme.MODE, theme.Scheme.TEMPERATURE)
+    x = np.linspace(0, 1, 20)
+    plot = shape_plot({"x": x, "thickness": 0.1 * x, "camber": 0.02 * x,
+                       "max_thickness": 0.1, "max_thickness_x": 1.0,
+                       "max_camber": 0.02, "max_camber_x": 1.0})
+    try:
+        for mode in ("light", "dark"):
+            theme.set_theme(mode, 40)
+            assert plot.backgroundBrush().color().name().lower() == theme.Palette.CANVAS.lower()
+            axis = plot.getPlotItem().getAxis("bottom")
+            assert axis.textPen().color().name().lower() == theme.Palette.TEXT_2.lower()
+            assert axis.labelStyle["color"].lower() == theme.Palette.TEXT_2.lower()
+            line, peak = plot._items["thickness"]
+            trace = theme.brush(theme.Ink.TRACE).color()
+            assert line.opts["pen"].color() == trace
+            assert peak.opts["symbolBrush"].color() == trace
+            assert peak.opts["symbolPen"].color().name().lower() == theme.Palette.CANVAS.lower()
+            camber, _ = plot._items["camber"]
+            assert camber.opts["pen"].color() == theme.brush(theme.Ink.CONSTRUCTION).color()
+            label = plot._legend.items[0][1]
+            assert label.opts["color"].name().lower() == theme.Palette.TEXT_2.lower()
+    finally:
+        theme.set_theme(*before)
+        plot.deleteLater()
+        _APP[0].processEvents()
+
+
+def test_a_deleted_shape_chart_leaves_no_theme_connection():
+    """A closed report's chart does not stay connected to theme changes."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt6.QtCore import QCoreApplication, QEvent
+    from PyQt6.QtWidgets import QApplication
+
+    from spline_fitter.gui.plotting import shape_plot
+    from spline_fitter.gui.theme import theme_changed
+
+    if not _APP:
+        _APP.append(QApplication.instance() or QApplication([]))
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    receivers = theme_changed.receivers(theme_changed.changed)
+    x = np.linspace(0, 1, 20)
+    for _ in range(3):
+        plot = shape_plot({"x": x, "thickness": 0.1 * x, "camber": 0.02 * x,
+                           "max_thickness": 0.1, "max_thickness_x": 1.0,
+                           "max_camber": 0.02, "max_camber_x": 1.0})
+        assert theme_changed.receivers(theme_changed.changed) == receivers + 1
+        plot.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert theme_changed.receivers(theme_changed.changed) == receivers

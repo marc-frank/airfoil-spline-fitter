@@ -75,8 +75,7 @@ def run_benchmark() -> list[dict]:
             row = {"airfoil": airfoil_name, "optimizer": opt_name, "max_dev": float("inf"),
                    "rms_dev": float("inf"), "iterations": 0}
             try:
-                result = run_optimization(config, OptimizationConfig(optimizer=opt_type,
-                                                                     max_iterations=200),
+                result = run_optimization(config, OptimizationConfig(optimizer=opt_type),
                                           airfoil)
                 row["time_ms"] = (time.perf_counter() - start) * 1000
                 if result.section_control_points is not None:

@@ -12,13 +12,25 @@ from __future__ import annotations
 
 import numpy as np
 import pyqtgraph as pg
+from PyQt6.QtCore import pyqtSlot
 
 from ..analysis import foot_points, scipy_curves
 from ..geometry import find_leading_edge_index
 from ..optimization.models import FitResult, SplineConfig
 from ..spline import BSplineCurve2D, compute_signed_curvature
 from .motion import SmoothViewBox
-from .theme import FramedPlot, Ink, Palette, Size, Z, brush, label_plot, pen, style_plot
+from .theme import (
+    FramedPlot,
+    Ink,
+    Palette,
+    Size,
+    Z,
+    brush,
+    label_plot,
+    pen,
+    style_plot,
+    theme_changed,
+)
 from .widgets import MAX_PLOT_POINTS
 
 # Curvature comb: dense grid for tooth placement and higher derivatives, and the
@@ -97,24 +109,53 @@ def shape_plot(shape: dict) -> FramedPlot:
     chord (from ``analysis.airfoil_shape``), each with its maximum marked:
     the thickness as a trace, the camber line dashed like a construction
     line."""
-    plot = FramedPlot(viewBox=SmoothViewBox())
-    style_plot(plot)
-    label_plot(plot, "bottom", "Chord (%)")
-    label_plot(plot, "left", "Percent of the chord")
-    plot.setMinimumHeight(Size.SHAPE_PLOT_HEIGHT)
-    legend = plot.addLegend(offset=(-Size.PAD, Size.PAD), labelTextColor=Palette.TEXT_2)
-    x = 100 * np.asarray(shape["x"])
-    for name, key, color, dashed in (("Thickness", "thickness", Ink.TRACE, False),
-                                     ("Camber", "camber", Ink.CONSTRUCTION, True)):
-        item = plot.plot(x, 100 * np.asarray(shape[key]), pen=pen(color, 1.5, dashed=dashed),
-                         name=name)
-        item.setZValue(Z.CURVE)
-        peak = plot.plot([100 * shape[f"max_{key}_x"]], [100 * shape[f"max_{key}"]], pen=None,
-                         symbol="o", symbolSize=Size.MARKER_SIZE - 6,
-                         symbolBrush=brush(color), symbolPen=pen(Palette.CANVAS, 2))
-        peak.setZValue(Z.KNOTS)
-    legend.setZValue(Z.KNOTS + 1)
-    return plot
+    return _ShapePlot(shape)
+
+
+class _ShapePlot(FramedPlot):
+    """The chart of ``shape_plot``, restyled on a theme change (the fit
+    report's text above it follows the theme too)."""
+
+    def __init__(self, shape: dict):
+        super().__init__(viewBox=SmoothViewBox())
+        style_plot(self)
+        label_plot(self, "bottom", "Chord (%)")
+        label_plot(self, "left", "Percent of the chord")
+        self.setMinimumHeight(Size.SHAPE_PLOT_HEIGHT)
+        self._legend = self.addLegend(offset=(-Size.PAD, Size.PAD))
+        x = 100 * np.asarray(shape["x"])
+        # By key: the line and the dot at its maximum
+        self._items = {}
+        for name, key in (("Thickness", "thickness"), ("Camber", "camber")):
+            line = self.plot(x, 100 * np.asarray(shape[key]), name=name)
+            line.setZValue(Z.CURVE)
+            peak = self.plot([100 * shape[f"max_{key}_x"]], [100 * shape[f"max_{key}"]],
+                             pen=None, symbol="o", symbolSize=Size.MARKER_SIZE - 6)
+            peak.setZValue(Z.KNOTS)
+            self._items[key] = (line, peak)
+        self._legend.setZValue(Z.KNOTS + 1)
+        self.restyle()
+        theme_changed.changed.connect(self.restyle)
+
+    @staticmethod
+    def _style(key: str) -> tuple:
+        """(color, dashed) of a line: the thickness a trace, the camber a
+        construction line."""
+        return (Ink.TRACE, False) if key == "thickness" else (Ink.CONSTRUCTION, True)
+
+    # A slot, so the connection ends with the chart (a closed report)
+    @pyqtSlot()
+    def restyle(self) -> None:
+        """Apply the theme's colors to the axes, the legend and the lines."""
+        style_plot(self)
+        self._legend.setLabelTextColor(Palette.TEXT_2)
+        for _, label in self._legend.items:
+            label.setText(label.text)
+        for key, (line, peak) in self._items.items():
+            color, dashed = self._style(key)
+            line.setPen(pen(color, 1.5, dashed=dashed))
+            peak.setSymbolBrush(brush(color))
+            peak.setSymbolPen(pen(Palette.CANVAS, 2))
 
 
 class _Trace(pg.PlotDataItem):
@@ -496,10 +537,10 @@ class PlotManager:
 
         Args:
             mode: Either "iters" or "time".
-        """
-        if not self._loss_y:
-            return
 
+        Without data (a run with no history, or none shown) the trace is
+        emptied rather than left as the last run's.
+        """
         if mode == "time":
             x_data = self._loss_x_time
         else:  # iters (default)
@@ -508,6 +549,7 @@ class PlotManager:
         y_data = self._loss_y
 
         if not x_data or not y_data:
+            self._loss_curve.setData([], [])
             return
 
         # Same length, and at most MAX_PLOT_POINTS of them (to avoid a UI
@@ -584,7 +626,9 @@ class PlotManager:
         try:
             self._draw_spline(self._curves(fit_result))
         except Exception:
-            pass
+            # No curve rather than the last fit's
+            for item in (self._curve_item, self._polygon_item):
+                item.setData([], [])
         self.refresh_knots(fit_result)
         self.refresh_deviation(fit_result)
         _settle(self._plot)

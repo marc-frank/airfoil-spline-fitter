@@ -34,7 +34,18 @@ import os
 import tempfile
 
 import pyqtgraph as pg
-from PyQt6.QtCore import QLocale, QObject, QPointF, QRect, QRectF, QSettings, QSize, Qt, pyqtSignal
+from PyQt6.QtCore import (
+    QLocale,
+    QObject,
+    QPointF,
+    QRect,
+    QRectF,
+    QSettings,
+    QSize,
+    Qt,
+    pyqtSignal,
+    pyqtSlot,
+)
 from PyQt6.QtGui import (
     QColor,
     QFont,
@@ -80,9 +91,9 @@ GREY_LIGHTNESS = {
 WARM_HUE, COOL_HUE, TINT = 95.0, 255.0, 0.035
 # Colors that change with the mode but not with the temperature: (dark, light)
 MODE_COLORS = {
-    "OK": ("#4FBF85", "#23905A"),
-    "WARN": ("#F2B84B", "#B87A00"),
-    "ERROR": ("#F0605D", "#D23B37"),
+    "OK": ("#4FBF85", "#1A7A4A"),
+    "WARN": ("#F2B84B", "#8F5E00"),
+    "ERROR": ("#F0605D", "#C02F2B"),
     "KNOTS": ("#F2C94C", "#C99A06"),
     "COMB_UPPER": ("#49B6E8", "#1E88C7"),
     "COMB_LOWER": ("#E5689A", "#CC3F78"),
@@ -185,6 +196,11 @@ class Scheme:
     MODE = "system"           # follows the operating system by default
     TEMPERATURE = 0           # -100 cool .. 0 neutral .. +100 warm
     DARK = True               # the mode in effect
+
+
+# Whether the platform's palette is dark (set by apply_theme): the system
+# setting follows it when the system names no scheme
+_PLATFORM_DARK = True
 
 
 def _set_tokens(dark: bool, temperature: int) -> None:
@@ -608,9 +624,15 @@ def apply_theme(app: QApplication | None = None) -> None:
     settings = _settings()
     mode = settings.value("theme/mode", Scheme.MODE)
     Scheme.MODE = mode if mode in Scheme.MODES else "system"
-    Scheme.TEMPERATURE = max(-100, min(100, settings.value("theme/temperature", 0, type=int)))
-    Motion.SCROLL_MS = _motion_ms(settings.value("motion/scroll_ms", Motion.DEFAULT_SCROLL_MS, type=int))
-    Motion.ZOOM_MS = _motion_ms(settings.value("motion/zoom_ms", Motion.DEFAULT_ZOOM_MS, type=int))
+    Scheme.TEMPERATURE = max(-100, min(100, _int_setting(settings, "theme/temperature", 0)))
+    Motion.SCROLL_MS = _motion_ms(
+        _int_setting(settings, "motion/scroll_ms", Motion.DEFAULT_SCROLL_MS))
+    Motion.ZOOM_MS = _motion_ms(
+        _int_setting(settings, "motion/zoom_ms", Motion.DEFAULT_ZOOM_MS))
+    # Whether the platform's own palette is dark, for a system that does not
+    # say which scheme it follows
+    global _PLATFORM_DARK
+    _PLATFORM_DARK = app.palette().window().color().lightness() < 128
     app.setStyle("Fusion")
     # Numbers take the decimal point of the system locale, in fields,
     # readouts, messages and plots alike; no group separators
@@ -625,6 +647,14 @@ def apply_theme(app: QApplication | None = None) -> None:
     # Following the system: restyle when it switches between light and dark
     app.styleHints().colorSchemeChanged.connect(lambda _scheme: _restyle(app))
     _restyle(app)
+
+
+def _int_setting(settings: QSettings, key: str, default: int) -> int:
+    """A saved whole number, or the default when it is missing or unreadable."""
+    try:
+        return int(settings.value(key, default, type=int))
+    except (TypeError, ValueError):
+        return default
 
 
 def set_theme(mode: str | None = None, temperature: int | None = None) -> None:
@@ -656,12 +686,35 @@ def set_motion(scroll_ms: int | None = None, zoom_ms: int | None = None) -> None
         settings.setValue("motion/zoom_ms", Motion.ZOOM_MS)
 
 
+def _scheme_is_dark(app: QApplication) -> bool:
+    """Whether the current setting is dark. A light or dark setting is also
+    handed to Qt, so the title bar and native dialogs match; the system
+    setting hands it back to the system."""
+    hints = app.styleHints()
+    if Scheme.MODE != "system":
+        dark = Scheme.MODE == "dark"
+        wanted = Qt.ColorScheme.Dark if dark else Qt.ColorScheme.Light
+    else:
+        wanted = Qt.ColorScheme.Unknown
+    if hasattr(hints, "setColorScheme") and hints.colorScheme() != wanted:
+        # Emits colorSchemeChanged, which would restyle again
+        hints.blockSignals(True)
+        try:
+            hints.setColorScheme(wanted)
+        finally:
+            hints.blockSignals(False)
+    if Scheme.MODE != "system":
+        return dark
+    scheme = hints.colorScheme()
+    if scheme == Qt.ColorScheme.Unknown:
+        # The system does not say: follow its own palette
+        return _PLATFORM_DARK
+    return scheme == Qt.ColorScheme.Dark
+
+
 def _restyle(app: QApplication) -> None:
     """Set the tokens for the current setting and restyle the app."""
-    if Scheme.MODE == "system":
-        dark = app.styleHints().colorScheme() != Qt.ColorScheme.Light
-    else:
-        dark = Scheme.MODE == "dark"
+    dark = _scheme_is_dark(app)
     Scheme.DARK = dark
     _set_tokens(dark, Scheme.TEMPERATURE)
     app.setPalette(_palette())
@@ -845,6 +898,8 @@ class _ThemedBrowser(QTextBrowser):
         self._html = text
         super().setHtml(text)
 
+    # A slot, so the connection ends with the browser (a closed report)
+    @pyqtSlot()
     def _restyle(self) -> None:
         self.document().setDefaultStyleSheet(html_css())
         if self._html is not None:

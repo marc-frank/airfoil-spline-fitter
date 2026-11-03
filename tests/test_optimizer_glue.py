@@ -81,25 +81,25 @@ def test_optimizers_package_shares_the_evaluation_counter():
     assert tracking.get_evaluation_count() == 0
 
 
-def test_tolerance_mode_passes_the_evaluation_limit(monkeypatch):
+@pytest.mark.parametrize("library_call", ["fit", "fit_to_tolerance"])
+def test_fits_have_no_evaluation_limit(monkeypatch, library_call):
+    """Fits run until they converge: no limit reaches the library."""
     captured = {}
-    original = bspline_varpro.fit_to_tolerance
+    original = getattr(bspline_varpro, library_call)
 
     def capture(*args, **kwargs):
         captured.clear()
         captured.update(kwargs)
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(gn_varpro.bspline_varpro, "fit_to_tolerance", capture)
+    monkeypatch.setattr(gn_varpro.bspline_varpro, library_call, capture)
     airfoil = small_airfoil(0.001)
     config = SplineConfig(degree=3, num_control_points=6)
-    GNVarProOptimizer().fit(config, OptimizationConfig(tolerance=1e-2, max_iterations=0), airfoil)
-    assert "max_nfev" not in captured  # the library's own per-refit limit
-    GNVarProOptimizer().fit(config, OptimizationConfig(tolerance=1e-2, max_iterations=50), airfoil)
-    assert captured["max_nfev"] == 50
-    GNVarProOptimizer(GNVarProConfig(max_nfev=9)).fit(
-        config, OptimizationConfig(tolerance=1e-2, max_iterations=50), airfoil)
-    assert captured["max_nfev"] == 9
+    tolerance = 1e-2 if library_call == "fit_to_tolerance" else None
+    GNVarProOptimizer().fit(config, OptimizationConfig(tolerance=tolerance), airfoil)
+    assert "max_nfev" not in captured and "max_iterations" not in captured
+    assert not {"max_nfev", "max_iterations"} & set(vars(GNVarProConfig()))
+    assert not hasattr(OptimizationConfig(), "max_iterations")
 
 
 def test_fixed_count_steps_cover_the_whole_fit(monkeypatch):
@@ -116,7 +116,7 @@ def test_fixed_count_steps_cover_the_whole_fit(monkeypatch):
     reset_iteration_tracking()
     result = GNVarProOptimizer().fit(
         SplineConfig(degree=3, num_control_points=8),
-        OptimizationConfig(max_iterations=300, grow_control_points=True, knot_placement="free"),
+        OptimizationConfig(grow_control_points=True, knot_placement="free"),
         small_airfoil(0.002), callback=lambda x, e: False)
     assert result.nit == get_evaluation_count()
     assert result.nit > last["result"].nfev
@@ -134,32 +134,39 @@ def test_one_section_ignores_the_junction_continuity():
     single = AirfoilData(coordinates=airfoil.coordinates, sections=(airfoil.coordinates,),
                          junction_indices=(), num_sections=1)
     for optimizer in OptimizerType:
-        result = run_optimization(config, OptimizationConfig(optimizer=optimizer,
-                                                             max_iterations=300), single)
+        result = run_optimization(config, OptimizationConfig(optimizer=optimizer), single)
         assert len(result.section_control_points) == 1
 
 
-@pytest.mark.parametrize("t0", [0.45, 0.2])
-@pytest.mark.parametrize("method", ["newton", "robust"])
-def test_footpoint_never_climbs_to_a_distance_maximum(t0, method):
-    """A point past the centre of curvature: full Newton steps head for the
-    farthest curve point, so the projection must only take steps that bring
-    the point closer."""
-    from spline_fitter.optimization.footpoint import (
-        iterative_footpoint_projection,
-        robust_footpoint_projection,
-    )
-    knots = create_open_uniform_knots(2, 3)
-    spline_x = BSpline(knots, np.array([0.0, 0.5, 1.0]), 2)
-    spline_y = BSpline(knots, np.array([0.0, 1.0, 0.0]), 2)
-    point = np.array([[0.5, -0.6]])
-    project = iterative_footpoint_projection if method == "newton" else robust_footpoint_projection
-    t, distance = project(np.array([t0]), point, spline_x, spline_y, max_iter=50)
+def test_per_junction_entries_free_the_degree_from_the_continuity_setting():
+    """The Continuity setting governs no junction when every junction has its
+    own entry, so a continuity the degree cannot carry does not stop the fit;
+    the entries themselves still must fit the degree."""
+    config = SplineConfig(degree=2, num_control_points=5, continuity=ContinuityMode.G3,
+                          junction_continuity=("C1",))
+    assert config.junction_specs() == ["C1"]
+    with pytest.raises(ValueError, match="C3 continuity requires degree"):
+        SplineConfig(degree=2, continuity=ContinuityMode.G1, junction_continuity=("C3",))
+    result = run_optimization(config, OptimizationConfig(), small_airfoil(0.001))
+    assert len(result.section_control_points) == 2
 
-    ts = np.linspace(0, 1, 100001)
-    closest = np.hypot(spline_x(ts) - 0.5, spline_y(ts) + 0.6).min()
-    assert distance[0] == pytest.approx(closest, abs=1e-9)
-    assert t[0] == pytest.approx(0.0, abs=1e-6)
+
+def test_two_sections_keep_two_points_each():
+    """When the farthest point from the trailing edge is an end point (data
+    that is no airfoil), the split still leaves both sections a segment, so
+    VarPro LM fits instead of failing and Direct LSQ does not fit a
+    one-point section to nothing."""
+    from spline_fitter.geometry import create_airfoil_data
+    for coords in ([(0.0, 0.0), (1.0, 0.1), (1.2, -0.1), (2.0, 0.0)],
+                   [(2.0, 0.0), (1.2, -0.1), (1.0, 0.1), (0.0, 0.0)]):
+        airfoil = create_airfoil_data(coords, 2)
+        assert [len(s) for s in airfoil.sections] in ([2, 3], [3, 2])
+        assert airfoil.sections[0][-1] == airfoil.sections[1][0]
+        for optimizer in OptimizerType:
+            result = run_optimization(SplineConfig(degree=2, num_control_points=3),
+                                      OptimizationConfig(optimizer=optimizer), airfoil)
+            controls = np.vstack(result.section_control_points)
+            assert np.all(np.abs(controls) < 5), optimizer
 
 
 def test_every_run_records_its_rms_error():
@@ -169,7 +176,7 @@ def test_every_run_records_its_rms_error():
     config = SplineConfig(degree=3, num_control_points=6)
     tolerance = GNVarProOptimizer().fit(config, OptimizationConfig(tolerance=1e-3), airfoil)
     assert tolerance.rms_error < tolerance.fun
-    fixed = GNVarProOptimizer().fit(config, OptimizationConfig(max_iterations=300), airfoil)
+    fixed = GNVarProOptimizer().fit(config, OptimizationConfig(), airfoil)
     direct = run_optimization(config, OptimizationConfig(optimizer=OptimizerType.DIRECT_LSQ),
                               airfoil)
     assert fixed.rms_error == fixed.fun and direct.rms_error == direct.fun
@@ -184,3 +191,44 @@ def test_runs_compare_by_one_measure():
     assert result.comparison_error == 1e-4
     result.report = {"max_deviation": 3e-4, "rms_deviation": 1.2e-4}
     assert result.comparison_error == 1.2e-4
+
+
+def test_projects_with_an_evaluation_limit_still_load(tmp_path):
+    """Projects from when fits had an evaluation limit store "max_iterations";
+    it limits nothing now, so loading ignores it and saving leaves it out."""
+    import json
+
+    from spline_fitter.geometry import create_airfoil_data
+    from spline_fitter.optimization.models import FitResult
+    from spline_fitter.project_io import (
+        create_optimization_run,
+        create_project,
+        load_project,
+        save_project,
+    )
+    airfoil = small_airfoil()
+    options = OptimizationConfig(smoothing_weight=0.02)
+    project = create_project(create_airfoil_data(list(airfoil.coordinates), 2))
+    project.optimization_runs.append(create_optimization_run(
+        SplineConfig(degree=3, num_control_points=6), options,
+        FitResult([list(s) for s in airfoil.sections], 3, 1e-4, 3, 9, 0.5), []))
+    path = tmp_path / "old.splineproj"
+    save_project(project, str(path))
+    data = json.loads(path.read_text(encoding="utf-8"))
+
+    def stored_options(node):
+        if isinstance(node, dict):
+            if "optimization_config" in node:
+                yield node["optimization_config"]
+            for value in node.values():
+                yield from stored_options(value)
+        elif isinstance(node, list):
+            for value in node:
+                yield from stored_options(value)
+
+    found = list(stored_options(data))
+    assert found and not any("max_iterations" in o for o in found)
+    for o in found:
+        o["max_iterations"] = 500
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert load_project(str(path)).optimization_runs[0].optimization_config == options

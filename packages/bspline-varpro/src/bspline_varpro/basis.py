@@ -75,7 +75,9 @@ def averaged_knots(t: np.ndarray, num_control_points: int, degree: int) -> np.nd
     """Clamped knots placed by the data parameters (Piegl & Tiller eq. 9.68-9.69).
 
     Every knot span then contains data, which keeps least-squares fits well
-    posed (Schoenberg-Whitney) when the data are unevenly spaced.
+    posed (Schoenberg-Whitney) when the data are unevenly spaced. Repeated
+    parameters (coincident points) could stack more than ``degree`` equal
+    knots; such a run is spread evenly between its neighbouring knots.
     """
     t = np.asarray(t, dtype=np.float64)
     n, m = num_control_points, len(t)
@@ -91,8 +93,22 @@ def averaged_knots(t: np.ndarray, num_control_points: int, degree: int) -> np.nd
     i = np.clip(i, 1, m - 1)
     interior = (1 - alpha) * t[i - 1] + alpha * t[i]
     eps = 1e-9
-    interior = np.clip(interior, eps, 1 - eps)
-    return clamped_knots(degree, np.maximum.accumulate(interior))
+    interior = np.maximum.accumulate(np.clip(interior, eps, 1 - eps))
+    return clamped_knots(degree, _limit_multiplicity(interior, degree))
+
+
+def _limit_multiplicity(interior: np.ndarray, degree: int) -> np.ndarray:
+    """Sorted interior knots with every run of more than ``degree`` equal values
+    spread evenly over the open interval between the midpoints to its
+    neighbouring values (or 0 and 1), so neighbouring runs stay apart."""
+    interior = interior.copy()
+    values, first, counts = np.unique(interior, return_index=True, return_counts=True)
+    for k in np.flatnonzero(counts > degree):
+        low = 0.5 * (values[k - 1] + values[k]) if k > 0 else 0.0
+        high = 0.5 * (values[k] + values[k + 1]) if k + 1 < len(values) else 1.0
+        run = counts[k]
+        interior[first[k]:first[k] + run] = low + (high - low) * np.arange(1, run + 1) / (run + 1)
+    return interior
 
 
 def insert_knot(

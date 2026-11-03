@@ -165,3 +165,30 @@ def test_selig_with_an_integer_first_point_is_not_lednicer(tmp_path):
     name, back = airfoil.read_dat(tmp_path / "mm.dat")
     assert name == "MM AIRFOIL"
     assert np.array_equal(back, pts)
+
+
+def test_thickness_and_camber_do_not_depend_on_the_direction():
+    # A chain running clockwise lists the lower surface first; its thickness came out negative
+    pts = NACA4("2412").points(81)
+    forward = airfoil.thickness_and_camber(airfoil.fit_airfoil(pts, 1e-5))
+    backward = airfoil.thickness_and_camber(airfoil.fit_airfoil(pts[::-1], 1e-5))
+    assert forward["max_thickness"] == pytest.approx(0.12, abs=1e-3)
+    assert forward["max_camber"] == pytest.approx(0.02, abs=1e-3)
+    # Two separate fits within 1e-5 of the same points
+    for key in ("max_thickness", "max_camber"):
+        assert backward[key] == pytest.approx(forward[key], abs=2e-5)
+    for key in ("max_thickness_x", "max_camber_x"):
+        assert backward[key] == pytest.approx(forward[key], abs=2e-3)
+
+
+def test_numeric_title_is_the_name(tmp_path):
+    pts = np.round(NACA4("0012").points(21), 5)
+    body = "\n".join(f"{x:.5f} {y:.5f}" for x, y in pts)
+    (tmp_path / "t.dat").write_text(f"0012 9\n{body}\n")
+    name, back = airfoil.read_dat(tmp_path / "t.dat")
+    assert name == "0012 9"
+    assert np.array_equal(back, pts)
+    # A file without a name line keeps its first point
+    (tmp_path / "plain.dat").write_text(f"{body}\n")
+    name, back = airfoil.read_dat(tmp_path / "plain.dat")
+    assert name == "plain" and np.array_equal(back, pts)

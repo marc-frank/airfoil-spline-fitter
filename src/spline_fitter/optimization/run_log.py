@@ -102,8 +102,13 @@ class OptimizerErrorLogger:
         if not self.iterations:
             return None
 
-        # Ensure log directory exists
-        os.makedirs(self.log_dir, exist_ok=True)
+        # Ensure log directory exists; a log that cannot be written never
+        # fails the run it records
+        try:
+            os.makedirs(self.log_dir, exist_ok=True)
+        except OSError as e:
+            print(f"Failed to save optimizer log: {e}")
+            return None
 
         # Generate filename
         timestamp = self.start_time.strftime("%Y%m%d_%H%M%S")
@@ -144,6 +149,7 @@ class OptimizerErrorLogger:
 
         except Exception as e:
             print(f"Failed to save optimizer log: {e}")
+            self._file_path = None
             return None
 
     @property

@@ -154,6 +154,20 @@ class SettingsHistory(QObject):
             del self._states[:-LIMIT]
             self._index = len(self._states) - 1
 
+    def checkpoint(self) -> tuple[list, int]:
+        """The steps as they are now, to go back to with :meth:`rollback`."""
+        self.commit()
+        return list(self._states), self._index
+
+    def rollback(self, checkpoint: tuple[list, int]) -> None:
+        """Forget every change since ``checkpoint``: an action that failed
+        and put the widgets back leaves no step."""
+        self._timer.stop()
+        self._pending_quiet, self._latest_state = False, None
+        states, self._index = checkpoint
+        self._states = list(states)
+        self.changed.emit()
+
     def can_undo(self) -> bool:
         return self._index > 0 or self._timer.isActive() and not self._pending_quiet
 

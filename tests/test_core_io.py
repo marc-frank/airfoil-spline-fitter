@@ -3,6 +3,7 @@ import importlib.util
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -59,7 +60,14 @@ def _same_contour(coords):
     [r.replace(" ", "\t") for r in ROWS],
     [r.replace(".", ",") for r in ROWS],
     [f"{x:.6E} {y:.6E}".replace("E", "D") for x, y in PTS],
-], ids=["comma", "comma space", "semicolon", "tab", "decimal comma", "fortran exponent"])
+    [f'"{x:.6f}","{y:.6f}"' for x, y in PTS],
+    [f'"{x:.6f}";"{y:.6f}"'.replace(".", ",") for x, y in PTS],
+    [f"{x:9.6f}{y:9.6f}" for x, y in PTS],
+    [f"{x:9.6f}{y:9.6f}".replace(".", ",") for x, y in PTS],
+    [f"{x:.6e}{y:+.6e}" for x, y in PTS],
+], ids=["comma", "comma space", "semicolon", "tab", "decimal comma", "fortran exponent",
+        "quoted csv", "quoted decimal comma", "fixed width", "fixed width decimal comma",
+        "fixed width e-notation"])
 def test_delimiter_variants_load(rows):
     name, coords, _ = _parse("NACA 2412\n" + "\n".join(rows))
     assert name == "NACA 2412" and _same_contour(coords)
@@ -110,6 +118,34 @@ def test_numeric_name_is_a_name(tmp_path, name):
     export_airfoil_data(str(path), [tuple(p) for p in PTS], name=name, precision=6)
     _, back, coords, _ = parse_airfoil_data(str(path))
     assert back == name and _same_contour(np.array(coords))
+
+
+def test_a_name_with_a_hash_is_kept_whole(tmp_path):
+    assert _parse("NACA 0012 #2\n" + "\n".join(ROWS))[0] == "NACA 0012 #2"
+    assert _parse("# comment line\nNACA 0012\n" + "\n".join(ROWS))[0] == "NACA 0012"
+    path = tmp_path / "x.dat"
+    export_airfoil_data(str(path), [tuple(p) for p in PTS], name="E387 #2 (smoothed)", precision=6)
+    _, back, coords, _ = parse_airfoil_data(str(path))
+    assert back == "E387 #2 (smoothed)" and _same_contour(np.array(coords))
+
+
+@pytest.mark.parametrize("name", ["#2 NACA 0012", "# 2412", "\\#odd", "\\name", "NACA \\#3"])
+def test_a_name_that_starts_with_a_hash_round_trips(tmp_path, name):
+    ctrl = [[(1.0, 0.0), (0.5, 0.1), (0.0, 0.0)], [(0.0, 0.0), (0.5, -0.1), (1.0, 0.0)]]
+    path = tmp_path / "x.dat"
+    export_airfoil_data(str(path), [tuple(p) for p in PTS], name=name, precision=6)
+    _, back, coords, _ = parse_airfoil_data(str(path))
+    assert back == name and _same_contour(np.array(coords))
+    spline = tmp_path / "x.deg2.spline.dat"
+    export_spline_data(spline, 2, ctrl, name=name)
+    data = parse_spline_data(spline)
+    assert data["name"] == name and data["section_control_points"] == ctrl
+
+
+def test_a_hash_comment_first_line_of_another_tool_is_still_a_comment():
+    assert _parse("# written by xfoil\nNACA 0012\n" + "\n".join(ROWS))[0] == "NACA 0012"
+    assert _parse("# NACA 0012\n" + "\n".join(ROWS))[0] == "file"
+    assert _parse("\\#3 NACA 0012\n" + "\n".join(ROWS))[0] == "#3 NACA 0012"
 
 
 def test_spline_file_numeric_name_and_leading_blank_line(tmp_path):
@@ -305,3 +341,74 @@ def test_unused_fields_are_not_written_and_old_projects_load(tmp_path):
     loaded = load_project(str(path)).optimization_runs[0]
     assert loaded.optimization_config == _project().optimization_runs[0].optimization_config
     assert loaded.result.final_error == 1e-5
+
+
+def test_rms_error_round_trips_and_old_projects_load_without_it(tmp_path):
+    path = tmp_path / "p.asfproj"
+    project = _project(tolerance=1e-4)
+    project.optimization_runs[0].result.rms_error = 2e-6  # final_error is the max deviation
+    save_project(project, str(path))
+    assert load_project(str(path)).optimization_runs[0].result.comparison_error == 2e-6
+    data = json.loads(path.read_text(encoding="utf-8"))
+    del data["optimization_runs"][0]["result"]["rms_error"]
+    path.write_text(json.dumps(data), encoding="utf-8")
+    result = load_project(str(path)).optimization_runs[0].result
+    assert result.rms_error is None and result.comparison_error == 1e-5
+
+
+def test_a_project_with_a_byte_order_mark_loads(tmp_path):
+    path = tmp_path / "p.asfproj"
+    save_project(_project(), str(path))
+    path.write_bytes(b"\xef\xbb\xbf" + path.read_bytes())
+    assert len(load_project(str(path)).optimization_runs) == 1
+
+
+@pytest.mark.parametrize("change, message", [
+    (lambda d: d["optimization_runs"][0]["result"].pop("num_evaluations"),
+     "Run 1 result: the 'num_evaluations' field is missing."),
+    (lambda d: d["airfoil"].update(coordinates=None), "Airfoil: "),
+    (lambda d: d["optimization_runs"][0].update(section_control_points=[[["a", 0]]]),
+     "Run 1 control points: "),
+    (lambda d: d.pop("metadata"), "Metadata: the 'metadata' field is missing."),
+], ids=["missing field", "null airfoil", "bad control point", "no metadata"])
+def test_a_malformed_project_says_what_is_wrong_and_where(tmp_path, change, message):
+    path = tmp_path / "p.asfproj"
+    save_project(_project(), str(path))
+    data = json.loads(path.read_text(encoding="utf-8"))
+    change(data)
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(ValueError, match=re.escape(message)):
+        load_project(str(path))
+
+
+@pytest.mark.parametrize("text", ["not json", "[1, 2]"])
+def test_a_file_that_is_not_a_project_says_so(tmp_path, text):
+    path = tmp_path / "p.asfproj"
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises(ValueError, match="not a project file"):
+        load_project(str(path))
+
+
+def test_saving_over_a_read_only_project_names_it_and_leaves_no_temporary_file(tmp_path):
+    import stat
+    path = tmp_path / "p.asfproj"
+    save_project(_project(), str(path))
+    os.chmod(path, stat.S_IREAD)
+    try:
+        with pytest.raises(PermissionError, match="read-only"):
+            save_project(_project(), str(path))
+        assert [p.name for p in tmp_path.iterdir()] == ["p.asfproj"]
+    finally:
+        os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
+
+
+@pytest.mark.parametrize("name, stem", [
+    ("NACA 2412", "NACA 2412"),
+    ("E387 t/c=9%", "E387 t_c=9%"),
+    ('FX 63-137: "smoothed"?', "FX 63-137_ _smoothed__"),
+    ("a\\b. ", "a_b"),
+    ("///", "___"),
+    ("", "airfoil"),
+])
+def test_file_stem_makes_any_name_a_file_name(name, stem):
+    assert formatting.file_stem(name) == stem

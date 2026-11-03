@@ -258,11 +258,16 @@ class WindowLayoutMixin:
         was_expanded = advanced._expanded
         advanced.set_expanded(True)
         widest = sections.minimumSizeHint().width()
-        for box in self._sweep_group:
-            if box.isEnabled() and not box.is_sweep_active:
-                box._btn_sweep.click()
-                widest = max(widest, sections.minimumSizeHint().width())
-                box.stop_sweep()
+        # Measuring changes no setting: each sweep is left as it was, and
+        # Edit > Undo does not see it
+        with self._settings_history.quiet():
+            for box in self._sweep_group:
+                if box.isEnabled() and not box.is_sweep_active:
+                    state = box.sweep_state()
+                    box._btn_sweep.click()
+                    widest = max(widest, sections.minimumSizeHint().width())
+                    box.stop_sweep()
+                    box.set_sweep_state(state)
         advanced.set_expanded(was_expanded)
         width = widest + self._sidebar_scroll.verticalScrollBar().sizeHint().width()
         self._sidebar_width = max(SIDEBAR_WIDTH, math.ceil(width / 10) * 10)

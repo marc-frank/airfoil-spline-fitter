@@ -5,7 +5,7 @@ import time
 from dataclasses import replace as dc_replace
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QDir
+from PyQt6.QtCore import QDir, Qt
 from PyQt6.QtWidgets import (
     QApplication,
     QDialog,
@@ -46,7 +46,7 @@ if TYPE_CHECKING:
 # <file>.deg<degree>.spline.dat, as before other settings were named
 DEFAULT_SPLINE = SplineConfig(continuity=ContinuityMode.G3, geometric_continuity=True)
 DEFAULT_OPTIMIZATION = OptimizationConfig(
-    max_iterations=0, knot_placement="uniform", grow_control_points=False)
+    knot_placement="uniform", grow_control_points=False)
 
 
 def _num(value: float) -> str:
@@ -99,8 +99,6 @@ def output_name(stem: str, config: SplineConfig, opt_config: OptimizationConfig,
         parts.append(f"sub{o.max_points_per_section}")
     if o.optimize_le_position != d_opt.optimize_le_position:
         parts.append("free-le")
-    if o.max_iterations != d_opt.max_iterations:
-        parts.append(f"max{o.max_iterations}")
     if o.early_stop_patience != d_opt.early_stop_patience:
         parts.append(f"patience{o.early_stop_patience}")
     if o.relative_tolerance != d_opt.relative_tolerance:
@@ -119,6 +117,8 @@ class BatchController:
     def on_batch_dialog(self):
         """Open the batch-conversion dialog (File -> Batch Convert)."""
         dialog = QDialog(self._window)
+        # Freed on close, not kept as a child of the window
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dialog.setWindowTitle("Batch convert")
         dialog.setMinimumWidth(Size.DIALOG_MIN_WIDTH)
         form = dialog_form(dialog)
@@ -199,11 +199,13 @@ class BatchController:
             # Back to the window's own airfoil and fit
             w = self._window
             w._set_fitting_ui(False)
-            if w._airfoil is not None:
-                w._plot_manager.plot_airfoil(w._airfoil.coordinates)
-                if w._fit_result is not None:
-                    w._plot_manager.plot_fitted_spline(w._fit_result)
-                    w._refresh_curvature_comb()
+            # Without an airfoil of its own the window shows none: not the
+            # batch's last file
+            coords = w._airfoil.coordinates if w._airfoil is not None else []
+            w._plot_manager.plot_airfoil(coords)
+            if w._airfoil is not None and w._fit_result is not None:
+                w._plot_manager.plot_fitted_spline(w._fit_result)
+                w._refresh_curvature_comb()
 
     def _convert(self, files: list[str], config, opt_config) -> None:
         """Fit and export every file (UI locked), and report how it went."""

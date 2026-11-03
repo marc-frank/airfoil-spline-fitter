@@ -14,7 +14,7 @@ import os
 import threading
 
 import numpy as np
-from PyQt6.QtCore import QDir, QMimeData, QRegularExpression
+from PyQt6.QtCore import QDir, QMimeData, QRegularExpression, Qt
 from PyQt6.QtGui import QRegularExpressionValidator
 from PyQt6.QtWidgets import (
     QApplication,
@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ..analysis import airfoil_shape, fit_report, format_report_html, scipy_curves, shape_report
+from ..formatting import file_stem
 from ..geometry import create_airfoil_data
 from ..io import export_airfoil_data, export_spline_data, parse_airfoil_data, parse_airfoil_text
 from .background import run_in_background
@@ -255,6 +256,9 @@ class FileActionsMixin:
     def _on_new_naca(self):
         """Ask for a NACA 4-digit code and make that airfoil the one to fit."""
         dialog = QDialog(self)
+        # Freed on close (later, by the event loop: its fields are read
+        # right after exec returns)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dialog.setWindowTitle("New NACA airfoil")
         form = dialog_form(dialog)
         edit_code = QLineEdit(self._settings.value("naca_code", "2412"))
@@ -333,7 +337,7 @@ class FileActionsMixin:
 
             # File dialog
             default_name = self._airfoil.name or self._airfoil.filename
-            default_path = os.path.join(QDir.homePath(), f"{default_name}_fitted.dat")
+            default_path = os.path.join(QDir.homePath(), f"{file_stem(default_name)}_fitted.dat")
 
             save_path, _ = QFileDialog.getSaveFileName(
                 self,
@@ -372,7 +376,7 @@ class FileActionsMixin:
 
             default_path = os.path.join(
                 QDir.homePath(),
-                f"{base_name}.deg{degree}.spline.dat"
+                f"{file_stem(base_name)}.deg{degree}.spline.dat"
             )
 
             save_path, _ = QFileDialog.getSaveFileName(
@@ -418,6 +422,9 @@ class FileActionsMixin:
             return
 
         dialog = QDialog(self)
+        # Freed on close (later, by the event loop: its fields are read
+        # right after exec returns)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dialog.setWindowTitle("Export CAD")
         form = dialog_form(dialog)
         combo_format = QComboBox()
@@ -466,7 +473,7 @@ class FileActionsMixin:
 
         base_name = self._airfoil.filename or self._airfoil.name or "airfoil"
         save_path, _ = QFileDialog.getSaveFileName(
-            self, "Export CAD", os.path.join(QDir.homePath(), base_name + suffix),
+            self, "Export CAD", os.path.join(QDir.homePath(), file_stem(base_name) + suffix),
             combo_format.currentText(),
         )
         if not save_path:

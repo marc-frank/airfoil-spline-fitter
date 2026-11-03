@@ -29,8 +29,12 @@ def _load(tmp_path, lines):
     # Counts that do not match the rows: split where x jumps back to the leading edge
     (["NACA 2412", "22. 21.", "", *_rows(UPPER[::-1]), "", *_rows(LOWER)], "NACA 2412"),
     (["NACA 2412", "21. 20.", *_rows(UPPER[::-1]), *_rows(LOWER[1:])], "NACA 2412"),
+    # A name that reads as numbers, as the point counts do
+    (["0012 64", "21. 21.", "", *_rows(UPPER[::-1]), "", *_rows(LOWER)], "0012 64"),
+    (["2412 15", "21 21", *_rows(UPPER[::-1]), *_rows(LOWER)], "2412 15"),
 ], ids=["selig", "selig 0-100", "lednicer", "lednicer int counts no blanks", "lednicer no name",
-        "lednicer wrong counts", "lednicer unshared leading edge"])
+        "lednicer wrong counts", "lednicer unshared leading edge", "lednicer numeric name",
+        "lednicer numeric name int counts"])
 def test_formats_load_the_same_contour(tmp_path, lines, name):
     back_name, coords, precision = _load(tmp_path, lines)
     assert back_name == name

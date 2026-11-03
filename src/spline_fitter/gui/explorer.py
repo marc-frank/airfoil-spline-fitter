@@ -18,8 +18,8 @@ open project, one row per run:
   same time, and a run must pass them all; a filtered column shows a
   funnel. In a condition or the global filter every word must match: plain
   text matches a part of the cell, a number with a comparison (``>1e-5``,
-  ``<=12``, ``=5``, ``!=3``) compares the value. *Invert* shows the rows
-  the filters do not match instead.
+  ``<=12``, ``=5``, ``!=3``) compares the value (in the global filter, the
+  error's). *Invert* shows the rows the filters do not match instead.
 - **Sorting.** Clicking a header (or its drop-down) sorts by that column,
   numbers by value.
 - **Plot.** The error plot at the lower right shows only the rows that pass
@@ -55,6 +55,7 @@ from PyQt6.QtCore import (
     Qt,
     QTransposeProxyModel,
     pyqtSignal,
+    pyqtSlot,
 )
 from PyQt6.QtGui import QAction, QBrush, QRegion, QStandardItem, QStandardItemModel
 from PyQt6.QtWidgets import (
@@ -196,6 +197,8 @@ COLUMNS: tuple[Column, ...] = (
 )
 
 COLUMN_NAMES = [c.name for c in COLUMNS]
+# The column a number comparison in the global filter compares
+_ERROR = COLUMN_NAMES.index("Error")
 
 
 def column(name: str) -> Column:
@@ -320,8 +323,9 @@ class RunFilterModel(QSortFilterProxyModel):
     """Filters the run table, optionally inverted, and sorts by the raw values.
 
     A run passes when it matches the global filter (each word in some
-    column) and its value in every column is checked in that column's
-    filter; Invert shows the runs that do not.
+    column, a comparison with a number in the error) and its value in every
+    column is checked in that column's filter; Invert shows the runs that
+    do not.
     """
 
     def __init__(self, parent=None):
@@ -342,7 +346,11 @@ class RunFilterModel(QSortFilterProxyModel):
         model = self.sourceModel()
         values = [model.value(source_row, c) for c in range(len(COLUMNS))]
         cells = [(v, c.text(v)) for v, c in zip(values, COLUMNS, strict=True)]
-        if not all(any(term_matches(t, v, s) for v, s in cells) for t in self._terms):
+        # A comparison with a number compares the error (in any column some
+        # setting, the run number or the degree, would pass nearly every
+        # run); other words match in any column
+        if not all(term_matches(t, *cells[_ERROR]) if is_number(t[1])
+                   else any(term_matches(t, v, s) for v, s in cells) for t in self._terms):
             return False
         return all(cells[c][1] not in texts
                    for c, texts in self._excluded.items() if c != skip)
@@ -356,8 +364,11 @@ class RunFilterModel(QSortFilterProxyModel):
         model = self.sourceModel()
         a = model.value(left.row(), left.column())
         b = model.value(right.row(), right.column())
-        # Blanks last, then numbers by value, everything else by its text
+        # Blanks last (in either order: a descending sort reverses this),
+        # then numbers by value, everything else by its text
         if a is None or b is None:
+            if self.sortOrder() == Qt.SortOrder.DescendingOrder:
+                return a is None and b is not None
             return b is None and a is not None
         if is_number(a) and is_number(b):
             return a < b
@@ -368,11 +379,19 @@ class RunFilterModel(QSortFilterProxyModel):
 # View
 # =============================================================================
 
-_FILTER_TIP = (
+_TEXT_TIP = (
     "Every word must match.\n"
     "Text matches a part of a cell, for example varpro or tolerance.\n"
+)
+# A column's condition compares the column's values
+_FILTER_TIP = _TEXT_TIP + (
     "A number with a comparison compares the value:\n"
     ">1e-5, <=12, =5 or !=3. =free matches the whole cell."
+)
+# The global filter compares the error (a column's drop-down compares the others)
+_GLOBAL_TIP = _TEXT_TIP + (
+    "A number with a comparison compares the error:\n"
+    ">1e-5 or <=3e-4. =free matches a whole cell."
 )
 
 # How the value list names an empty cell: a setting the run's optimizer does not read
@@ -539,6 +558,8 @@ class ColumnFilterPopup(QFrame):
         """The unchecked values, with what the typed condition rules out."""
         return self._excluded | self._ruled_out(self._terms)
 
+    # A slot, so the connection ends with the drop-down (deleted on close)
+    @pyqtSlot()
     def _show_values(self) -> None:
         """Check the values that are not unchecked; grey what the typed
         condition rules out."""
@@ -610,7 +631,11 @@ class ColumnFilterPopup(QFrame):
         self.close()
 
     def _clear(self) -> None:
-        self._terms, self._excluded = [], set()
+        # The typed condition goes too, or closing would keep it
+        self._terms, self._excluded, self._last_text = [], set(), ""
+        self.condition.blockSignals(True)
+        self.condition.clear()
+        self.condition.blockSignals(False)
         self._table.set_column_filter(COLUMNS[self._col].name)
         self.close()
 
@@ -668,7 +693,7 @@ class RunTable(QWidget):
         self.filter_edit.setClearButtonEnabled(True)
         self.filter_edit.setToolTip(
             "Show the runs that match in any column, and pass the filter of every\n"
-            "column (the drop-down at the right of a column header).\n" + _FILTER_TIP)
+            "column (the drop-down at the right of a column header).\n" + _GLOBAL_TIP)
         self.invert_button = QToolButton()
         self.invert_button.setText("Invert")
         self.invert_button.setCheckable(True)

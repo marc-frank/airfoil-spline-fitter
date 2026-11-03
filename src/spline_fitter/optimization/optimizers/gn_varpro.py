@@ -32,25 +32,23 @@ class GNVarProConfig:
     """
     Configuration for the variable projection optimizer.
 
+    There is no evaluation or iteration limit: a fit runs until the solver
+    converges (or the user cancels).
+
     Attributes:
-        max_iterations: Residual evaluation limit when the optimization config sets
-            none: a safety stop; the solver ends on convergence long before
         regularization: Tikhonov regularization for numerical stability
         smoothing_weight: Weight for bending energy regularization
         use_exact_jacobian: If True, compute exact Jacobian; else use finite diff
         verbose: Verbosity level (0=silent, 1=summary, 2=per-iteration)
-        max_nfev: Residual evaluation limit overriding both iteration settings
         tolerance: Solver ftol/xtol/gtol
         tolerance_smoothing: Bending energy weight in tolerance mode (1e-7 gave
             the fewest control points and curvature extrema in the
             bspline-varpro benchmark)
     """
-    max_iterations: int = 10000
     regularization: float = 1e-12
     smoothing_weight: float = 1e-3
     use_exact_jacobian: bool = True
     verbose: int = 0
-    max_nfev: int | None = None
     tolerance: float = 1e-10
     tolerance_smoothing: float = 1e-7
 
@@ -96,7 +94,7 @@ class GNVarProOptimizer(AlgebraicOptimizer):
     Levenberg-Marquardt variable projection optimizer for B-spline fitting.
 
     Example:
-        >>> optimizer = GNVarProOptimizer(config=GNVarProConfig(max_iterations=30))
+        >>> optimizer = GNVarProOptimizer(config=GNVarProConfig(smoothing_weight=1e-4))
         >>> result = optimizer.fit(spline_config, opt_config, airfoil)
     """
 
@@ -161,8 +159,7 @@ class GNVarProOptimizer(AlgebraicOptimizer):
                                      preview=(control_points, knots, spline_config.degree)))
             return bool(callback(_flat(control_points), rms_error))
 
-        max_iters = (opt_config.max_iterations if opt_config.max_iterations > 0
-                     else self.config.max_iterations)
+        # No evaluation limit: the fit runs until the solver converges
         result = bspline_varpro.fit(
             sections,
             num_control_points=spline_config.num_control_points,
@@ -172,7 +169,6 @@ class GNVarProOptimizer(AlgebraicOptimizer):
             smoothing=self.config.smoothing_weight,
             regularization=self.config.regularization,
             initial_parameters=opt_config.custom_parameters,
-            max_nfev=self.config.max_nfev or max_iters,
             max_points_per_section=opt_config.max_points_per_section,
             knot_placement=opt_config.knot_placement,
             grow=opt_config.grow_control_points,
@@ -225,18 +221,10 @@ class GNVarProOptimizer(AlgebraicOptimizer):
             initial_control_points=(None if opt_config.grow_control_points
                                     else spline_config.num_control_points),
             callback=on_refit,
-            **self._tolerance_nfev(opt_config),
             **({"should_stop": should_stop} if _TOLERANCE_STOP and should_stop else {}),
             **({"step_callback": on_step} if with_steps else {}),
         )
         return self._raw(result, result.max_deviation, max(refits, 1))
-
-    def _tolerance_nfev(self, opt_config) -> dict:
-        """Residual evaluation limit per refit: the configured one, else the
-        library's (the fixed-count default suits a whole fit, not a refit)."""
-        limit = self.config.max_nfev or (opt_config.max_iterations
-                                         if opt_config.max_iterations > 0 else None)
-        return {"max_nfev": limit} if limit else {}
 
     @staticmethod
     def _raw(result: bspline_varpro.FitResult, error: float, nit: int) -> RawOptimResult:

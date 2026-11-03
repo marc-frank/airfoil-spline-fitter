@@ -376,8 +376,6 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
 
         return OptimizationConfig(
             optimizer=opt_type,
-            # 0: VarPro's own limit, a safety stop it does not reach in practice
-            max_iterations=0,
             optimize_le_position=(self._check_optimize_le.isChecked()
                                   and self._spin_sections.value() > 1),
             smoothing_weight=self._spin_smoothing_weight.value(),

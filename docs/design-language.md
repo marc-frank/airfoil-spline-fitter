@@ -90,7 +90,7 @@ Fixed colors, the same in both modes:
 | `INK_HOVER` / `INK_PRESSED` | `#FF8636` / `#E05E08` | Primary button states |
 | `INK_DEEP` | `#AD4200` | The icon's shadowed underside (reserved) |
 | `ON_INK` | `#1A0C02` | Text on ink |
-| `OK` / `WARN` / `ERROR` | dark `#4FBF85` / `#F2B84B` / `#F0605D`, light `#23905A` / `#B87A00` / `#D23B37` | Status only |
+| `OK` / `WARN` / `ERROR` | dark `#4FBF85` / `#F2B84B` / `#F0605D`, light `#1A7A4A` / `#8F5E00` / `#C02F2B` | Status only |
 
 **Rules**
 

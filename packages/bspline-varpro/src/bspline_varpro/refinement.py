@@ -60,14 +60,15 @@ def refine(
     points: Union[np.ndarray, Sequence[np.ndarray]],
     result: FitResult,
     options: Optional[ChainOptions] = None,
-    max_iterations: int = 100,
+    max_iterations: Optional[int] = None,
     callback=None,
 ) -> FitResult:
     """Joint Levenberg-Marquardt refinement of a fit on all points.
 
     Useful for dense data: fit a subsample by variable projection, then refine
     on all points. Knots and junction shape parameters stay fixed. The result
-    has ``max_deviation`` set. ``callback`` (as for
+    has ``max_deviation`` set. ``max_iterations`` None (the default) runs
+    until converged. ``callback`` (as for
     :func:`~bspline_varpro.fitting.fit`) is called after every iteration.
     """
     sections = as_sections(points)

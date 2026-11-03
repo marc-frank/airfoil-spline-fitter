@@ -83,7 +83,7 @@ def test_fixed_mode_geometric_continuity_uses_labels(monkeypatch):
     monkeypatch.setattr(gn_varpro.bspline_varpro, "fit", capture)
     config = SplineConfig(degree=5, num_control_points=9, continuity=ContinuityMode.G2,
                           geometric_continuity=True)
-    result = GNVarProOptimizer().fit(config, OptimizationConfig(max_iterations=200), naca_airfoil(n=31))
+    result = GNVarProOptimizer().fit(config, OptimizationConfig(), naca_airfoil(n=31))
     assert captured["continuity"] == "G2"
     assert result.section_knots is not None and [len(k) for k in result.section_knots] == [15, 15]
 
@@ -349,7 +349,7 @@ def test_gui_subsampling_is_off_by_default_and_reaches_both_modes(monkeypatch):
         monkeypatch.setattr(gn_varpro.bspline_varpro, name, capture)
     airfoil = naca_airfoil(n=41, decimals=5)
     config = SplineConfig(degree=5, num_control_points=9)
-    GNVarProOptimizer().fit(config, OptimizationConfig(max_iterations=50, max_points_per_section=30), airfoil)
+    GNVarProOptimizer().fit(config, OptimizationConfig(max_points_per_section=30), airfoil)
     GNVarProOptimizer().fit(config, OptimizationConfig(tolerance=1e-4), airfoil)
     assert captured == [30, None]
 
@@ -382,7 +382,7 @@ def test_knot_placement_and_growth_reach_both_modes(monkeypatch):
     config = SplineConfig(degree=5, num_control_points=9)
     for placement, grow in (("free", True), ("uniform", False)):
         GNVarProOptimizer().fit(config, OptimizationConfig(
-            max_iterations=50, knot_placement=placement, grow_control_points=grow), airfoil)
+            knot_placement=placement, grow_control_points=grow), airfoil)
         GNVarProOptimizer().fit(config, OptimizationConfig(
             tolerance=1e-4, knot_placement=placement, grow_control_points=grow), airfoil)
     assert captured == [("fit", "free", True), ("fit_to_tolerance", "free", None),

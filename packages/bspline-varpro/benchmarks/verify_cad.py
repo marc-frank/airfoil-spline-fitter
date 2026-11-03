@@ -72,6 +72,8 @@ def dxf_error(path: Path, curves, scale: float) -> float:
     if doc.audit().errors:
         raise RuntimeError(f"{path.name}: ezdxf audit errors")
     splines = list(doc.modelspace().query("SPLINE"))
+    if len(splines) != len(curves):
+        raise RuntimeError(f"{path.name}: {len(splines)} splines, expected {len(curves)}")
     worst = 0.0
     for entity, curve in zip(splines, curves):
         tool = entity.construction_tool()

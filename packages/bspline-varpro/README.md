@@ -63,9 +63,10 @@ The procedure:
 2. Fit, measure the exact orthogonal deviation of every point, and insert knots
    in the spans that exceed the tolerance. Repeat until every point is within it.
 3. Optimize the interior knot positions together with the fit.
-4. Try removing every knot, least useful first, refitting (and re-optimizing
-   the knots) after each attempt. Keep removals that stay within the
-   tolerance and start over after each one, then optimize the knots again.
+4. Try removing every knot, least useful first, refitting after each attempt
+   and re-optimizing the knots when the refit alone misses the tolerance.
+   Keep removals that stay within the tolerance and start over after each
+   one, then optimize the knots again.
 
 Dense data (more than `max_points_per_section`, default 200 per section) is
 fitted on an evenly spaced subsample and then refined jointly on all points. A
@@ -128,7 +129,7 @@ result = bv.fit(points, knots=[my_knots], degree=5)
 | `max_points_per_section` | None | Subsample dense sections, then refine on all points |
 | `knot_placement` | `"uniform"` | `"free"`: afterwards move the interior knots to where they reduce the error most |
 | `grow` | False | Start from the fewest control points and add knots where the fit is worst until the counts are reached |
-| `max_nfev` | 200 | Residual evaluation budget |
+| `max_nfev` | None | Residual evaluation budget; None (no limit) runs until the fit converges |
 | `callback` | None | `callback(control_points, rms_error)` after every evaluation; True stops |
 
 ## `FitResult`
@@ -290,6 +291,14 @@ derivatives, and `C P = d` encodes the end, junction, and continuity conditions.
   continuation, and knot insertion make this reliable for airfoils and similar
   smooth curves, but self-intersecting or strongly looping data may need
   `initial_parameters`.
+- The error is measured at the data points only. So that a fit run to
+  convergence cannot spend a long stretch of parameter on a bulge between two
+  neighbouring points, the curve's speed between consecutive points may not
+  jump by more than a factor of e beyond its change in the centripetal start,
+  and knot polishing never packs knots closer than the closest two data
+  points of the section (or than they started). Started
+  from parameters with one gap opened far wider than that, a fit can still
+  keep a smaller bulge.
 - Curves are open and non-rational. Closed or periodic curves are not
   supported. A blunt trailing edge is closed with a separate line segment.
 - Knot polishing uses finite differences for the knot columns and is skipped

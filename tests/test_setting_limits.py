@@ -25,6 +25,60 @@ def window():
     app.processEvents()
 
 
+def test_showing_the_window_leaves_nothing_to_undo(window):
+    """Measuring the sidebar at the first show toggles every sweep: that
+    changes no setting, so Edit > Undo stays disabled."""
+    from PyQt6.QtTest import QTest
+    from PyQt6.QtWidgets import QApplication
+
+    from spline_fitter.gui.history import MERGE_MS
+
+    states = [box.sweep_state() for box in window._sweep_group]
+    window.show()
+    QTest.qWait(MERGE_MS + 200)
+    QApplication.processEvents()
+    assert not window._action_undo.isEnabled()
+    assert [box.sweep_state() for box in window._sweep_group] == states
+
+
+def test_closed_file_dialogs_are_freed(window, monkeypatch):
+    """New NACA airfoil, batch convert and export CAD are freed on close,
+    not kept as children of the window, and leave no theme connection."""
+    from PyQt6.QtCore import QCoreApplication, QEvent, QTimer
+    from PyQt6.QtWidgets import QApplication, QDialog
+
+    from spline_fitter.gui.theme import theme_changed
+
+    real_exec = QDialog.exec
+    titles = []
+
+    def exec_closing(dialog):
+        titles.append(dialog.windowTitle())
+        QTimer.singleShot(0, dialog.reject)
+        return real_exec(dialog)
+
+    monkeypatch.setattr(QDialog, "exec", exec_closing)
+
+    def settle():
+        QApplication.processEvents()
+        # What the main loop does for objects freed with deleteLater
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+    settle()
+    receivers = theme_changed.receivers(theme_changed.changed)
+    # Export CAD opens only with a fit to export
+    monkeypatch.setattr(window, "_fit_result", object())
+    monkeypatch.setattr(window, "_airfoil", object())
+    for _ in range(2):
+        window._on_new_naca()
+        window._batch_controller.on_batch_dialog()
+        window._on_export_cad()
+    settle()
+    assert titles == ["New NACA airfoil", "Batch convert", "Export CAD"] * 2
+    assert not window.findChildren(QDialog)
+    assert theme_changed.receivers(theme_changed.changed) == receivers
+
+
 def _continuity(window, mode):
     window._combo_cont.setCurrentIndex(window._combo_cont.findData(mode))
 

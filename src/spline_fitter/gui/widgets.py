@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import math
 
-from PyQt6.QtCore import QEvent, QPoint, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QEvent, QPoint, QSize, Qt, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QValidator
 from PyQt6.QtWidgets import (
     QBoxLayout,
@@ -167,6 +167,8 @@ class ReadoutList(QWidget):
         """How many pairs share a line."""
         return self._columns
 
+    # A slot, so the theme connection ends with the widget
+    @pyqtSlot()
     def _render(self) -> None:
         self._title.setText(readout_heading(self._title_text) if self._rows
                             else self._title_text)
@@ -418,10 +420,13 @@ class ScientificSpinBox(QDoubleSpinBox):
     """
 
     SIGNIFICANT = 6
+    # Qt rounds a value to this many decimals: its most, so that no value a
+    # double can hold beside zero is rounded to zero
+    DECIMALS = 323
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        super().setDecimals(15)
+        super().setDecimals(self.DECIMALS)
 
     def setDecimals(self, decimals: int) -> None:
         """Ignored: the value shows its own significant digits."""
@@ -430,8 +435,24 @@ class ScientificSpinBox(QDoubleSpinBox):
         return f"{value:.{self.SIGNIFICANT}g}".replace(".", self.locale().decimalPoint())
 
     def _parse(self, text: str) -> float:
-        """The value of a text with the locale's decimal point; ValueError if none."""
-        return float(text.replace(self.locale().decimalPoint(), "."))
+        """The finite value of a text with the locale's decimal point;
+        ValueError if none (inf, nan and overflowing exponents included)."""
+        text = text.strip()
+        # float() also reads "inf", "nan" and "1_0"
+        if not text or any(c not in "0123456789eE+-." + self.locale().decimalPoint()
+                           for c in text):
+            raise ValueError(text)
+        value = float(text.replace(self.locale().decimalPoint(), "."))
+        if not math.isfinite(value):
+            raise ValueError(text)
+        return value
+
+    def _overflows(self, text: str) -> bool:
+        """Whether a complete number of the text is too large for a double."""
+        try:
+            return math.isinf(float(text.strip().replace(self.locale().decimalPoint(), ".")))
+        except ValueError:
+            return False
 
     def valueFromText(self, text: str) -> float:
         try:
@@ -443,8 +464,10 @@ class ScientificSpinBox(QDoubleSpinBox):
         try:
             value = self._parse(text)
         except ValueError:
-            # Part of a number still being typed, such as "1e-"
-            ok = all(c in "0123456789eE+-" + self.locale().decimalPoint() for c in text)
+            # Part of a number still being typed, such as "1e-"; not one
+            # past the largest double, such as "1e400"
+            ok = (all(c in "0123456789eE+-" + self.locale().decimalPoint() for c in text)
+                  and not self._overflows(text))
             return (QValidator.State.Intermediate if ok else QValidator.State.Invalid), text, pos
         if self.minimum() <= value <= self.maximum():
             return QValidator.State.Acceptable, text, pos
@@ -795,6 +818,8 @@ def show_document(parent: QWidget, title: str, html: str, width: int, height: in
     """Show rich text (a report) in a dialog with a Close button, and below
     it ``extra`` (a chart), if given."""
     dialog = QDialog(parent)
+    # Freed on close, so its browser stops following theme changes
+    dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
     dialog.setWindowTitle(title)
     dialog.resize(width, height)
     layout = QVBoxLayout(dialog)
@@ -826,6 +851,7 @@ class ThemeDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setWindowTitle("Theme")
         form = dialog_form(self)
 
@@ -870,13 +896,22 @@ class ThemeDialog(QDialog):
         self._slider.valueChanged.connect(self._on_slider)
 
     def _on_slider(self, value: int):
-        if value and abs(value) <= self.SNAP:
+        # Only a drag snaps: a key or a wheel notch moves one step off neutral
+        if value and abs(value) <= self.SNAP and self._slider.isSliderDown():
             self._slider.setValue(0)
             return
         self._apply_timer.start()
 
     def _apply_temperature(self):
-        set_theme(temperature=self._slider.value())
+        self._apply_timer.stop()
+        if self._slider.value() != Scheme.TEMPERATURE:
+            set_theme(temperature=self._slider.value())
+
+    def done(self, result: int) -> None:
+        # A temperature still waiting for the slider to pause is applied
+        if self._apply_timer.isActive():
+            self._apply_temperature()
+        super().done(result)
 
 
 class MotionDialog(QDialog):
@@ -885,6 +920,7 @@ class MotionDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setWindowTitle("Scrolling and zooming")
         form = dialog_form(self)
         self._spin_scroll = self._duration(

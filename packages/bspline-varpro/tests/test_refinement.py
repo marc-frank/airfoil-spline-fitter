@@ -108,3 +108,11 @@ def test_joint_problem_without_constraints():
     result = bv.fit(points, 6, fix_ends=False)
     refined = bv.refine(points, result)
     assert refined.rms_error <= result.rms_error * (1 + 1e-6)
+
+
+def test_refine_without_an_iteration_limit_converges():
+    sections = naca_sections(41)
+    result = bv.fit(sections, 9, 5, continuity="G2", max_nfev=300)
+    refined = bv.refine(sections, result)
+    assert refined.success
+    assert refined.rms_error <= result.rms_error * (1 + 1e-6)

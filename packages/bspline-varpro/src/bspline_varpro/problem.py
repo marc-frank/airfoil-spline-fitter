@@ -42,24 +42,49 @@ References:
 
 from __future__ import annotations
 
+import warnings
 from typing import List, Optional, Sequence, Tuple, Union
 
 import numpy as np
-from scipy.linalg import block_diag, lu_factor, lu_solve
+from scipy.linalg import LinAlgWarning, block_diag, lu_factor, lu_solve
 
-from .basis import basis_derivative_matrix, basis_matrix, bending_energy_rows, validate_knots
-from .chain import chain_data, groups
+from .basis import (
+    basis_derivative_matrix,
+    basis_matrix,
+    bending_energy_rows,
+    centripetal_parameters,
+    validate_knots,
+)
+from .chain import chain_data, chain_parameters, groups
 from .constraints import ChainConstraints, ContinuitySpec, End, parse_junctions
 
 #: Weight of the pull of each geometric junction's speed ratio alpha towards
 #: its natural value, relative to the smoothing weight (see VarProProblem):
-#: the weakest that keeps alpha clear of its range limits (2/3 of the way at
+#: the weakest that keeps alpha clear of its range limits (0.84 of the way at
 #: worst in the tests, against 0.97 without), so it changes fits little.
 ALPHA_PULL = 3e-5
 
+#: Weight, relative to the extent of the data, of the rows that stop the curve's
+#: speed between consecutive data points (parameter gap over chord) from jumping
+#: between neighbouring pairs (see VarProProblem). Strong: the rows only act
+#: beyond SPEED_SLACK.
+SPEED_PULL = 1e-3
+
+#: Change of log speed from one pair of consecutive points to the next, beyond
+#: its change in the centripetal parameters, that costs nothing. Converged fits
+#: of NACA sections stay below 0.63; a parameter gap opened into a bulge between
+#: two points jumps by over 4.
+SPEED_SLACK = 1.0
+
 
 class KKTSolver:
-    """LU-factored KKT matrix ``[[A, C'], [C, 0]]`` for repeated solves."""
+    """LU-factored KKT matrix ``[[A, C'], [C, 0]]`` for repeated solves.
+
+    A singular matrix (no ridge, and control points the data, penalty and
+    constraints leave free) is solved in the least-squares sense with the
+    pseudo-inverse instead: the minimum-norm solution, which leaves the
+    residual unchanged because the free directions do not reach it.
+    """
 
     def __init__(self, A: np.ndarray, C: np.ndarray, regularization: float = 1e-12):
         self.n_ctrl = A.shape[0]
@@ -69,7 +94,14 @@ class KKTSolver:
         K[:self.n_ctrl, :self.n_ctrl] = A + regularization * np.eye(self.n_ctrl)
         K[:self.n_ctrl, self.n_ctrl:] = C.T
         K[self.n_ctrl:, :self.n_ctrl] = C
-        self._lu = lu_factor(K)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", LinAlgWarning)
+            self._lu = lu_factor(K, check_finite=False)
+        pivots = np.abs(np.diag(self._lu[0]))
+        self._pinv = None
+        if not (np.all(np.isfinite(pivots)) and np.min(pivots, initial=1.0)
+                > size * np.finfo(float).eps * np.max(pivots, initial=1.0)):
+            self._pinv = np.linalg.pinv(K, rcond=1e-12)
 
     def solve_full(self, rhs: np.ndarray, d: Optional[np.ndarray] = None) -> Tuple[np.ndarray, np.ndarray]:
         """Return ``(control block, multiplier block)`` of the KKT solution."""
@@ -77,7 +109,7 @@ class KKTSolver:
         full[:self.n_ctrl] = rhs
         if d is not None:
             full[self.n_ctrl:] = d
-        solution = lu_solve(self._lu, full)
+        solution = self._pinv @ full if self._pinv is not None else lu_solve(self._lu, full)
         return solution[:self.n_ctrl], solution[self.n_ctrl:]
 
     def solve(self, rhs: np.ndarray, d: Optional[np.ndarray] = None) -> np.ndarray:
@@ -148,9 +180,8 @@ class VarProProblem:
             self.bending_energy = rows.T @ rows
             root.insert(0, np.sqrt(smoothing) * rows)
         self.penalty_root = np.vstack(root)
-        # Centroid the penalty pulls towards, and its term R'R c of the KKT right-hand side
+        # Centroid the penalty pulls towards
         self.center = np.mean(self.data, axis=0)
-        self._center_rhs = self.penalty_root.T @ (self.penalty_root @ np.tile(self.center, (self.total_ctrl, 1)))
 
         self.junctions = parse_junctions(continuity, self.num_sections - 1, fix_junctions)
         self.constraints = ChainConstraints(self.sections, self.knots, degree, self.junctions, start, end)
@@ -164,6 +195,27 @@ class VarProProblem:
         spread = float(np.mean(np.sum((self.data - self.center) ** 2, axis=1)))
         self.alpha_pull = float(np.sqrt(smoothing * ALPHA_PULL * spread)) if smoothing > 0 else 0.0
         self.num_pull_rows = len(self.constraints.alpha_deviations(self.theta)[0]) if self.alpha_pull > 0 else 0
+        # The data residual only sees the curve at the data points, so a fit run to
+        # convergence can open one parameter gap wide and spend it on a bulge between
+        # two neighbouring points, to give the rest of the curve more freedom. Then the
+        # speed (gap over chord) jumps there; it otherwise changes smoothly from pair to
+        # pair however the points are spaced, as it does in the centripetal parameters.
+        # Rows on the change of log speed beyond that and beyond SPEED_SLACK rule the
+        # bulge out and leave regular fits alone. Pairs of coincident points have no
+        # speed, and across a junction the speed changes with the section lengths and
+        # a geometric join's alpha: those pairs are left out.
+        chords = np.linalg.norm(np.diff(self.data, axis=0), axis=1)
+        moving = chords > 1e-12 * max(float(np.max(chords, initial=0.0)), 1e-300)
+        reference = chain_parameters([centripetal_parameters(sec) for sec in self.sections],
+                                     self.sections)
+        section = np.minimum(np.floor(0.5 * (reference[:-1] + reference[1:])),
+                             self.num_sections - 1)
+        self._speed_pairs = np.flatnonzero(moving[:-1] & moving[1:]
+                                           & (section[:-1] == section[1:]))
+        self._log_chords = np.log(np.where(moving, chords, 1.0))
+        self._speed_reference = self._speed_change(reference)[0]
+        self.speed_pull = SPEED_PULL * float(np.sqrt(spread))
+        self.num_speed_rows = len(self._speed_pairs) if self.speed_pull > 0 else 0
 
         self._constraint_key: Optional[bytes] = None
         self._constraint_cache: Tuple = ()
@@ -221,7 +273,12 @@ class VarProProblem:
             A = A + self.smoothing * self.bending_energy
         C, d, _, _ = self._constraints(theta)
         kkt = KKTSolver(A, C, self.regularization)
-        P, mu = kkt.solve_full(N.T @ self.data + self._center_rhs, d)
+        # Solved for the offset from the centroid (N'D + R'R c - (N'N + R'R) c = N'(D - c),
+        # the basis summing to one), so a singular system's minimum-norm solution
+        # does not depend on where the data are either
+        center = np.tile(self.center, (self.total_ctrl, 1))
+        offset, mu = kkt.solve_full(N.T @ (self.data - self.center), d - C @ center)
+        P = offset + center
 
         self._cache_key = key
         self._cache = (N, P, dN, kkt, mu, theta)
@@ -234,17 +291,38 @@ class VarProProblem:
     def residual(self, t_flat: np.ndarray, theta: Optional[np.ndarray] = None) -> np.ndarray:
         """Data residuals then penalty residuals, each flattened point-major.
 
-        Shape ``(dim * (total_pts + len(penalty_root)) + num_pull_rows,)``: the
-        last rows pull the speed ratio of each geometric junction towards its
-        natural value. Also records ``last_control_points`` and the data-only
-        ``last_rms_error``.
+        Shape ``(dim * (total_pts + len(penalty_root)) + num_pull_rows + num_speed_rows,)``:
+        then come the rows pulling the speed ratio of each geometric junction
+        towards its natural value, and last those keeping the curve's speed
+        between consecutive data points changing smoothly. Also records
+        ``last_control_points`` and the data-only ``last_rms_error``.
         """
         N, P, _, _ = self.solve(t_flat, theta=theta)
         data_residual = N @ P - self.data
         self.last_control_points = P
         self.last_rms_error = float(np.sqrt(np.sum(data_residual ** 2) / self.total_pts))
         return np.concatenate((data_residual.ravel(), (self.penalty_root @ (P - self.center)).ravel(),
-                               self._pull(theta)[0]))
+                               self._pull(theta)[0], self._speed(t_flat)[0]))
+
+    def _speed_change(self, t_flat: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Change of log speed ``log(g_{i+1} / c_{i+1}) - log(g_i / c_i)`` per speed
+        pair, for gaps g and chords c, and the gaps."""
+        gaps = np.maximum(np.diff(t_flat), 1e-300)
+        log_speed = np.log(gaps) - self._log_chords
+        i = self._speed_pairs
+        return log_speed[i + 1] - log_speed[i], gaps
+
+    def _speed(self, t_flat: np.ndarray
+               ) -> Tuple[np.ndarray, Optional[np.ndarray], Optional[np.ndarray]]:
+        """Speed rows, then for the Jacobian whether each row is active and the
+        weighted inverse gaps ``pull / g``."""
+        if self.num_speed_rows == 0:
+            return np.zeros(0), None, None
+        change, gaps = self._speed_change(t_flat)
+        excess = change - self._speed_reference
+        active = np.abs(excess) > SPEED_SLACK
+        rows = np.where(active, excess - np.sign(excess) * SPEED_SLACK, 0.0)
+        return self.speed_pull * rows, active, self.speed_pull / gaps
 
     def _pull(self, theta: Optional[np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
         """Residual rows pulling alpha towards its natural value, and their theta derivative."""
@@ -260,8 +338,10 @@ class VarProProblem:
         for k, dP in enumerate(dP_by_coord):
             J_data[k::self.dim] = N @ dP
             J_penalty[k::self.dim] = self.penalty_root @ dP
-        # The pull rows depend on theta alone: zero here, added by parameter_jacobian
-        return np.vstack((J_data, J_penalty, np.zeros((self.num_pull_rows, J_data.shape[1]))))
+        # The pull rows depend on theta alone (added by parameter_jacobian), the speed
+        # rows on t alone (added by jacobian): zero here
+        extra = self.num_pull_rows + self.num_speed_rows
+        return np.vstack((J_data, J_penalty, np.zeros((extra, J_data.shape[1]))))
 
     def jacobian(self, t_flat: np.ndarray, theta: Optional[np.ndarray] = None) -> np.ndarray:
         """Exact derivative of :meth:`residual` w.r.t. t, shape (len(residual), total_pts).
@@ -284,6 +364,14 @@ class VarProProblem:
         diagonal = np.arange(self.total_pts)
         for k in range(self.dim):
             J[diagonal * self.dim + k, diagonal] += tangent[:, k]
+        if self.num_speed_rows:
+            # Row of pair i: log g_{i+1} - log g_i (with g_i = t_{i+1} - t_i) where active
+            _, active, inverse = self._speed(t_flat)
+            i = self._speed_pairs[active]
+            rows = len(J) - self.num_speed_rows + np.flatnonzero(active)
+            J[rows, i] += inverse[i]
+            J[rows, i + 1] -= inverse[i] + inverse[i + 1]
+            J[rows, i + 2] += inverse[i + 1]
         return J
 
     def matrices(self, t_flat: np.ndarray, theta: Optional[np.ndarray] = None):
@@ -315,13 +403,14 @@ class VarProProblem:
             rhs = dN.T @ misfit - N.T @ (dN @ P) - dR.T @ penalty_residual - R.T @ (dR @ shifted) - dC.T @ mu
             dP = kkt.solve(rhs, dd - dC @ P)
             columns.append(np.concatenate(((dN @ P + N @ dP).ravel(), (dR @ shifted + R @ dP).ravel(),
-                                           np.zeros(self.num_pull_rows))))
+                                           np.zeros(self.num_pull_rows + self.num_speed_rows))))
         return np.stack(columns, axis=1)
 
     def parameter_jacobian(self, t_flat: np.ndarray, theta: Optional[np.ndarray] = None) -> np.ndarray:
         """Exact derivative of :meth:`residual` w.r.t. theta, shape (len(residual), num_params)."""
         if self.num_params == 0:
-            return np.zeros((self.dim * (self.total_pts + len(self.penalty_root)) + self.num_pull_rows, 0))
+            return np.zeros((self.dim * (self.total_pts + len(self.penalty_root))
+                             + self.num_pull_rows + self.num_speed_rows, 0))
         N, P, _, kkt = self.solve(t_flat, theta=theta)
         mu, used_theta = self._cache[4], self._cache[5]
         _, _, dC, dd = self._constraints(used_theta)
@@ -332,5 +421,6 @@ class VarProProblem:
             dPs.append(kkt.solve(rhs, d_rhs))
         J = self._stack(N, dPs)
         if self.num_pull_rows:
-            J[-self.num_pull_rows:] = self._pull(used_theta)[1]
+            start = len(J) - self.num_speed_rows - self.num_pull_rows
+            J[start:start + self.num_pull_rows] = self._pull(used_theta)[1]
         return J
