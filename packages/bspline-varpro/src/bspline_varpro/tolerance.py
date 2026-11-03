@@ -167,7 +167,7 @@ def polish_knots(
     points: Union[np.ndarray, Sequence[np.ndarray]],
     result: FitResult,
     options: Optional[ChainOptions] = None,
-    max_nfev: int = 60,
+    max_nfev: Optional[int] = 60,
     min_gap: float = 1e-3,
     should_stop: Optional[Callable[[], bool]] = None,
     callback=None,
@@ -175,13 +175,22 @@ def polish_knots(
     """Optimize interior knot positions (at fixed counts) together with the fit.
 
     Knots stay ordered with a minimum spacing through a normalized softplus gap
-    parameterization. The knot columns of the Jacobian differentiate the
-    linear solve exactly, with central differences of the basis, penalty and
-    constraint matrices only; the data-parameter and shape columns are
-    exact. ``callback`` (as for
+    parameterization. The minimum of each knot span is the section's closest
+    spacing of the data parameters (or ``min_gap``, if larger), or just under
+    the span's starting length if that is shorter: knots packed closer than any
+    two points would leave spans without data, where the curve can wobble
+    unseen, since the tolerance is only checked at the points.
+    The knot columns of the Jacobian differentiate the linear solve exactly,
+    with central differences of the basis, penalty and constraint matrices
+    only; the data-parameter and shape columns are exact. ``callback`` (as for
     :func:`~bspline_varpro.fitting.fit`, with the moving knots) is called on
     every residual evaluation. If it or ``should_stop()`` returns True, the
     unpolished ``result`` is returned with the message ``STOPPED``.
+
+    ``max_nfev`` stays capped by default (None polishes until converged): the
+    error is so flat in the knot positions that a converged polish takes
+    thousands of evaluations, and it drifts off a symmetric fit's mirror
+    symmetry for well under a percent of the error.
     """
     sections = as_sections(points)
     options = options or result.options or ChainOptions(continuity=result.continuity or "G1")
@@ -192,16 +201,28 @@ def polish_knots(
     counts = [len(inner) if np.all(np.diff(inner) > 0) else 0 for inner in inner_knots]
     if sum(counts) == 0:
         return result
-    # The gaps must stay above min_gap, or the starting knots would not map to themselves
-    gaps = [np.diff(np.concatenate([[0.0], inner, [1.0]])) for inner, r in zip(inner_knots, counts) if r > 0]
-    min_gap = min(min_gap, 0.5 * float(np.min(np.concatenate(gaps))))
     span = len(sections)
+    # Smallest length of every knot span: the section's closest data spacing (a
+    # span may move to where the data are densest), or just under its starting
+    # length if that is shorter, so the polish starts from the given knots and
+    # repeated polishes cannot pack them ever closer
+    floors = []
+    for (_, local), inner, r in zip(groups(result.parameters, span), inner_knots, counts):
+        if r == 0:
+            floors.append(None)
+            continue
+        # The ends count as points: a junction point lies on the next section only
+        ts = np.unique(np.concatenate([[0.0], local, [1.0]]))
+        floor = np.minimum(max(float(np.min(np.diff(ts))), min_gap),
+                           0.999 * np.diff(np.concatenate([[0.0], inner, [1.0]])))
+        # The floors must leave room to move: at most half the section
+        floors.append(floor * min(1.0, 0.5 / np.sum(floor)))
     n_eta = len(chain_data(sections)) - 1
     n_theta = len(result.theta)
 
-    def to_xi(knots):
+    def to_xi(knots, floor):
         gaps = np.diff(np.concatenate([[0.0], interior_knots(knots, degree), [1.0]]))
-        return inverse_softplus(np.maximum(gaps - min_gap, 1e-12))
+        return inverse_softplus(np.maximum(gaps - floor, 1e-12))
 
     def to_knots(xi):
         knots, offset = [], 0
@@ -209,7 +230,7 @@ def polish_knots(
             if r == 0:
                 knots.append(result.knots[s])
                 continue
-            gaps = softplus(xi[offset:offset + r + 1]) + min_gap
+            gaps = softplus(xi[offset:offset + r + 1]) + floors[s]
             offset += r + 1
             knots.append(clamped_knots(degree, np.cumsum(gaps)[:-1] / np.sum(gaps)))
         return knots
@@ -240,12 +261,12 @@ def polish_knots(
     def knots_by_xi(xi):
         """Derivative of the interior knots of the polished sections w.r.t. xi."""
         blocks, offset = [], 0
-        for r in counts:
+        for r, floor in zip(counts, floors):
             if r == 0:
                 continue
             x = xi[offset:offset + r + 1]
             offset += r + 1
-            gaps = softplus(x) + min_gap
+            gaps = softplus(x) + floor
             total = np.sum(gaps)
             inner = np.cumsum(gaps)[:-1] / total
             blocks.append((np.tri(r, r + 1) - inner[:, None]) * (sigmoid(x) / total))
@@ -273,7 +294,7 @@ def polish_knots(
         return np.hstack([reduced_jacobian(problem, eta, theta),
                           problem.matrix_jacobian(t_flat, theta, changes) @ knots_by_xi(xi)])
 
-    xi0 = np.concatenate([to_xi(k) for k, r in zip(result.knots, counts) if r > 0])
+    xi0 = np.concatenate([to_xi(k, floor) for k, r, floor in zip(result.knots, counts, floors) if r > 0])
     x0 = np.concatenate([t_to_eta(result.parameters), result.theta, xi0])
     try:
         solution = levenberg_marquardt(residual_at, jacobian, x0, max_nfev=max_nfev)
@@ -306,7 +327,7 @@ def fit_to_tolerance(
     optimize_knots: bool = True,
     remove_knots: bool = True,
     max_points_per_section: Optional[int] = 200,
-    max_nfev: int = 200,
+    max_nfev: Optional[int] = None,
     max_iterations: int = 40,
     callback: Optional[ProgressCallback] = None,
     knot_placement: str = "free",
@@ -334,7 +355,8 @@ def fit_to_tolerance(
         max_points_per_section: Larger sections are fitted by variable
             projection on an evenly spaced subsample, then refined jointly on
             all points (knot polishing is skipped). None uses all points.
-        max_nfev: Residual evaluations per refit.
+        max_nfev: Residual evaluations per refit; None (the default) runs each
+            refit until converged.
         max_iterations: Maximum insertion rounds.
         callback: ``callback(result, max_deviation)`` after every refit; return
             True to stop early (the last result is returned).

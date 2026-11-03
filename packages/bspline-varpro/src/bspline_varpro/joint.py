@@ -12,6 +12,7 @@ coordinates, which handles dense data.
 
 from __future__ import annotations
 
+import itertools
 from typing import Callable, Optional, Sequence, Tuple
 
 import numpy as np
@@ -154,7 +155,7 @@ def solve_joint(
     problem: JointProblem,
     t_full: np.ndarray,
     z: np.ndarray,
-    max_iterations: int = 100,
+    max_iterations: Optional[int] = None,
     tolerance: float = 1e-12,
     on_step: Optional[Callable[[np.ndarray, np.ndarray], bool]] = None,
 ) -> Tuple[np.ndarray, np.ndarray, int, bool, str]:
@@ -169,8 +170,15 @@ def solve_joint(
     the cosine between the residual and the Jacobian columns (as MINPACK's
     ``gtol``), which does not depend on the units of the data.
 
+    ``max_iterations`` None runs until a convergence test (or the damping
+    limit) ends it.
+
     Returns ``(t, z, iterations, converged, message)``.
     """
+    if max_iterations is not None and max_iterations < 1:
+        raise ValueError("max_iterations must be at least 1 or None.")
+    if not tolerance > 0:
+        raise ValueError("tolerance must be positive.")
     dim = problem.dim
     free = problem.free
     n_data_rows = len(problem.data) * dim
@@ -183,7 +191,7 @@ def solve_joint(
     message = "Maximum iterations reached."
     converged = False
     iteration = 0
-    for iteration in range(1, max_iterations + 1):
+    for iteration in (itertools.count(1) if max_iterations is None else range(1, max_iterations + 1)):
         data_r = r[:n_data_rows].reshape(-1, dim)
         T = tangent[free]
         g_t = np.sum(T * data_r[free], axis=1)

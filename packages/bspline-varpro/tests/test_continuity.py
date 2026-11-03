@@ -161,8 +161,10 @@ def test_geometric_fit_starts_from_the_parametric_one_at_any_length_ratio(contin
     assert problem.constraints._length_ratio(0) > 10
     theta = problem.constraints.theta_from_parametric(np.zeros(0))
     assert problem.constraints.shape_values(theta)[0] == pytest.approx((1.0, 0.0, 0.0))
-    parametric = bv.fit(sections, 6, continuity="C" + continuity[1], smoothing=0.0)
-    geometric = bv.fit(sections, 6, continuity=continuity, smoothing=0.0)
+    # No ridge either: converged, the error is small enough for the 1e-12 ridge to
+    # trade against it, and the objective, not the data error alone, decreases
+    parametric = bv.fit(sections, 6, continuity="C" + continuity[1], smoothing=0.0, regularization=0.0)
+    geometric = bv.fit(sections, 6, continuity=continuity, smoothing=0.0, regularization=0.0)
     # G^k includes C^k, so it fits at least as well
     assert geometric.rms_error <= parametric.rms_error * (1 + 1e-6)
 
@@ -227,8 +229,10 @@ def _position_in_alpha_range(result, sections):
 
 def test_alpha_stays_inside_its_range_with_smoothing():
     sections = stretched_sections()
-    result = bv.fit(sections, 7, continuity="G2", max_nfev=400, smoothing=1e-3)
-    assert abs(_position_in_alpha_range(result, sections)) < 0.8
+    result = bv.fit(sections, 7, continuity="G2", smoothing=1e-3)
+    # Converged: 0.84 (0.97 without the pull); the 400-evaluation cap that used to
+    # stop this fit at 0.66 stopped it while one parameter gap was still opening
+    assert abs(_position_in_alpha_range(result, sections)) < 0.9
 
 
 def test_alpha_pull_leaves_unsmoothed_fits_alone(monkeypatch):
@@ -248,5 +252,6 @@ def test_alpha_pull_jacobian_matches_finite_differences():
     assert problem.num_pull_rows == 1
     t = bv.chain.chain_parameters([bv.centripetal_parameters(s) for s in sections], sections)
     theta = problem.theta + np.array([1.5, -0.3])
-    assert abs(problem.residual(t, theta)[-1]) > 1e-4  # the pull row is active
+    pull_row = len(problem.residual(t, theta)) - problem.num_speed_rows - 1
+    assert abs(problem.residual(t, theta)[pull_row]) > 1e-4  # the pull row is active
     _fd_check(problem, t, theta)

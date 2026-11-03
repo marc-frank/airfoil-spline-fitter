@@ -269,3 +269,57 @@ def test_polish_starts_from_the_given_knots_and_keeps_repeats():
     start = bv.fit(sections, degree=5, knots=repeated, continuity="G2", smoothing=1e-5, max_nfev=300)
     polished = bv.polish_knots(sections, start, bv.ChainOptions(continuity="G2", smoothing=1e-5))
     assert np.array_equal(polished.knots[0], start.knots[0])
+
+
+def _between_points(result, exact):
+    """Largest distance of the curve between consecutive data points from the
+    polyline ``exact`` (dense enough to stand for the true shape)."""
+    from scipy.spatial import cKDTree
+
+    u = result.parameters
+    s = (u[:-1, None] + np.diff(u)[:, None] * np.linspace(0.0, 1.0, 21)[None, 1:-1]).ravel()
+    q = bv.chain.evaluate_chain(result.curves(), s)
+    nearest = np.clip(cKDTree(exact).query(q)[1], 1, len(exact) - 2)
+    best = np.full(len(q), np.inf)
+    for first in (nearest - 1, nearest):
+        a, ab = exact[first], exact[first + 1] - exact[first]
+        along = np.clip(np.sum((q - a) * ab, axis=1) / np.sum(ab * ab, axis=1), 0.0, 1.0)
+        best = np.minimum(best, np.linalg.norm(a + along[:, None] * ab - q, axis=1))
+    return float(np.max(best))
+
+
+@pytest.mark.parametrize("speed_pull, bulge", [(None, False), (0.0, True)])
+def test_converged_fit_does_not_bulge_between_data_points(monkeypatch, speed_pull, bulge):
+    # Run to convergence, a fit could open one parameter gap and spend it on a
+    # bulge between two neighbouring points (the error is only seen at the
+    # points). Started from such a gap, it settled into a bulge of 8e-3 chord.
+    import bspline_varpro.problem as problem_module
+
+    if speed_pull is not None:
+        monkeypatch.setattr(problem_module, "SPEED_PULL", speed_pull)
+    code = "2412"
+    upper, lower = bv.airfoil.split_at_leading_edge(np.round(NACA4(code).points(61), 6))
+    start = [bv.centripetal_parameters(s) for s in (upper, lower)]
+    gaps = np.diff(start[1])
+    gaps[len(gaps) // 2] *= 40
+    start[1] = np.concatenate([[0.0], np.cumsum(gaps)]) / np.sum(gaps)
+    result = bv.fit([upper, lower], 14, 5, continuity="G2", smoothing=1e-7, initial_parameters=start)
+    deviation = _between_points(result, NACA4(code).points(20001))
+    assert (deviation > 1e-3) if bulge else (deviation < 1e-4)
+
+
+def test_knot_polish_does_not_pack_knots_closer_than_the_data():
+    # The floor of every knot span holds over repeated polishes (one per
+    # knot-removal trial in fit_to_tolerance, where knots used to end up packed
+    # to gaps of 0.0002 against a closest data spacing of 0.0012)
+    sections = naca_sections(61, code="2412")
+    start = bv.fit(sections, degree=5, continuity="G2", smoothing=1e-7,
+                   knots=[bv.clamped_knots(5, [0.3, 0.45, 0.46, 0.6]), bv.clamped_knots(5, [0.3, 0.5, 0.7])])
+    spacing = [np.min(np.diff(np.unique(np.concatenate([[0.0], local, [1.0]]))))
+               for _, local in bv.chain.groups(start.parameters, 2)]
+    polished = start
+    for _ in range(3):
+        before = [np.min(np.diff(np.unique(k))) for k in polished.knots]
+        polished = bv.polish_knots(sections, polished)
+        for knots, gap, closest in zip(polished.knots, before, spacing):
+            assert np.min(np.diff(np.unique(knots))) >= min(gap, closest) * (1 - 1e-6)

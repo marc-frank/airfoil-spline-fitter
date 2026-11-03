@@ -25,18 +25,20 @@ STOPPED = "Stopped by callback."
 
 def _takes_knots(callback: Callable) -> bool:
     try:
-        return "knots" in inspect.signature(callback).parameters
+        parameters = inspect.signature(callback).parameters
     except (TypeError, ValueError):
         return False
+    return "knots" in parameters or any(p.kind is inspect.Parameter.VAR_KEYWORD
+                                        for p in parameters.values())
 
 
 def report(callback: Optional[Callback], control_points: List[np.ndarray], rms_error: float,
            knots: Sequence[np.ndarray]) -> bool:
     """Call a progress callback; True if it asks to stop.
 
-    A callback that accepts a ``knots`` keyword also gets the knot vectors the
-    control points belong to, which change while knots are inserted, moved or
-    removed.
+    A callback that accepts a ``knots`` keyword (or ``**kwargs``) also gets
+    the knot vectors the control points belong to, which change while knots
+    are inserted, moved or removed.
     """
     if callback is None:
         return False
@@ -175,7 +177,7 @@ def fit(
     initial_parameters: Optional[Sequence[np.ndarray]] = None,
     initial_theta: Optional[np.ndarray] = None,
     max_points_per_section: Optional[int] = None,
-    max_nfev: int = 200,
+    max_nfev: Optional[int] = None,
     tolerance: float = 1e-10,
     exact_jacobian: bool = True,
     verbose: int = 0,
@@ -221,7 +223,11 @@ def fit(
         max_points_per_section: For dense data: sections with more points are
             fitted on an evenly spaced subsample, then refined jointly on all
             points (:func:`~bspline_varpro.refinement.refine`).
-        max_nfev: Maximum number of residual evaluations.
+        max_nfev: Maximum number of residual evaluations of each solve (the
+            parametric warm-up of geometric junctions shares it, and a
+            finite-difference Jacobian counts against it). None, the default,
+            runs until a convergence tolerance is met; the callback can still
+            stop it.
         tolerance: ``ftol``, ``xtol`` and ``gtol`` for the solver.
         exact_jacobian: Use the analytic reduced Jacobian instead of finite differences.
         verbose: Verbosity passed to :func:`scipy.optimize.least_squares`.
@@ -229,8 +235,8 @@ def fit(
             ``callback(control_points, rms_error)`` with one control-point array
             per section, also while knots are grown or moved and during dense
             refinement. A callback with a ``knots`` keyword also gets the knot
-            vectors. Return True to stop; the result then holds the best
-            state evaluated so far (or, while knots are moved, the fit before)
+            vectors (as does one taking ``**kwargs``). Return True to stop; the
+            result then holds the best state evaluated so far (or, while knots are moved, the fit before)
             and ``success`` is False.
         knot_placement: ``"uniform"`` keeps the knots where they start
             (evenly spaced with ``num_control_points``). ``"free"`` then moves
@@ -265,8 +271,10 @@ def fit(
         raise ValueError("Smoothing weight must be finite and nonnegative.")
     if not np.isfinite(regularization) or regularization < 0:
         raise ValueError("Regularization must be finite and nonnegative.")
-    if max_nfev < 1:
-        raise ValueError("max_nfev must be at least 1.")
+    if max_nfev is not None and max_nfev < 1:
+        raise ValueError("max_nfev must be at least 1 or None.")
+    if not (np.isfinite(tolerance) and tolerance > 0):
+        raise ValueError("tolerance must be finite and positive.")
     if knot_placement not in ("uniform", "free"):
         raise ValueError("knot_placement must be 'uniform' or 'free'.")
     if grow and knots is not None:
@@ -344,10 +352,14 @@ def solve_with_continuation(
         problem.sections, problem.knots, problem.degree)
     base = solve_problem(base_problem, params, base_problem.theta, **kwargs)
     theta0 = problem.constraints.theta_from_parametric(base.theta)
-    if base.message == STOPPED:
+    # Both stages share one evaluation budget
+    max_nfev = kwargs.get("max_nfev")
+    remaining = None if max_nfev is None else max_nfev - base.nfev
+    if base.message == STOPPED or (remaining is not None and remaining < 1):
         # The same curve as a geometric join (alpha = 1), labelled and shaped like the fit asked for
-        return result_from_problem(problem, base.parameters, theta0, base.nfev, False, STOPPED)
-    result = solve_problem(problem, base.parameters, theta0, **kwargs)
+        message = STOPPED if base.message == STOPPED else _MESSAGES[0]
+        return result_from_problem(problem, base.parameters, theta0, base.nfev, False, message)
+    result = solve_problem(problem, base.parameters, theta0, **{**kwargs, "max_nfev": remaining})
     result.nfev += base.nfev
     return result
 
@@ -357,7 +369,7 @@ def solve_problem(
     params: np.ndarray,
     theta0: np.ndarray,
     *,
-    max_nfev: int = 200,
+    max_nfev: Optional[int] = None,
     tolerance: float = 1e-10,
     exact_jacobian: bool = True,
     verbose: int = 0,
@@ -428,27 +440,39 @@ def _lm_run(residual, jacobian, x0, max_nfev, tolerance, verbose):
     """One Levenberg-Marquardt run on the normal equations (Cholesky, BLAS).
 
     Marquardt scaling with the running maximum of diag(J'J), Nielsen damping
-    updates, and MINPACK's ftol / xtol / gtol tests.
+    updates, and MINPACK's ftol / xtol / gtol tests. ``max_nfev`` None runs
+    until one of them (or the damping limit) ends it; a number caps the
+    residual evaluations, those of a finite-difference Jacobian included.
     """
     x = np.array(x0, dtype=np.float64)
     r = residual(x)
     nfev = 1
     cost = 0.5 * float(r @ r)
+    finite_differences = jacobian == "2-point"
+
+    def affordable(evaluations):
+        return max_nfev is None or nfev + evaluations <= max_nfev
 
     def linearize(x, r):
         nonlocal nfev
-        if jacobian == "2-point":
+        if finite_differences:
             J = _forward_difference(residual, x, r)
             nfev += len(x)
         else:
             J = jacobian(x)
         return J, J.T @ J, J.T @ r
 
+    def result(status):
+        return OptimizeResult(x=x, cost=cost, fun=r, nfev=nfev, status=status,
+                              success=status > 0, message=_MESSAGES[status])
+
+    if finite_differences and not affordable(len(x)):
+        return result(0)
     J, A, g = linearize(x, r)
     scale = np.maximum(np.diag(A), 1e-300)
     mu, nu = 1e-3, 2.0
     status = 0
-    while nfev < max_nfev:
+    while affordable(1):
         # A non-finite model never yields a valid step: stop instead of raising the damping forever.
         if not (np.isfinite(cost) and np.all(np.isfinite(A)) and np.all(np.isfinite(g))):
             status = -1
@@ -489,6 +513,8 @@ def _lm_run(residual, jacobian, x0, max_nfev, tolerance, verbose):
             if actual_reduction <= tolerance and predicted / max(cost, 1e-300) <= tolerance:
                 status = 2
                 break
+            if finite_differences and not affordable(len(x)):
+                break
             J, A, g = linearize(x, r)
             scale = np.maximum(scale, np.diag(A))
             mu *= max(1.0 / 3.0, 1.0 - (2.0 * rho - 1.0) ** 3)
@@ -499,30 +525,36 @@ def _lm_run(residual, jacobian, x0, max_nfev, tolerance, verbose):
             if mu > 1e20:
                 status = 3
                 break
-    return OptimizeResult(x=x, cost=cost, fun=r, nfev=nfev, status=status,
-                          success=status > 0, message=_MESSAGES[status])
+    return result(status)
 
 
-def levenberg_marquardt(residual, jacobian, x0, *, max_nfev=200, tolerance=1e-10, verbose=0,
+def levenberg_marquardt(residual, jacobian, x0, *, max_nfev=None, tolerance=1e-10, verbose=0,
                         max_restarts=8):
     """Levenberg-Marquardt, restarted while it stops on ``xtol`` but still improves.
 
     After a series of rejected steps the damping grows until the step length
     triggers the ``xtol`` test in strongly curved valleys; a restart resets
     the damping. ``jacobian`` may be ``"2-point"`` for forward differences.
-    Returns an ``OptimizeResult`` with ``nfev`` summed over restarts.
+    ``max_nfev`` caps the residual evaluations of all runs together; None
+    runs until converged. Returns an ``OptimizeResult`` with ``nfev`` summed
+    over restarts.
     """
+    if max_nfev is not None and max_nfev < 1:
+        raise ValueError("max_nfev must be at least 1 or None.")
+    if not tolerance > 0:
+        raise ValueError("tolerance must be positive.")
     x = np.asarray(x0, dtype=np.float64)
     used = 0
     cost = np.inf
     solution = None
     for _ in range(max_restarts + 1):
-        solution = _lm_run(residual, jacobian, x, max(max_nfev - used, 1), tolerance, verbose)
+        solution = _lm_run(residual, jacobian, x, None if max_nfev is None else max_nfev - used,
+                           tolerance, verbose)
         used += solution.nfev
         improved = solution.cost < 0.99 * cost
         cost = min(cost, solution.cost)
         x = solution.x
-        if solution.status != 3 or not improved or used >= max_nfev:
+        if solution.status != 3 or not improved or (max_nfev is not None and used >= max_nfev):
             break
     solution.nfev = used
     return solution
