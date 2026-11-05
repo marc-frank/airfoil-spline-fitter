@@ -210,41 +210,6 @@ def test_knot_placement_is_validated():
         bv.fit(sections, degree=5, knots=bv.open_uniform_knots(5, 8), grow=True)
 
 
-def mirror_asymmetry(result):
-    """Largest difference between the control points and their mirror image in y, reversed."""
-    P = result.control_points[0]
-    return float(np.max(np.abs(P - P[::-1] * [1.0, -1.0])))
-
-
-def test_knot_polish_keeps_a_symmetric_fit_symmetric():
-    # Differencing the solve itself for the knot columns gave mirrored knots
-    # different rounding noise, and the polish drifted 3% of the chord apart
-    pts = NACA4("0012").points(81)
-    assert mirror_asymmetry(bv.fit([pts], 12, 5)) < 1e-12
-    assert mirror_asymmetry(bv.fit([pts], 12, 5, knot_placement="free")) < 1e-7
-    assert mirror_asymmetry(bv.fit([pts], 15, 5, grow=True, knot_placement="free")) < 1e-7
-
-
-def test_mirrored_spans_get_knots_together():
-    from bspline_varpro.tolerance import _new_knots, _take
-
-    knots = bv.clamped_knots(5, [0.25, 0.5, 0.75])
-    t = np.linspace(0.0, 1.0, 41)
-    dev = np.exp(-((t - 0.5) / 0.2) ** 2) * (1.0 + 1e-14 * np.sin(7 * t))
-    groups = _new_knots(knots, t, dev, 0.1, 1e-4)
-    # The two spans next to the middle tie (up to rounding), then the outer two
-    assert [len(g) for g in groups] == [2, 2]
-    low, high = sorted(groups[0])
-    assert low + high == pytest.approx(1.0)
-    # A tied pair is not split to fill the room
-    assert _take(groups, 3) == groups[0]
-    assert _take(groups, 1, force=False) == []
-    # A point on a knot counts in both spans, and the worst points tied in one
-    # span place its knot at their mean
-    centered = _new_knots(bv.clamped_knots(5, []), t, dev, 0.1, 1e-4)
-    assert centered == [[pytest.approx(0.5)]]
-
-
 def test_rejects_no_iterations():
     with pytest.raises(ValueError, match="max_iterations"):
         bv.fit_to_tolerance(naca_sections(21), 1e-4, 5, max_iterations=0)

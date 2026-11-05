@@ -15,7 +15,6 @@ from dataclasses import replace
 from typing import Callable, List, Optional, Sequence, Union
 
 import numpy as np
-from scipy.linalg import block_diag
 
 from .basis import clamped_knots, interior_knots, open_uniform_knots
 from .chain import chain_data, chain_deviations, groups, project_to_chain, section_ranges
@@ -25,13 +24,9 @@ from .fitting import (
     initial_chain_parameters, levenberg_marquardt, reduced_jacobian, report, result_from_problem,
     solve_problem, solve_with_continuation,
 )
-from .reparam import eta_to_t, inverse_softplus, sigmoid, softplus, t_to_eta
+from .reparam import eta_to_t, inverse_softplus, softplus, t_to_eta
 
 ProgressCallback = Callable[[FitResult, float], Optional[bool]]
-
-# Central-difference step for the knot derivatives of the problem matrices, as a
-# fraction of the shorter neighboring knot span
-_KNOT_STEP = 1e-3
 
 
 def _refit(sections, knots, degree, options: ChainOptions, params, theta, max_nfev,
@@ -82,81 +77,41 @@ def fit_subsampled(sections, knots, degree, options: ChainOptions, params, theta
     return refined
 
 
-# Knot choices must not depend on rounding, or on the direction of the data: the
-# mirror images in a symmetric fit differ by rounding only. Deviations equal to
-# this relative difference count as tied, and tied candidates are taken together.
-_TIE = 1e-6
-# Parameter distance within which a point lies on a knot, and so in both spans
-_ON_KNOT = 1e-9
-
-
 def _spans(knots: np.ndarray, t: np.ndarray):
-    """Breaks and, per knot span, a mask of the points in it (a point on a knot in both)."""
     breaks = np.unique(knots)
-    return breaks, [(t >= a - _ON_KNOT) & (t <= b + _ON_KNOT) for a, b in zip(breaks[:-1], breaks[1:])]
+    index = np.clip(np.searchsorted(breaks, t, side="right") - 1, 0, len(breaks) - 2)
+    return breaks, index
 
 
-def _tied_groups(scored, descending: bool) -> List[List[float]]:
-    """Values of ``(score, value)`` pairs, grouped where the scores tie, best group first."""
-    groups: List[tuple] = []
-    for score, value in sorted(scored, key=lambda pair: -pair[0] if descending else pair[0]):
-        if groups and abs(score - groups[-1][0]) <= _TIE * max(abs(score), abs(groups[-1][0])):
-            groups[-1][1].append(value)
-        else:
-            groups.append((score, [value]))
-    return [values for _, values in groups]
-
-
-def _take(groups: List[List[float]], room: int, force: bool = True) -> List[float]:
-    """Whole groups, best first, skipping those that no longer fit in ``room``.
-
-    If none fits and ``force`` is set, one value of the best group: a tie the
-    count cannot keep.
-    """
-    taken: List[float] = []
-    for group in groups:
-        if len(taken) + len(group) <= room:
-            taken += group
-    if force and not taken and room > 0 and groups:
-        taken = groups[0][:1]
-    return taken
-
-
-def _new_knots(knots, t, dev, tol, min_span) -> List[List[float]]:
-    """One knot per knot span that holds a point outside the tolerance, grouped by
-    tied worst deviation, worst group first.
-
-    The knot goes to the worst point of the span, or the mean of the points tied
-    for worst."""
-    breaks, members = _spans(knots, t)
+def _new_knots(knots, t, dev, tol, min_span) -> List[float]:
+    """One knot per knot span that holds a point outside the tolerance, worst span first."""
+    breaks, index = _spans(knots, t)
     new = []
-    for i, inside in enumerate(members):
+    for i in range(len(breaks) - 1):
+        inside = index == i
         if not np.any(dev[inside] > tol):
             continue
         a, b = breaks[i], breaks[i + 1]
         ts, ds = t[inside], dev[inside]
         if len(ts) < 2 or b - a < 2 * min_span:
             continue
-        worst = float(np.max(ds))
-        u = float(np.clip(np.mean(ts[ds >= worst - _TIE * abs(worst)]),
-                          a + 0.25 * (b - a), b - 0.25 * (b - a)))
+        u = float(np.clip(ts[np.argmax(ds)], a + 0.25 * (b - a), b - 0.25 * (b - a)))
         if not (np.any(ts < u) and np.any(ts > u)):
             u = float(np.median(ts))
         if u - a >= min_span and b - u >= min_span:
-            new.append((worst, u))
-    return _tied_groups(new, descending=True)
+            new.append((float(np.max(ds)), u))
+    return [u for _, u in sorted(new, reverse=True)]
 
 
-def _removal_order(knots, degree, t, dev, tol) -> List[List[float]]:
-    """Interior knots ordered by the largest deviation in their two adjacent spans,
-    grouped where those tie."""
-    breaks, members = _spans(knots, t)
+def _removal_order(knots, degree, t, dev, tol) -> List[float]:
+    """Interior knots ordered by the largest deviation in their two adjacent spans."""
+    breaks, index = _spans(knots, t)
     candidates = []
     for k in np.unique(interior_knots(knots, degree)):
         i = int(np.searchsorted(breaks, k))
-        near = members[i - 1] | members[i]
+        near = (index == i - 1) | (index == i)
         candidates.append((float(np.max(dev[near], initial=0.0)) / tol, float(k)))
-    return _tied_groups(candidates, descending=False)
+    return [k for _, k in sorted(candidates)]
 
 
 def _max_deviation(sections, result: FitResult) -> float:
@@ -180,9 +135,8 @@ def polish_knots(
     the span's starting length if that is shorter: knots packed closer than any
     two points would leave spans without data, where the curve can wobble
     unseen, since the tolerance is only checked at the points.
-    The knot columns of the Jacobian differentiate the linear solve exactly,
-    with central differences of the basis, penalty and constraint matrices
-    only; the data-parameter and shape columns are exact. ``callback`` (as for
+    Knot columns of the Jacobian are finite differences; the data-parameter
+    and shape columns are exact. ``callback`` (as for
     :func:`~bspline_varpro.fitting.fit`, with the moving knots) is called on
     every residual evaluation. If it or ``should_stop()`` returns True, the
     unpolished ``result`` is returned with the message ``STOPPED``.
@@ -258,41 +212,19 @@ def polish_knots(
             raise _Stop
         return r
 
-    def knots_by_xi(xi):
-        """Derivative of the interior knots of the polished sections w.r.t. xi."""
-        blocks, offset = [], 0
-        for r, floor in zip(counts, floors):
-            if r == 0:
-                continue
-            x = xi[offset:offset + r + 1]
-            offset += r + 1
-            gaps = softplus(x) + floor
-            total = np.sum(gaps)
-            inner = np.cumsum(gaps)[:-1] / total
-            blocks.append((np.tri(r, r + 1) - inner[:, None]) * (sigmoid(x) / total))
-        return block_diag(*blocks)
-
     def jacobian(x):
         eta, theta, xi = split(x)
-        problem = problem_for(xi)
+        J = np.empty((len(residual_at(x)), len(x)))
+        J[:, :n_eta + n_theta] = reduced_jacobian(problem_for(xi), eta, theta)
         t_flat = eta_to_t(eta, span)
-        # Central differences in the knot positions, with steps a fixed fraction of
-        # the neighboring spans: differences in xi would lose precision where the
-        # softplus flattens
-        changes = []
-        for s, r in enumerate(counts):
-            inner = interior_knots(problem.knots[s], degree)
-            edges = np.concatenate([[0.0], inner, [1.0]])
-            for j in range(r):
-                h = _KNOT_STEP * min(edges[j + 1] - edges[j], edges[j + 2] - edges[j + 1])
-                shifted = []
-                for step in (h, -h):
-                    knots = list(problem.knots)
-                    knots[s] = clamped_knots(degree, inner + step * (np.arange(r) == j))
-                    shifted.append(options.problem(sections, knots, degree).matrices(t_flat, theta))
-                changes.append(tuple((a - b) / (2.0 * h) for a, b in zip(*shifted)))
-        return np.hstack([reduced_jacobian(problem, eta, theta),
-                          problem.matrix_jacobian(t_flat, theta, changes) @ knots_by_xi(xi)])
+        base = problem_for(xi).residual(t_flat, theta)
+        for i in range(len(xi)):
+            h = 1e-7 * (1.0 + abs(xi[i]))
+            shifted = xi.copy()
+            shifted[i] += h
+            other = options.problem(sections, to_knots(shifted), degree)
+            J[:, n_eta + n_theta + i] = (other.residual(t_flat, theta) - base) / h
+        return J
 
     xi0 = np.concatenate([to_xi(k, floor)
                           for k, r, floor in zip(result.knots, counts, floors) if r > 0])
@@ -462,7 +394,7 @@ def fit_to_tolerance(
                 continue
             count = len(knots[s]) - degree - 1
             room = limits[s] - count
-            new = _take(_new_knots(knots[s], local, devs[rows], tolerance, min_span), room)
+            new = _new_knots(knots[s], local, devs[rows], tolerance, min_span)[:max(room, 0)]
             if uniform and room > 0:
                 # Grow by as many knots as free insertion would add, spaced uniformly.
                 knots[s] = open_uniform_knots(degree, count + max(len(new), 1))
@@ -516,20 +448,17 @@ def fit_to_tolerance(
     if remove_knots:
         removed_any = False
         for s in range(len(sections)):
-            # Try every knot, least useful first (tied knots together); after a removal
-            # start over, since the refitted curve can make knots removable that failed before.
+            # Try every knot, least useful first; after a removal start over, since the
+            # refitted curve can make knots removable that failed before.
             removed = True
             while removed and len(result.knots[s]) - degree - 1 > need[s]:
                 removed = False
                 devs = chain_deviations(data, result.curves())
                 rows, local = groups(result.parameters, len(sections))[s]
-                for tied in _removal_order(result.knots[s], degree, local, devs[rows], tolerance):
-                    if len(result.knots[s]) - degree - 1 - len(tied) < need[s]:
-                        continue
+                for k in _removal_order(result.knots[s], degree, local, devs[rows], tolerance):
                     trial_knots = list(result.knots)
                     inner = interior_knots(result.knots[s], degree)
-                    drop = [int(np.argmin(np.abs(inner - k))) for k in tied]
-                    trial_knots[s] = clamped_knots(degree, np.delete(inner, drop))
+                    trial_knots[s] = clamped_knots(degree, np.delete(inner, np.argmin(np.abs(inner - k))))
                     trial = _refit(sections, trial_knots, degree, options, result.parameters, result.theta,
                                    max_nfev, max_points_per_section, step)
                     if halted(trial):
@@ -585,13 +514,11 @@ def grow_to_counts(sections, counts, degree, options: ChainOptions, params, thet
             if room <= 0:
                 continue
             dev = devs[rows]
-            new = _take(_new_knots(knots[s], local, dev, 0.5 * float(np.max(dev, initial=0.0)), 1e-4),
-                        room, force=False)
+            new = _new_knots(knots[s], local, dev, 0.5 * float(np.max(dev, initial=0.0)), 1e-4)[:room]
             if not new:
                 # The worst points can sit alone in their spans, which cannot be
-                # split, or their tied spans outnumber the room; any span holding
-                # two points can be split, worst first
-                new = _take(_new_knots(knots[s], local, dev, -1.0, 1e-4), room)
+                # split; any span holding two points can, worst first
+                new = _new_knots(knots[s], local, dev, -1.0, 1e-4)[:room]
             if knot_placement == "uniform":
                 knots[s] = open_uniform_knots(degree, len(knots[s]) - degree - 1 + max(len(new), 1))
                 inserted = True

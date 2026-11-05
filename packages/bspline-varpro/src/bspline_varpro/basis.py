@@ -186,49 +186,29 @@ def bending_energy_matrix(knots: np.ndarray, degree: int, quad_order: int = 8) -
     return _bending_energy(knots.tobytes(), int(degree), int(quad_order)).copy()
 
 
-def bending_energy_rows(knots: np.ndarray, degree: int, quad_order: int = 8) -> np.ndarray:
-    """``L`` with ``L.T @ L == bending_energy_matrix(knots, degree)``.
-
-    Row q holds the second derivatives of the basis at Gauss node q, weighted
-    by the root of its quadrature weight, so ``L @ P`` are the residuals whose
-    squares sum to the bending energy. Unlike a matrix root of ``S``, they
-    change smoothly with the knots without singular derivatives where ``S``
-    is singular (straight lines carry no bending energy).
-    """
-    knots = np.asarray(knots, dtype=np.float64)
-    return _bending_rows(knots.tobytes(), int(degree), int(quad_order)).copy()
-
-
 @lru_cache(maxsize=1024)
-def _bending_rows(knot_bytes: bytes, degree: int, quad_order: int) -> np.ndarray:
+def _bending_energy(knot_bytes: bytes, degree: int, quad_order: int) -> np.ndarray:
     knots = np.frombuffer(knot_bytes, dtype=np.float64)
     n_ctrl = len(knots) - degree - 1
+    S = np.zeros((n_ctrl, n_ctrl))
     if degree < 2:
-        return np.zeros((0, n_ctrl))
+        return S
 
     nodes, weights = gauss_legendre(quad_order)
     d2_basis = BSpline(knots, np.eye(n_ctrl), degree, extrapolate=False).derivative(nu=2)
 
-    rows = []
     breaks = np.unique(knots)
     for a, b in zip(breaks[:-1], breaks[1:]):
         if b - a < 1e-14:
             continue
         half = 0.5 * (b - a)
         values = d2_basis(0.5 * (a + b) + half * nodes)
-        rows.append(values * np.sqrt(weights * half)[:, np.newaxis])
-    L = np.vstack(rows) if rows else np.zeros((0, n_ctrl))
+        S += values.T @ (values * (weights * half)[:, np.newaxis])
 
-    trace = float(np.sum(L * L))
+    trace = np.trace(S)
     if trace > 1e-15:
-        L *= np.sqrt(n_ctrl / trace)
-    return L
-
-
-@lru_cache(maxsize=1024)
-def _bending_energy(knot_bytes: bytes, degree: int, quad_order: int) -> np.ndarray:
-    L = _bending_rows(knot_bytes, degree, quad_order)
-    return L.T @ L
+        S *= n_ctrl / trace
+    return S
 
 
 def matrix_root(A: np.ndarray) -> np.ndarray:
