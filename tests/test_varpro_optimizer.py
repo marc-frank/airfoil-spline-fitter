@@ -12,7 +12,7 @@ from spline_fitter.optimization.models import (
     OptimizerType,
     SplineConfig,
 )
-from spline_fitter.optimization.optimizers.gn_varpro import GNVarProConfig, GNVarProOptimizer
+from spline_fitter.optimization.optimizers.gn_varpro import GNVarProOptimizer
 
 
 def small_airfoil(noise=0.0, n=19):
@@ -29,8 +29,8 @@ def small_airfoil(noise=0.0, n=19):
 def test_adapter_returns_app_result_with_data_only_error():
     airfoil = small_airfoil(0.003)
     config = SplineConfig(degree=3, num_control_points=6)
-    result = GNVarProOptimizer(GNVarProConfig(smoothing_weight=0.1)).fit(
-        config, OptimizationConfig(), airfoil)
+    result = GNVarProOptimizer().fit(
+        config, OptimizationConfig(smoothing_weight=0.1), airfoil)
     assert result.success
     assert [len(cp) for cp in result.section_control_points] == [6, 6]
     assert result.x.shape == (2 * 6 * 2,)
@@ -59,21 +59,23 @@ def test_adapter_passes_settings_through_to_library(monkeypatch):
     t0 = [np.linspace(0, 1, 19)] * 2
     evaluations = []
 
-    def stop_soon(x, error):
+    def stop_soon(x, error, preview, step):
         """Fits have no evaluation limit; this one only checks the arguments."""
         evaluations.append(error)
         return len(evaluations) >= 50
 
-    GNVarProOptimizer(GNVarProConfig(smoothing_weight=1e-4, regularization=1e-11, tolerance=1e-9,
-                                     use_exact_jacobian=False)).fit(
-        SplineConfig(degree=5, num_control_points=10, continuity=ContinuityMode.G2),
-        OptimizationConfig(optimize_le_position=True, custom_parameters=t0),
+    GNVarProOptimizer().fit(
+        SplineConfig(degree=5, num_control_points=10, continuity=ContinuityMode.G2,
+                     geometric_continuity=False),
+        OptimizationConfig(optimize_le_position=True, custom_parameters=t0,
+                           smoothing_weight=1e-4),
         airfoil, callback=stop_soon)
     assert [np.asarray(s).tolist() for s in airfoil.sections] == [p.tolist() for p in captured["points"]]
     assert captured["num_control_points"] == 10 and captured["degree"] == 5
     assert captured["continuity"] == "C2" and captured["fix_junctions"] is False
-    assert captured["smoothing"] == 1e-4 and captured["regularization"] == 1e-11
-    assert captured["tolerance"] == 1e-9 and captured["exact_jacobian"] is False
+    assert captured["smoothing"] == 1e-4 and captured["regularization"] == 1e-12
+    assert captured["tolerance"] == 1e-10 and captured["exact_jacobian"] is True
+    assert captured["verbose"] == 0
     assert captured["initial_parameters"] is t0
     assert "max_nfev" not in captured  # no limit: the fit runs until it converges
     captured.clear()
@@ -101,7 +103,7 @@ def test_callback_gets_flat_control_points_counts_evaluations_and_can_stop():
     reset_iteration_tracking()
     seen = []
 
-    def callback(x, error):
+    def callback(x, error, preview, step):
         seen.append(x.shape)
         return len(seen) == 4
 
@@ -187,7 +189,7 @@ def test_projects_saved_with_automatic_selection_still_load():
     result = _decode_fit_result({
         "degree": 5, "final_error": 1e-6, "num_iterations": 3, "num_evaluations": 3,
         "elapsed_seconds": 1.0, "model_selection": {"candidates": []},
-    }, [[(0.0, 0.0)]])
+    }, [[(0.0, 0.0)]], 5)
     assert result.final_error == 1e-6
 
 

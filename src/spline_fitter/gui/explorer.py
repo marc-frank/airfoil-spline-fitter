@@ -319,6 +319,20 @@ def term_matches(term: tuple[str, object], value, text: str) -> bool:
     return is_number(value) and _OPERATORS[op](value, operand)
 
 
+def _global_term_matches(term: tuple[str, object], cells: list[tuple[object, str]]) -> bool:
+    """Whether one word of the global filter matches a run's cells (raw
+    value, text). A comparison with a number compares the error (in any
+    column some setting, the run number or the degree, would pass nearly
+    every run); ``!=text`` matches when no cell is ``text``, the opposite of
+    ``=text``; other words match in some column."""
+    op, operand = term
+    if is_number(operand):
+        return term_matches(term, *cells[_ERROR])
+    if op == "!=":
+        return all(term_matches(term, v, s) for v, s in cells)
+    return any(term_matches(term, v, s) for v, s in cells)
+
+
 class RunFilterModel(QSortFilterProxyModel):
     """Filters the run table, optionally inverted, and sorts by the raw values.
 
@@ -346,11 +360,7 @@ class RunFilterModel(QSortFilterProxyModel):
         model = self.sourceModel()
         values = [model.value(source_row, c) for c in range(len(COLUMNS))]
         cells = [(v, c.text(v)) for v, c in zip(values, COLUMNS, strict=True)]
-        # A comparison with a number compares the error (in any column some
-        # setting, the run number or the degree, would pass nearly every
-        # run); other words match in any column
-        if not all(term_matches(t, *cells[_ERROR]) if is_number(t[1])
-                   else any(term_matches(t, v, s) for v, s in cells) for t in self._terms):
+        if not all(_global_term_matches(t, cells) for t in self._terms):
             return False
         return all(cells[c][1] not in texts
                    for c, texts in self._excluded.items() if c != skip)

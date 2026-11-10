@@ -56,7 +56,7 @@ def test_freeing_the_junctions_never_hurts_direct_lsq(sections, mode):
 @pytest.mark.parametrize("free", [False, True])
 def test_direct_lsq_with_every_control_point_pinned(free):
     # Degree 1 with two control points per section: the constraints fix every
-    # control point, so only the data parameters move
+    # control point (with free junctions the junction point is the solve's)
     result = ConstrainedLSQOptimizer().fit(
         SplineConfig(degree=1, num_control_points=2, continuity=ContinuityMode.G0),
         OptimizationConfig(optimize_le_position=free), _airfoil())
@@ -64,11 +64,11 @@ def test_direct_lsq_with_every_control_point_pinned(free):
     assert [len(c) for c in result.section_control_points] == [2, 2]
 
 
-def test_points_cross_a_junction_in_direct_lsq():
+def test_direct_lsq_keeps_the_data_parameters():
+    """Direct LSQ is one solve at fixed parameters: the points keep the
+    parameters their spacing gave them, also with free junctions."""
     airfoil = _airfoil()
     result = ConstrainedLSQOptimizer().fit(
         SplineConfig(degree=3, num_control_points=10, continuity=ContinuityMode.G0),
-        OptimizationConfig(optimize_le_position=True), airfoil)
-    split = airfoil.junction_indices[0]
-    moved = np.floor(result.parameters) != np.floor(_start_parameters(airfoil))
-    assert np.any(moved[split - 5:split + 6])
+        OptimizationConfig(optimize_le_position=True, parameterization="arc_length"), airfoil)
+    assert np.array_equal(result.parameters, _start_parameters(airfoil))

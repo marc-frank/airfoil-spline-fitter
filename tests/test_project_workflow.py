@@ -494,3 +494,98 @@ def test_save_dialogs_offer_a_file_name_the_system_accepts(window, monkeypatch):
     for path in offered:
         assert os.path.dirname(path) == QDir.homePath()
         assert os.path.basename(path).startswith("E387 t_c=9%_ smoothed")
+
+
+def test_save_dialogs_name_the_file_after_the_file_name_first(window, monkeypatch):
+    """Every default file name is file_stem(filename or name or fallback)."""
+    from dataclasses import replace
+
+    from PyQt6.QtWidgets import QFileDialog, QInputDialog
+    _add(window, 10)
+    window._fit_result = window._project_manager.project.optimization_runs[0].result
+    offered = []
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        lambda parent, title, path, *a, **k: (offered.append(path), ("", ""))[1])
+    monkeypatch.setattr(QInputDialog, "getInt", lambda *a, **k: (40, True))
+
+    def names():
+        offered.clear()
+        window._project_manager.on_save_project_as()
+        window._on_save_fitted()
+        window._on_save_spline()
+        return [os.path.basename(p) for p in offered]
+
+    # NACA 2412: file name naca2412, name "NACA 2412"
+    assert names() == ["naca2412.asfproj", "naca2412_fitted.dat", "naca2412.deg5.spline.dat"]
+    window._airfoil = replace(window._airfoil, filename="")
+    assert names() == ["NACA 2412.asfproj", "NACA 2412_fitted.dat", "NACA 2412.deg5.spline.dat"]
+    window._airfoil = replace(window._airfoil, name="")
+    assert names() == ["project.asfproj", "airfoil_fitted.dat", "airfoil.deg5.spline.dat"]
+
+
+# -- The section count belongs to the fit ---------------------------------------
+
+def test_a_section_change_keeps_the_airfoil_and_the_fit(window):
+    _add(window, 10)
+    window._fit_result = window._project_manager.project.optimization_runs[0].result
+    window._set_save_enabled(True)
+    airfoil, fit = window._airfoil, window._fit_result
+    window.statusBar().showMessage("before")
+    window._spin_sections.setValue(3)
+    assert window._airfoil is airfoil and airfoil.num_sections == 2
+    assert window._fit_result is fit and window._btn_save_spline.isEnabled()
+    assert window.statusBar().currentMessage() == "before"
+    assert window._project_manager.project is not None
+
+
+def test_a_fit_splits_the_airfoil_at_the_section_count(window, monkeypatch):
+    from types import SimpleNamespace
+
+    from spline_fitter.gui import fitting
+    fitted = []
+
+    def run(config, opt, airfoil, **kwargs):
+        fitted.append(airfoil.num_sections)
+        return SimpleNamespace(x=None, fun=1.0, nit=1, success=True, message="")
+    monkeypatch.setattr(fitting, "run_optimization", run)
+    window._spin_sections.setValue(3)
+    window._fitting_controller.on_fit()
+    assert fitted == [3]
+    assert window._airfoil.num_sections == 3
+
+
+def test_a_failed_load_leaves_the_sections_and_the_fit(window, monkeypatch):
+    from spline_fitter.gui import file_actions
+    _add(window, 10)
+    window._fit_result = window._project_manager.project.optimization_runs[0].result
+    airfoil, fit = window._airfoil, window._fit_result
+    window._spin_sections.setValue(3)
+    maximum = window._spin_sections.maximum()
+
+    def fail(*a, **k):
+        raise ValueError("cannot split")
+    monkeypatch.setattr(file_actions, "create_airfoil_data", fail)
+    window._project_manager._project_modified = False
+    assert not window._set_airfoil([(1, 0), (0, 0), (1, 0.01)], "x", "x", 6)
+    assert window._spin_sections.maximum() == maximum
+    assert window._spin_sections.value() == 3
+    assert window._airfoil is airfoil and window._fit_result is fit
+
+
+# -- Undo steps the application makes ------------------------------------------
+
+def test_applying_a_run_is_one_undo_step_however_slow(window, monkeypatch):
+    """The merge timer expiring between any two widget changes (a slow
+    machine) still leaves exactly one step."""
+    _add(window, 14, knot_placement="free", smoothing_weight=0.01, max_points_per_section=50)
+    run = window._project_manager.project.optimization_runs[0]
+    history = window._settings_history
+    history.commit()
+    before = window._spin_ctrl.value(), window._spin_smoothing_weight.value()
+    steps = len(history._states)
+    monkeypatch.setattr(history._timer, "start", history.commit)
+    window._apply_run_settings(run)
+    assert window._spin_ctrl.value() == 14
+    assert len(history._states) == steps + 1
+    history.undo()
+    assert (window._spin_ctrl.value(), window._spin_smoothing_weight.value()) == before

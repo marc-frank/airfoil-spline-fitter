@@ -21,7 +21,6 @@ from PyQt6.QtWidgets import (
 
 from ..analysis import default_tolerance
 from ..formatting import format_duration, format_error, number
-from ..geometry import create_airfoil_data
 from ..optimization.models import (
     AirfoilData,
     FitResult,
@@ -293,8 +292,8 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._spin_comb_scale.valueChanged.connect(self._refresh_curvature_comb)
         self._spin_comb_density.valueChanged.connect(self._refresh_curvature_comb)
 
-        # Section count changes (a single section has no junction settings)
-        self._spin_sections.valueChanged.connect(self._on_sections_changed)
+        # Section count changes (a single section has no junction settings);
+        # the airfoil is split for the next fit, when it starts
         self._spin_sections.valueChanged.connect(
             lambda _: self._on_optimizer_changed(self._combo_opt.currentIndex())
         )
@@ -391,80 +390,47 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
     def _apply_run_settings(self, run: OptimizationRun) -> None:
         """Set every sidebar setting to that of a stored run (a double-click
         in the explorer, or opening a project)."""
-        cfg, opt = run.spline_config, run.optimization_config
+        # One undo step, however long setting the widgets takes
+        with self._settings_history.group():
+            cfg, opt = run.spline_config, run.optimization_config
 
-        def choose(control, data) -> None:
-            index = control.findData(data)
-            if index >= 0:
-                control.setCurrentIndex(index)
+            def choose(control, data) -> None:
+                index = control.findData(data)
+                if index >= 0:
+                    control.setCurrentIndex(index)
 
-        # Method; the optimizer first, as it decides which settings apply
-        choose(self._combo_opt, opt.optimizer)
-        choose(self._seg_goal, opt.tolerance is not None)
-        if opt.tolerance is not None:
-            self._check_auto_tolerance.setChecked(False)
-            self._spin_tolerance.setValue(opt.tolerance)
-        choose(self._combo_knot_placement, opt.knot_placement)
-        choose(self._seg_parameterization, opt.parameterization)
-        self._check_grow.setChecked(opt.grow_control_points)
+            # Method; the optimizer first, as it decides which settings apply
+            choose(self._combo_opt, opt.optimizer)
+            choose(self._seg_goal, opt.tolerance is not None)
+            if opt.tolerance is not None:
+                self._check_auto_tolerance.setChecked(False)
+                self._spin_tolerance.setValue(opt.tolerance)
+            choose(self._combo_knot_placement, opt.knot_placement)
+            choose(self._seg_parameterization, opt.parameterization)
+            self._check_grow.setChecked(opt.grow_control_points)
 
-        # Curve; continuity before the degree and both before the count, as
-        # each sets the minimum of the next
-        self._spin_sections.setValue(cfg.num_sections)
-        choose(self._combo_cont, cfg.continuity)
-        self._spin_degree.setValue(cfg.degree)
-        choose(self._combo_cont_kind, cfg.geometric_continuity)
-        self._spin_ctrl.setValue(cfg.num_control_points)
+            # Curve; continuity before the degree and both before the count, as
+            # each sets the minimum of the next
+            self._spin_sections.setValue(cfg.num_sections)
+            choose(self._combo_cont, cfg.continuity)
+            self._spin_degree.setValue(cfg.degree)
+            choose(self._combo_cont_kind, cfg.geometric_continuity)
+            self._spin_ctrl.setValue(cfg.num_control_points)
 
-        # Advanced
-        self._edit_junctions.setText(", ".join(cfg.junction_continuity))
-        self._check_subsample.setChecked(opt.max_points_per_section is not None)
-        if opt.max_points_per_section is not None:
-            self._spin_subsample.setValue(opt.max_points_per_section)
-        self._spin_smoothing_weight.setValue(opt.smoothing_weight)
-        self._check_optimize_le.setChecked(opt.optimize_le_position)
+            # Advanced
+            self._edit_junctions.setText(", ".join(cfg.junction_continuity))
+            self._check_subsample.setChecked(opt.max_points_per_section is not None)
+            if opt.max_points_per_section is not None:
+                self._spin_subsample.setValue(opt.max_points_per_section)
+            self._spin_smoothing_weight.setValue(opt.smoothing_weight)
+            self._check_optimize_le.setChecked(opt.optimize_le_position)
 
-        self._on_optimizer_changed(self._combo_opt.currentIndex())
+            self._on_optimizer_changed(self._combo_opt.currentIndex())
 
     def _limit_sections(self, num_points: int) -> None:
         """Allow at most one section fewer than the airfoil's points, the
         most it can be split into."""
         self._spin_sections.setMaximum(max(1, num_points - 1))
-
-    def _on_sections_changed(self):
-        """Handle section count change - re-split the loaded airfoil."""
-        if self._airfoil is None:
-            return
-
-        try:
-            num_sections = self._spin_sections.value()
-
-            # Re-create airfoil data with new section count
-            self._airfoil = create_airfoil_data(
-                list(self._airfoil.coordinates),
-                filename=self._airfoil.filename,
-                name=self._airfoil.name,
-                precision=self._airfoil.precision,
-                num_sections=num_sections,
-            )
-
-            # Clear previous fit (no longer valid)
-            self._fit_result = None
-            self._set_save_enabled(False)
-
-            # Update status
-            section_sizes = [len(sec) for sec in self._airfoil.sections]
-            self.statusBar().showMessage(
-                f"Re-split: {self._airfoil.name or self._airfoil.filename} "
-                f"({self._airfoil.num_points} points, {num_sections} sections: {section_sizes})"
-            )
-
-            # Refresh the plot to show the new split (clear fitted curves)
-            self._plot_manager.plot_airfoil(self._airfoil.coordinates)
-
-        except Exception as e:
-            self.statusBar().showMessage(f"Failed to re-split airfoil: {e}")
-            self._play_error_chime()
 
     def _junction_orders(self, sections: int) -> tuple[list[int], bool]:
         """The continuity order of each junction of *sections* sections, and

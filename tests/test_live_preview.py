@@ -212,8 +212,11 @@ def test_sections_sweep_splits_the_airfoil_per_count(window):
     assert [len(r.section_control_points) for _, r in results] == [2, 3]
     x, _ = window._plot_manager._comparison_curve.getData()
     assert list(x) == [2, 3]
-    # The best count is applied, with the airfoil split to match it
-    assert window._airfoil.num_sections == window._spin_sections.value()
+    # The best count is applied; the airfoil keeps its split until the next
+    # fit applies the count (a Sections change does not re-split it)
+    best = min(results, key=lambda vr: vr[1].comparison_error)[0][0]
+    assert window._spin_sections.value() == best
+    assert window._airfoil.num_sections == 2
 
 
 def test_sweep_toggles_add_up(window):

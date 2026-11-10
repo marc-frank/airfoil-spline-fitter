@@ -184,12 +184,11 @@ The package is organized into focused modules:
 | ------ | ------- |
 | `optimization/models.py` | Data structures (AirfoilData, SplineConfig, FitResult, etc.) |
 | `optimization/engine.py` | Optimizer dispatch (`run_optimization`) |
-| `optimization/run_log.py` | Optimizer progress CSVs (`optimizer_logs/`, or `SPLINE_FITTER_LOG_DIR`) |
+| `optimization/run_log.py` | Optimizer progress CSVs, written only when `SPLINE_FITTER_LOG_DIR` names a folder |
 | `optimization/optimizers/` | Optimizer adapters, including `gn_varpro.py` for bspline-varpro |
 | `spline.py` | B-spline mathematics and curve evaluation |
 | `geometry.py` | Coordinate processing and geometric utilities |
 | `analysis.py` | Fit report: deviation, curvature, junctions, leading-edge radius |
-| `fairness.py` | Smoothness metrics and regularization |
 | `gui/` | PyQt6 graphical user interface (`ui.py` window, `layout.py` widgets, `file_actions.py` file menu and export, `theme.py` colors and styles) |
 | `io.py` | Airfoil and spline file parsing and export |
 | `project_io.py` | Project files (`.splineproj`) |

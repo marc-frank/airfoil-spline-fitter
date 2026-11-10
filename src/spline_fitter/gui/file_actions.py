@@ -126,15 +126,19 @@ class FileActionsMixin:
             self.statusBar().showMessage("Cancelled: the project stays open")
             return False
         try:
-            # Create airfoil data object with current section count
-            self._limit_sections(len(coords))
-            self._airfoil = create_airfoil_data(
+            # The new airfoil first, at the section count it allows: a file
+            # that fails here leaves the window as it was
+            num_sections = min(self._spin_sections.value(), max(1, len(coords) - 1))
+            airfoil = create_airfoil_data(
                 coords,
                 filename=filename,
                 name=name,
                 precision=precision,
-                num_sections=self._spin_sections.value(),
+                num_sections=num_sections,
             )
+            # May lower the Sections value, which only the next fit reads
+            self._limit_sections(len(coords))
+            self._airfoil = airfoil
 
             # Clear previous fit
             self._fit_result = None
@@ -337,7 +341,8 @@ class FileActionsMixin:
 
             # File dialog
             default_name = self._airfoil.name or self._airfoil.filename
-            default_path = os.path.join(QDir.homePath(), f"{file_stem(default_name)}_fitted.dat")
+            stem = file_stem(self._airfoil.filename or self._airfoil.name or "airfoil")
+            default_path = os.path.join(QDir.homePath(), f"{stem}_fitted.dat")
 
             save_path, _ = QFileDialog.getSaveFileName(
                 self,
@@ -376,7 +381,7 @@ class FileActionsMixin:
 
             default_path = os.path.join(
                 QDir.homePath(),
-                f"{file_stem(base_name)}.deg{degree}.spline.dat"
+                f"{file_stem(base_name or 'airfoil')}.deg{degree}.spline.dat"
             )
 
             save_path, _ = QFileDialog.getSaveFileName(

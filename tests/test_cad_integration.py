@@ -16,7 +16,7 @@ from spline_fitter.optimization.models import (
     OptimizerType,
     SplineConfig,
 )
-from spline_fitter.optimization.optimizers.gn_varpro import GNVarProOptimizer, accepts_preview
+from spline_fitter.optimization.optimizers.gn_varpro import GNVarProOptimizer
 
 
 def naca_airfoil(code="2412", n=61, decimals=6, sections=2):
@@ -90,7 +90,9 @@ def test_fixed_mode_geometric_continuity_uses_labels(monkeypatch):
 
 def test_spline_config_validation():
     assert SplineConfig(num_sections=3, junction_continuity=(" g1", "c2 ")).junction_specs() == ["G1", "C2"]
-    assert SplineConfig(num_sections=3, continuity=ContinuityMode.G2).junction_specs() == ["C2", "C2"]
+    assert SplineConfig(num_sections=3, continuity=ContinuityMode.G2,
+                        geometric_continuity=False).junction_specs() == ["C2", "C2"]
+    assert SplineConfig(num_sections=3, continuity=ContinuityMode.G2).junction_specs() == ["G2", "G2"]
     assert SplineConfig(geometric_continuity=True, continuity=ContinuityMode.G3).junction_specs() == ["G3"]
     with pytest.raises(ValueError, match="junction"):
         SplineConfig(num_sections=3, junction_continuity=("G2",))
@@ -114,14 +116,15 @@ def test_engine_dispatches_tolerance_mode():
 def test_preview_callbacks_get_curves_and_can_stop():
     seen = []
 
-    def callback(x, error, preview=None):
+    def callback(x, error, preview, step):
         ctrl, knots, degree = preview
         assert degree == 5 and len(ctrl) == len(knots) == 2
         assert x.shape == (2 * sum(len(c) for c in ctrl),)
+        if step:
+            return False
         seen.append(error)
         return len(seen) == 2
 
-    assert accepts_preview(callback) and not accepts_preview(lambda x, e: False)
     result = GNVarProOptimizer().fit(
         SplineConfig(degree=5, geometric_continuity=True, continuity=ContinuityMode.G2),
         OptimizationConfig(tolerance=1e-7), naca_airfoil(), callback=callback)

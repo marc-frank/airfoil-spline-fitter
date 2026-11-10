@@ -5,7 +5,6 @@ B-Spline Mathematics
 Core mathematical operations for B-spline curve construction and evaluation.
 
 This module provides:
-    - Open uniform knot vector generation
     - 2D B-spline curve evaluation using SciPy's BSpline
     - Curve derivative computation for curvature analysis
     - Signed curvature calculation
@@ -20,89 +19,10 @@ from collections.abc import Sequence
 from functools import cached_property
 
 import numpy as np
+from bspline_varpro import open_uniform_knots, validate_knots
 from scipy.interpolate import BSpline as ScipyBSpline
 
 from ..optimization.models import Point2D
-
-# =============================================================================
-# Knot Vector Construction
-# =============================================================================
-
-def create_open_uniform_knots(degree: int, num_control_points: int) -> np.ndarray:
-    """
-    Create an open uniform (clamped) knot vector on [0, 1].
-    
-    An open uniform knot vector has:
-        - (degree + 1) repeated knots at each end
-        - Uniformly spaced interior knots
-    
-    This ensures the curve starts at the first control point
-    and ends at the last control point.
-    
-    Args:
-        degree: Polynomial degree of the B-spline
-        num_control_points: Number of control points (n)
-        
-    Returns:
-        Numpy array of length (n + degree + 1) containing the knot vector
-        
-    Raises:
-        ValueError: If num_control_points <= degree
-        
-    Example:
-        >>> create_open_uniform_knots(3, 5)
-        array([0. , 0. , 0. , 0. , 0.5, 1. , 1. , 1. , 1. ])
-    """
-    if num_control_points <= degree:
-        raise ValueError(
-            f"Number of control points ({num_control_points}) must be greater "
-            f"than degree ({degree})"
-        )
-
-    # Number of interior knots
-    num_interior = num_control_points - degree - 1
-
-    # Build knot vector: [0,0,...,0, interior, 1,1,...,1]
-    knots = [0.0] * (degree + 1)
-
-    if num_interior > 0:
-        step = 1.0 / (num_control_points - degree)
-        knots.extend(i * step for i in range(1, num_interior + 1))
-
-    knots.extend([1.0] * (degree + 1))
-
-    return np.array(knots, dtype=np.float64)
-
-
-def validate_knot_vector(knots: np.ndarray, degree: int, num_control_points: int) -> bool:
-    """
-    Validate that a knot vector is properly formed.
-    
-    Args:
-        knots: The knot vector to validate
-        degree: Expected spline degree
-        num_control_points: Expected number of control points
-        
-    Returns:
-        True if valid, False otherwise
-    """
-    expected_length = num_control_points + degree + 1
-
-    if len(knots) != expected_length:
-        return False
-
-    # Knots must be non-decreasing
-    if not np.all(np.diff(knots) >= 0):
-        return False
-
-    # For open-uniform: first (degree+1) should be equal, same for last
-    if not np.allclose(knots[:degree + 1], knots[0]):
-        return False
-    if not np.allclose(knots[-(degree + 1):], knots[-1]):
-        return False
-
-    return True
-
 
 # =============================================================================
 # B-Spline Curve Class
@@ -141,6 +61,10 @@ class BSplineCurve2D:
             degree: Polynomial degree (order = degree + 1)
             control_points: Sequence of (x, y) control point coordinates
             knot_vector: Custom knot vector, or None for open uniform
+
+        Raises:
+            ValueError: If the knot vector has the wrong length or is not a
+                clamped knot vector on [0, 1] (the library's validate_knots)
         """
         self.degree = degree
         self.control_points = [(float(p[0]), float(p[1])) for p in control_points]
@@ -148,11 +72,12 @@ class BSplineCurve2D:
         # Create or validate knot vector
         num_ctrl = len(self.control_points)
         if knot_vector is None:
-            self.knot_vector = create_open_uniform_knots(degree, num_ctrl)
+            self.knot_vector = open_uniform_knots(degree, num_ctrl)
         else:
             self.knot_vector = np.asarray(knot_vector, dtype=np.float64)
-            if not validate_knot_vector(self.knot_vector, degree, num_ctrl):
-                raise ValueError("Invalid knot vector for given degree and control points")
+            if len(self.knot_vector) != num_ctrl + degree + 1:
+                raise ValueError("Knot vector length must be control points + degree + 1.")
+            self.knot_vector = validate_knots(self.knot_vector, degree)
 
         # Extract x and y coefficients for SciPy BSpline
         cx = np.array([p[0] for p in self.control_points], dtype=np.float64)

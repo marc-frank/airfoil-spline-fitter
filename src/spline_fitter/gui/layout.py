@@ -31,9 +31,12 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from .. import __version__
 from ..optimization.models import (
     ContinuityMode,
+    OptimizationConfig,
     OptimizerType,
+    SplineConfig,
 )
 from .explorer import COLUMNS, RunTable
 from .motion import SmoothViewBox
@@ -364,7 +367,9 @@ class WindowLayoutMixin:
         # Help menu
         help_menu = menubar.addMenu("&Help")
         help_menu.addAction("&About").triggered.connect(
-            lambda: self.statusBar().showMessage("Airfoil Spline Fitter v1.0")
+            lambda: self.statusBar().showMessage(
+                f"Airfoil Spline Fitter {__version__}"
+            )
         )
 
     # -- File Card ---------------------------------------------------------
@@ -691,13 +696,16 @@ class WindowLayoutMixin:
         """Build the Method section: optimizer and goal."""
         section = SidebarSection("Method")
         form = _form()
+        # Start values come from the model defaults (as do the curve's and
+        # Advanced's), so a new window fits what a default configuration fits
+        start = OptimizationConfig()
 
         # Algorithm (decides which other controls apply, so it comes first)
         self._combo_opt = SegmentedControl()
         for opt_type in (OptimizerType.GN_VARPRO, OptimizerType.DIRECT_LSQ):
             self._combo_opt.addItem(opt_type.display_name, userData=opt_type)
             self._combo_opt.setItemToolTip(self._combo_opt.count() - 1, opt_type.tooltip)
-        self._combo_opt.setCurrentIndex(self._combo_opt.findData(OptimizerType.GN_VARPRO))
+        self._combo_opt.setCurrentIndex(self._combo_opt.findData(start.optimizer))
         self._combo_opt.currentIndexChanged.connect(self._on_optimizer_changed)
         _add_row(form, "Optimizer", self._combo_opt)
 
@@ -711,12 +719,14 @@ class WindowLayoutMixin:
             "Find the fewest control points that keep\n"
             "every data point within the tolerance.",
         )
+        self._seg_goal.setCurrentIndex(self._seg_goal.findData(start.tolerance is not None))
         self._lbl_goal = _add_row(form, "Goal", self._seg_goal)
 
         self._spin_tolerance = ScientificSpinBox()
         self._spin_tolerance.setRange(1e-9, math.inf)
         self._spin_tolerance.setSingleStep(1e-6)
-        self._spin_tolerance.setValue(1e-5)
+        # Shown while the goal is a fixed count
+        self._spin_tolerance.setValue(start.tolerance if start.tolerance is not None else 1e-5)
         self._spin_tolerance.setToolTip("Maximum orthogonal distance of any data point to the curve.")
         self._check_auto_tolerance = QCheckBox("Auto")
         self._check_auto_tolerance.setChecked(True)
@@ -735,6 +745,8 @@ class WindowLayoutMixin:
             0, "Knots stay evenly spaced in the curve parameter.")
         self._combo_knot_placement.setItemToolTip(
             1, "Knots move to where they reduce the error most.")
+        self._combo_knot_placement.setCurrentIndex(
+            self._combo_knot_placement.findData(start.knot_placement))
         self._lbl_knot_placement = _add_row(form, "Knots", self._combo_knot_placement)
 
         # Parameterization (Direct LSQ)
@@ -746,10 +758,12 @@ class WindowLayoutMixin:
                "Follows tight curvature, such as the leading edge, more closely.")
         self._seg_parameterization.setItemToolTip(
             1, "Space the data parameters by the distance along the data.")
+        self._seg_parameterization.setCurrentIndex(
+            self._seg_parameterization.findData(start.parameterization))
         self._lbl_parameterization = _add_row(form, "Parameterization", self._seg_parameterization)
 
         self._check_grow = QCheckBox("Add where the fit is worst")
-        self._check_grow.setChecked(False)
+        self._check_grow.setChecked(start.grow_control_points)
         self._check_grow.setToolTip(
             "On: start from the fewest control points and add them where the\n"
             "fit is worst, refitting after each step.\n"
@@ -767,11 +781,12 @@ class WindowLayoutMixin:
         """Build the Curve section: degree, control points, sections, continuity."""
         section = SidebarSection("Curve")
         form = _form()
+        start = SplineConfig()
 
         # Degree (sweepable)
         self._spin_degree = QSpinBox()
         self._spin_degree.setRange(1, UNLIMITED)
-        self._spin_degree.setValue(5)
+        self._spin_degree.setValue(start.degree)
         self._spin_degree.setToolTip(
             "Polynomial degree of B-spline basis functions.\n"
             "Typical: 3 (cubic), 4, or 5 (quintic)."
@@ -783,7 +798,7 @@ class WindowLayoutMixin:
         # count, and only when not growing from the fewest
         self._spin_ctrl = QSpinBox()
         self._spin_ctrl.setRange(2, UNLIMITED)
-        self._spin_ctrl.setValue(25)
+        self._spin_ctrl.setValue(start.num_control_points)
         self._spin_ctrl.setToolTip(
             "Control points per section.\n"
             "More = more flexibility but more variables."
@@ -795,7 +810,7 @@ class WindowLayoutMixin:
         self._spin_sections = QSpinBox()
         # At most one fewer than the airfoil's points (see _limit_sections)
         self._spin_sections.setRange(1, UNLIMITED)
-        self._spin_sections.setValue(2)
+        self._spin_sections.setValue(start.num_sections)
         self._spin_sections.setToolTip(
             "Number of sections, each its own spline, joined at junctions.\n"
             "2 (default) splits upper and lower surface at the leading edge."
@@ -811,7 +826,7 @@ class WindowLayoutMixin:
         ):
             self._combo_cont.addItem(f"C{i}", userData=mode)
             self._combo_cont.setItemToolTip(i, f"{cont_names[i]} matches across junctions")
-        self._combo_cont.setCurrentIndex(3)
+        self._combo_cont.setCurrentIndex(self._combo_cont.findData(start.continuity))
         self._lbl_cont = _add_row(form, "Continuity", self._combo_cont)
 
         self._combo_cont_kind = SegmentedControl()
@@ -825,6 +840,8 @@ class WindowLayoutMixin:
             "Only VarPro LM supports geometric continuity; other optimizers\n"
             "always use parametric."
         )
+        self._combo_cont_kind.setCurrentIndex(
+            self._combo_cont_kind.findData(start.geometric_continuity))
         self._lbl_cont_kind = _add_row(form, "Type", self._combo_cont_kind)
 
         section.add_layout(form)
@@ -837,6 +854,7 @@ class WindowLayoutMixin:
         section = CollapsibleSection("Advanced", expanded=False)
         self._advanced_section = section
         form = _form()
+        start_curve, start = SplineConfig(), OptimizationConfig()
 
         # VarPro
         self._edit_junctions = QLineEdit()
@@ -846,10 +864,11 @@ class WindowLayoutMixin:
             "setting. One entry per junction (sections - 1), each G0-G3 or C0-C3.\n"
             "VarPro LM only."
         )
+        self._edit_junctions.setText(", ".join(start_curve.junction_continuity))
         self._lbl_junctions = _add_row(form, "Per junction", self._edit_junctions)
 
         self._check_subsample = QCheckBox("to")
-        self._check_subsample.setChecked(False)
+        self._check_subsample.setChecked(start.max_points_per_section is not None)
         self._check_subsample.setToolTip(
             "For dense data: fit an evenly spaced subsample of each section, then\n"
             "refine the fit on all points. Much faster for thousands of points.\n"
@@ -857,9 +876,10 @@ class WindowLayoutMixin:
         )
         self._spin_subsample = QSpinBox()
         self._spin_subsample.setRange(20, UNLIMITED)
-        self._spin_subsample.setValue(200)
+        # 200 is shown while subsampling is off
+        self._spin_subsample.setValue(start.max_points_per_section or 200)
         self._spin_subsample.setSuffix(" points")
-        self._spin_subsample.setEnabled(False)
+        self._spin_subsample.setEnabled(self._check_subsample.isChecked())
         self._spin_subsample.setToolTip(
             "Points per section. Sections with more points than this are subsampled.")
         self._subsample_row = _hbox(self._check_subsample, self._spin_subsample, stretch_first=False)
@@ -870,7 +890,7 @@ class WindowLayoutMixin:
         self._spin_smoothing_weight = ScientificSpinBox()
         self._spin_smoothing_weight.setRange(0.0, math.inf)
         self._spin_smoothing_weight.setSingleStep(0.001)
-        self._spin_smoothing_weight.setValue(0.001)
+        self._spin_smoothing_weight.setValue(start.smoothing_weight)
         self._spin_smoothing_weight.setToolTip(
             "Bending energy weight for VarPro LM (0 turns it off; default 0.001).")
         self._sweep_smoothing_weight = SweepableDoubleSpinBox(
@@ -880,7 +900,7 @@ class WindowLayoutMixin:
 
         # Junction positions
         self._check_optimize_le = QCheckBox("Optimize positions")
-        self._check_optimize_le.setChecked(False)
+        self._check_optimize_le.setChecked(start.optimize_le_position)
         self._check_optimize_le.setToolTip(
             "Optimize the position of every junction, instead of keeping the\n"
             "section split points fixed. The split points are where the junctions\n"

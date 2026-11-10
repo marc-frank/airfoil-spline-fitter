@@ -19,8 +19,7 @@ from spline_fitter.optimization.models import (
     SplineConfig,
 )
 from spline_fitter.optimization.optimizers import gn_varpro
-from spline_fitter.optimization.optimizers.gn_varpro import GNVarProConfig, GNVarProOptimizer
-from spline_fitter.spline.spline import create_open_uniform_knots
+from spline_fitter.optimization.optimizers.gn_varpro import GNVarProOptimizer
 
 
 def small_airfoil(noise=0.0, n=19):
@@ -42,7 +41,7 @@ def test_direct_lsq_reports_rms_error_like_varpro():
                               OptimizationConfig(optimizer=OptimizerType.DIRECT_LSQ), airfoil)
     data = chain_data([np.asarray(sec) for sec in airfoil.sections])
     section, local = locate(result.parameters, 2)
-    knots = create_open_uniform_knots(3, 6)
+    knots = bspline_varpro.open_uniform_knots(3, 6)
     curves = [BSpline(knots, np.asarray(cp), 3) for cp in result.section_control_points]
     distances = np.linalg.norm(
         np.array([curves[s](t) for s, t in zip(section, local, strict=True)]) - data, axis=1)
@@ -51,22 +50,23 @@ def test_direct_lsq_reports_rms_error_like_varpro():
 
 
 def test_direct_lsq_reports_progress():
-    """Direct LSQ counts its solves and hands its result to the callback, so
-    a run gets an evaluation count, a loss history and a run log."""
+    """Direct LSQ counts its one solve and hands its result to the callback,
+    in the one callback form, so a run gets an evaluation count, a loss
+    history and a run log."""
     reset_iteration_tracking()
     seen = []
 
-    def callback(x, error, preview=None):
-        seen.append((x.shape, error, preview))
+    def callback(x, error, preview, step):
+        seen.append((x.shape, error, preview, step))
         return False
 
     result = run_optimization(SplineConfig(degree=3, num_control_points=6),
                               OptimizationConfig(optimizer=OptimizerType.DIRECT_LSQ),
                               small_airfoil(0.002), callback=callback)
-    assert get_evaluation_count() >= 2
+    assert get_evaluation_count() == 1
     assert len(seen) == 1
-    shape, error, (control_points, knots, degree) = seen[0]
-    assert shape == result.x.shape and error == result.fun and degree == 3
+    shape, error, (control_points, knots, degree), step = seen[0]
+    assert shape == result.x.shape and error == result.fun and degree == 3 and step is False
     assert [np.asarray(c).tolist() for c in control_points] == [
         [list(p) for p in cp] for cp in result.section_control_points]
     assert len(knots) == 2
@@ -98,7 +98,6 @@ def test_fits_have_no_evaluation_limit(monkeypatch, library_call):
     tolerance = 1e-2 if library_call == "fit_to_tolerance" else None
     GNVarProOptimizer().fit(config, OptimizationConfig(tolerance=tolerance), airfoil)
     assert "max_nfev" not in captured and "max_iterations" not in captured
-    assert not {"max_nfev", "max_iterations"} & set(vars(GNVarProConfig()))
     assert not hasattr(OptimizationConfig(), "max_iterations")
 
 
@@ -117,7 +116,7 @@ def test_fixed_count_steps_cover_the_whole_fit(monkeypatch):
     result = GNVarProOptimizer().fit(
         SplineConfig(degree=3, num_control_points=8),
         OptimizationConfig(grow_control_points=True, knot_placement="free"),
-        small_airfoil(0.002), callback=lambda x, e: False)
+        small_airfoil(0.002), callback=lambda x, e, preview, step: False)
     assert result.nit == get_evaluation_count()
     assert result.nit > last["result"].nfev
 
@@ -163,7 +162,9 @@ def test_two_sections_keep_two_points_each():
         assert [len(s) for s in airfoil.sections] in ([2, 3], [3, 2])
         assert airfoil.sections[0][-1] == airfoil.sections[1][0]
         for optimizer in OptimizerType:
-            result = run_optimization(SplineConfig(degree=2, num_control_points=3),
+            result = run_optimization(SplineConfig(degree=2, num_control_points=3,
+                                                   continuity=ContinuityMode.G1,
+                                                   geometric_continuity=False),
                                       OptimizationConfig(optimizer=optimizer), airfoil)
             controls = np.vstack(result.section_control_points)
             assert np.all(np.abs(controls) < 5), optimizer
@@ -232,3 +233,87 @@ def test_projects_with_an_evaluation_limit_still_load(tmp_path):
         o["max_iterations"] = 500
     path.write_text(json.dumps(data), encoding="utf-8")
     assert load_project(str(path)).optimization_runs[0].optimization_config == options
+
+
+def test_direct_lsq_is_one_solve(monkeypatch):
+    """Direct LSQ is a single constrained linear solve at fixed parameters:
+    one evaluation, nit 1, always successful, no refinement, and a cancel
+    check that is accepted but never read."""
+    from bspline_varpro.airfoil import NACA4
+
+    from spline_fitter.analysis import fit_report
+    from spline_fitter.geometry import create_airfoil_data
+    from spline_fitter.optimization.models import FitResult
+
+    monkeypatch.setattr("bspline_varpro.joint.solve_joint",
+                        lambda *a, **k: pytest.fail("Direct LSQ refined its solve"))
+    airfoil = create_airfoil_data([tuple(p) for p in np.round(NACA4("2412").points(81), 6)], 2)
+    config = SplineConfig(degree=5, num_control_points=25, num_sections=2,
+                          continuity=ContinuityMode.G2, geometric_continuity=False)
+    reset_iteration_tracking()
+    result = run_optimization(config, OptimizationConfig(optimizer=OptimizerType.DIRECT_LSQ),
+                              airfoil, should_stop=lambda: pytest.fail("should_stop was read"))
+    assert get_evaluation_count() == 1
+    assert (result.nit, result.success, result.message) == (1, True, "")
+    assert result.section_knots is None and result.rms_error == result.fun
+    assert result.fun == pytest.approx(1.897e-5, rel=1e-3)
+    report = fit_report(airfoil.sections, FitResult(result.section_control_points, 5,
+                                                    result.fun, 1, 1, 0.0))
+    assert report["max_deviation"] == pytest.approx(4.722e-5, rel=1e-3)
+    assert report["rms_deviation"] == pytest.approx(8.807e-6, rel=1e-3)
+
+
+def test_one_set_of_defaults():
+    """The model defaults are the window's start values: G3 geometric
+    continuity, uniform knots, no growth; the retired fields are gone."""
+    spline, options = SplineConfig(), OptimizationConfig()
+    assert (spline.continuity, spline.geometric_continuity) == (ContinuityMode.G3, True)
+    assert (options.knot_placement, options.grow_control_points) == ("uniform", False)
+    for retired in ("smoothing_factor", "early_stop_patience", "relative_tolerance"):
+        with pytest.raises(TypeError):
+            OptimizationConfig(**{retired: 1})
+
+
+def test_removed_names_are_gone():
+    from spline_fitter.optimization import models, tracking
+    assert not hasattr(gn_varpro, "GNVarProConfig")
+    assert not hasattr(models, "EvaluationRecord")
+    assert not hasattr(tracking, "reset_evaluation_tracking")
+    assert not hasattr(OptimizerType.DIRECT_LSQ, "is_algebraic")
+    assert not hasattr(OptimizerType.GN_VARPRO, "is_iterative_algebraic")
+    assert OptimizerType.DIRECT_LSQ.tooltip.split("\n") == [
+        "Direct LSQ: a single solve, no iteration.",
+        "One constrained least-squares solve on uniform knots, with the",
+        "data parameters taken from the point spacing (Parameterization).",
+        "Parametric continuity; junctions fixed or free (Advanced).",
+        "Fastest, but less accurate than VarPro LM.",
+    ]
+
+
+def test_the_varpro_adapter_reads_the_smoothing_weight_itself(monkeypatch):
+    captured = {}
+    original = bspline_varpro.fit
+
+    def capture(*args, **kwargs):
+        captured.update(kwargs)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(gn_varpro.bspline_varpro, "fit", capture)
+    run_optimization(SplineConfig(degree=3, num_control_points=6),
+                     OptimizationConfig(smoothing_weight=0.02), small_airfoil(0.001))
+    assert captured["smoothing"] == 0.02
+
+
+def test_callbacks_get_one_form_whatever_their_signature():
+    """Both adapters always pass preview= and step=; a callback without them
+    fails instead of being called another way."""
+    airfoil = small_airfoil(0.001)
+    config = SplineConfig(degree=3, num_control_points=6)
+    for options in (OptimizationConfig(optimizer=OptimizerType.DIRECT_LSQ),
+                    OptimizationConfig(), OptimizationConfig(tolerance=1e-2)):
+        with pytest.raises(TypeError):
+            run_optimization(config, options, airfoil, callback=lambda x, e: False)
+        calls = []
+        run_optimization(config, options, airfoil,
+                         callback=lambda x, e, **kw: calls.append(sorted(kw)) and False)
+        assert calls and all(kw == ["preview", "step"] for kw in calls)

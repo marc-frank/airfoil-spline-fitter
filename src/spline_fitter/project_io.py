@@ -24,6 +24,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import math
 import os
 import platform
 import shutil
@@ -85,6 +86,43 @@ def _json_default(obj: Any) -> Any:
     if isinstance(obj, np.ndarray):
         return obj.tolist()
     raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
+# Non-finite numbers are written as these strings, so a project is standard JSON
+_NON_FINITE = {"NaN": math.nan, "Infinity": math.inf, "-Infinity": -math.inf}
+
+
+def _standard_json(obj: Any) -> Any:
+    """``obj`` with NumPy values made plain and every non-finite number
+    replaced by "NaN", "Infinity" or "-Infinity"."""
+    if isinstance(obj, np.ndarray):
+        obj = obj.tolist()
+    elif isinstance(obj, np.generic):
+        obj = obj.item()
+    if isinstance(obj, dict):
+        return {key: _standard_json(value) for key, value in obj.items()}
+    if isinstance(obj, list | tuple):
+        return [_standard_json(value) for value in obj]
+    if isinstance(obj, float) and not math.isfinite(obj):
+        return "NaN" if math.isnan(obj) else ("Infinity" if obj > 0 else "-Infinity")
+    return obj
+
+
+def _number(value: Any) -> Any:
+    """A value read where a number is expected: "NaN", "Infinity" and
+    "-Infinity" become floats, anything else is returned unchanged."""
+    if isinstance(value, str) and value in _NON_FINITE:
+        return _NON_FINITE[value]
+    return value
+
+
+def _numbers(obj: Any) -> Any:
+    """``_number`` applied to every value of nested lists and objects."""
+    if isinstance(obj, dict):
+        return {key: _numbers(value) for key, value in obj.items()}
+    if isinstance(obj, list):
+        return [_numbers(value) for value in obj]
+    return _number(obj)
 
 
 # Logger for migration warnings
@@ -232,12 +270,26 @@ def _encode_project(project: ProjectFile) -> dict[str, Any]:
 # =============================================================================
 
 def _decode_airfoil(data: dict[str, Any]) -> AirfoilData:
-    """Decode AirfoilData from JSON dict."""
+    """Decode AirfoilData from JSON dict.
+
+    The sections are rebuilt from the coordinates and the junction indices;
+    the stored ``sections`` and ``num_sections`` are not read.
+    """
+    coordinates = tuple(tuple(_number(v) for v in p) for p in data["coordinates"])
+    junctions = tuple(int(j) for j in data["junction_indices"])
+    n = len(coordinates)
+    if any(not 1 <= j <= n - 2 for j in junctions) or any(
+            b <= a for a, b in zip(junctions, junctions[1:], strict=False)):
+        raise ValueError("the junction indices do not split the coordinates")
+    starts = (0, *junctions)
+    sections = tuple(
+        coordinates[start:end + 1] for start, end in zip(starts, junctions, strict=False)
+    ) + (coordinates[starts[-1]:],)
     return AirfoilData(
-        coordinates=tuple(tuple(p) for p in data["coordinates"]),
-        sections=tuple(tuple(tuple(p) for p in section) for section in data["sections"]),
-        junction_indices=tuple(data["junction_indices"]),
-        num_sections=data["num_sections"],
+        coordinates=coordinates,
+        sections=sections,
+        junction_indices=junctions,
+        num_sections=len(junctions) + 1,
         filename=data.get("filename", ""),
         name=data.get("name", ""),
         precision=data.get("precision", 6),
@@ -267,10 +319,10 @@ def _decode_optimization_config(data: dict[str, Any]) -> OptimizationConfig:
     """Decode OptimizationConfig from JSON dict."""
     return OptimizationConfig(
         optimizer=_optimizer_type_from_str(data["optimizer"]),
-        smoothing_weight=data.get("smoothing_weight", 1e-3),
+        smoothing_weight=_number(data.get("smoothing_weight", 1e-3)),
         optimize_le_position=data.get("optimize_le_position", False),
         parameterization=data.get("parameterization", "centripetal"),
-        tolerance=data.get("tolerance"),
+        tolerance=_number(data.get("tolerance")),
         max_points_per_section=data.get("max_points_per_section"),
         # Projects from before these settings: fixed counts used uniform knots,
         # tolerance mode grew the count with freely placed knots.
@@ -278,7 +330,8 @@ def _decode_optimization_config(data: dict[str, Any]) -> OptimizationConfig:
                                 "uniform" if data.get("tolerance") is None else "free"),
         grow_control_points=data.get("grow_control_points", data.get("tolerance") is not None),
         custom_parameters=(None if data.get("custom_parameters") is None else
-                           [np.asarray(u, dtype=np.float64) for u in data["custom_parameters"]]),
+                           [np.asarray(_numbers(u), dtype=np.float64)
+                            for u in data["custom_parameters"]]),
         # Older projects may also contain "fairing", "metric", "seed",
         # "smoothing_factor", "early_stop_patience", "relative_tolerance" and
         # "max_iterations" (an evaluation limit; fits now run until they
@@ -286,21 +339,26 @@ def _decode_optimization_config(data: dict[str, Any]) -> OptimizationConfig:
     )
 
 
-def _decode_fit_result(data: dict[str, Any], section_control_points: list[PointList]) -> FitResult:
-    """Decode FitResult from JSON dict."""
+def _decode_fit_result(data: dict[str, Any], section_control_points: list[PointList],
+                       degree: int) -> FitResult:
+    """Decode FitResult from JSON dict.
+
+    The stored ``degree`` is not read: the result takes the run's
+    ``spline_config.degree``.
+    """
     return FitResult(
         section_control_points=section_control_points,
-        degree=data["degree"],
-        final_error=data["final_error"],
-        num_iterations=data["num_iterations"],
-        num_evaluations=data["num_evaluations"],
-        elapsed_seconds=data["elapsed_seconds"],
+        degree=degree,
+        final_error=_number(data["final_error"]),
+        num_iterations=_number(data["num_iterations"]),
+        num_evaluations=_number(data["num_evaluations"]),
+        elapsed_seconds=_number(data["elapsed_seconds"]),
         converged=data.get("converged", True),
         cancelled=data.get("cancelled", False),
-        section_knots=data.get("section_knots"),
-        report=data.get("report"),
+        section_knots=_numbers(data.get("section_knots")),
+        report=_numbers(data.get("report")),
         # Projects from before it was stored compare by the report or final_error
-        rms_error=data.get("rms_error"),
+        rms_error=_number(data.get("rms_error")),
         # Older projects may also contain "early_stopped", which nothing sets.
     )
 
@@ -311,9 +369,9 @@ def _decode_iteration_record(data: dict[str, Any]) -> IterationRecord:
     Handles both old format (with 'eval' field) and new format (without).
     """
     return IterationRecord(
-        iteration_number=data["iter"],
-        error_value=data["error"],
-        elapsed_seconds=data.get("time", 0.0),
+        iteration_number=_number(data["iter"]),
+        error_value=_number(data["error"]),
+        elapsed_seconds=_number(data.get("time", 0.0)),
     )
 
 
@@ -322,7 +380,7 @@ def _decode_optimization_run(data: dict[str, Any], where: str) -> OptimizationRu
     # Decode control points first (needed for FitResult)
     with _reading(f"{where} control points"):
         section_control_points = [
-            [(float(p[0]), float(p[1])) for p in section]
+            [(float(_number(p[0])), float(_number(p[1]))) for p in section]
             for section in data["section_control_points"]
         ]
     with _reading(f"{where} spline settings"):
@@ -330,7 +388,7 @@ def _decode_optimization_run(data: dict[str, Any], where: str) -> OptimizationRu
     with _reading(f"{where} fit settings"):
         optimization_config = _decode_optimization_config(data["optimization_config"])
     with _reading(f"{where} result"):
-        result = _decode_fit_result(data["result"], section_control_points)
+        result = _decode_fit_result(data["result"], section_control_points, spline_config.degree)
     with _reading(f"{where} loss history"):
         loss_history = [_decode_iteration_record(r) for r in data["loss_history"]]
 
@@ -348,10 +406,14 @@ def _decode_optimization_run(data: dict[str, Any], where: str) -> OptimizationRu
         )
 
 
-def _decode_metadata(data: dict[str, Any]) -> ProjectMetadata:
-    """Decode ProjectMetadata from JSON dict."""
+def _decode_metadata(data: dict[str, Any], format_version: str) -> ProjectMetadata:
+    """Decode ProjectMetadata from JSON dict.
+
+    Its stored ``format_version`` is not read: the file's top-level
+    ``format_version`` is given.
+    """
     return ProjectMetadata(
-        format_version=data.get("format_version", "1.0.0"),
+        format_version=format_version,
         created=data.get("created", ""),
         modified=data.get("modified", ""),
         app_version=data.get("app_version", ""),
@@ -359,14 +421,15 @@ def _decode_metadata(data: dict[str, Any]) -> ProjectMetadata:
     )
 
 
-def _decode_project(data: dict[str, Any]) -> ProjectFile:
-    """Decode ProjectFile from JSON dict."""
+def _decode_project(data: dict[str, Any], format_version: str = "1.0.0") -> ProjectFile:
+    """Decode ProjectFile from JSON dict; ``format_version`` is the file's
+    top-level version."""
     with _reading("Run list"):
         runs_data = list(data.get("optimization_runs", []))
     runs = [_decode_optimization_run(r, f"Run {i}") for i, r in enumerate(runs_data, start=1)]
     number_runs(runs)
     with _reading("Metadata"):
-        metadata = _decode_metadata(data["metadata"])
+        metadata = _decode_metadata(data["metadata"], format_version)
     with _reading("Airfoil"):
         airfoil = _decode_airfoil(data["airfoil"])
     return ProjectFile(metadata=metadata, airfoil=airfoil, optimization_runs=runs)
@@ -499,15 +562,18 @@ def save_project(project: ProjectFile, filepath: str, indent: int = 2) -> None:
 
     # Encode completely before touching the file, then replace it in one
     # step, so a failed save leaves the previous project intact
-    text = json.dumps(_encode_project(project), indent=indent, ensure_ascii=False,
-                      default=_json_default)
+    # Standard JSON: non-finite numbers become strings first, so allow_nan=False
+    # never fails on them
+    text = json.dumps(_standard_json(_encode_project(project)), indent=indent,
+                      ensure_ascii=False, allow_nan=False, default=_json_default)
     # Said up front: replacing it fails with the temporary file's name
     if os.path.exists(filepath) and not os.access(filepath, os.W_OK):
         raise PermissionError(f"{filepath} is read-only.")
     directory = os.path.dirname(os.path.abspath(filepath))
     fd, temp_path = tempfile.mkstemp(prefix=".", suffix=".tmp", dir=directory)
     try:
-        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+        # "\n" line ends on every platform
+        with os.fdopen(fd, 'w', encoding='utf-8', newline='\n') as f:
             f.write(text)
             f.flush()
             os.fsync(f.fileno())
@@ -557,34 +623,4 @@ def load_project(filepath: str) -> ProjectFile:
             f"Please update the application."
         )
 
-    return _decode_project(data)
-
-
-def get_run_summary(run: OptimizationRun) -> str:
-    """
-    Generate a human-readable summary of an optimization run.
-    
-    Args:
-        run: The optimization run to summarize
-        
-    Returns:
-        Multi-line summary string
-    """
-    cfg = run.spline_config
-    opt = run.optimization_config
-    res = run.result
-
-    lines = [
-        f"Run ID: {run.run_id[:8]}...",
-        f"Time: {run.timestamp}",
-        f"Optimizer: {opt.optimizer.display_name}",
-        f"Degree: {cfg.degree}, Control Points: {cfg.num_control_points} per section, "
-        f"{res.num_control_points} fitted",
-        f"Continuity: {', '.join(cfg.junction_specs()) or cfg.continuity.name}",
-        *([f"Tolerance: {opt.tolerance:.3e}"] if opt.tolerance else []),
-        f"Final Error: {res.final_error:.6e}",
-        f"Iterations: {res.num_iterations}, Evaluations: {res.num_evaluations}",
-        f"Elapsed: {res.elapsed_seconds:.2f}s",
-        f"Converged: {res.converged}",
-    ]
-    return "\n".join(lines)
+    return _decode_project(data, version)

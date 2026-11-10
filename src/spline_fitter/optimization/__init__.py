@@ -23,7 +23,6 @@ from .models import (
     Bounds,
     # Enumerations
     ContinuityMode,
-    EvaluationRecord,
     FitResult,
     IterationRecord,
     OptimizationConfig,
@@ -58,7 +57,6 @@ __all__ = [
     "FitResult",
     "BoundingBox",
     "IterationRecord",
-    "EvaluationRecord",
     "OptimizationRun",
     "ProjectFile",
     "ProjectMetadata",

@@ -28,7 +28,6 @@ from ..optimization import (
     run_optimization,
 )
 from ..optimization.models import (
-    ContinuityMode,
     OptimizationConfig,
     OptimizerType,
     SplineConfig,
@@ -42,11 +41,11 @@ if TYPE_CHECKING:
     from .ui import SplineFitterWindow
 
 
-# The settings of a new window: their outputs keep the plain name
-# <file>.deg<degree>.spline.dat, as before other settings were named
-DEFAULT_SPLINE = SplineConfig(continuity=ContinuityMode.G3, geometric_continuity=True)
-DEFAULT_OPTIMIZATION = OptimizationConfig(
-    knot_placement="uniform", grow_control_points=False)
+# The reference settings are the model defaults, which are also the settings
+# of a new window: their outputs keep the plain name
+# <file>.deg<degree>.spline.dat
+DEFAULT_SPLINE = SplineConfig()
+DEFAULT_OPTIMIZATION = OptimizationConfig()
 
 
 def _num(value: float) -> str:
@@ -89,20 +88,14 @@ def output_name(stem: str, config: SplineConfig, opt_config: OptimizationConfig,
         parts.append("tol-auto" if auto_tolerance else f"tol{_num(o.tolerance)}")
     if o.knot_placement != d_opt.knot_placement:
         parts.append(f"knots-{o.knot_placement}")
-    if o.grow_control_points != d_opt.grow_control_points:
-        parts.append("grow" if o.grow_control_points else "no-grow")
+    if o.grow_control_points:
+        parts.append("grow")
     if o.smoothing_weight != d_opt.smoothing_weight:
         parts.append(f"smooth{_num(o.smoothing_weight)}")
-    if o.smoothing_factor != d_opt.smoothing_factor and o.smoothing_factor is not None:
-        parts.append(f"sfactor{_num(o.smoothing_factor)}")
-    if o.max_points_per_section != d_opt.max_points_per_section:
+    if o.max_points_per_section is not None:
         parts.append(f"sub{o.max_points_per_section}")
-    if o.optimize_le_position != d_opt.optimize_le_position:
+    if o.optimize_le_position:
         parts.append("free-le")
-    if o.early_stop_patience != d_opt.early_stop_patience:
-        parts.append(f"patience{o.early_stop_patience}")
-    if o.relative_tolerance != d_opt.relative_tolerance:
-        parts.append(f"rtol{_num(o.relative_tolerance)}")
     return ".".join(parts) + ".spline.dat"
 
 

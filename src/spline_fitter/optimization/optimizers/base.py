@@ -74,7 +74,6 @@ class BaseOptimizer(ABC):
     
     Each optimizer implementation must provide:
         - name: Name for display/logging
-        - is_algebraic: Property indicating if non-iterative method
     """
 
     @property
@@ -83,22 +82,11 @@ class BaseOptimizer(ABC):
         """Return the optimizer name for display/logging."""
         pass
 
-    @property
-    def is_algebraic(self) -> bool:
-        """Return True if this is an algebraic (non-iterative) method."""
-        return False
-
 
 class AlgebraicOptimizer(BaseOptimizer):
     """
-    Base class for algebraic (non-iterative) optimization methods.
-    
-    These methods solve for the solution directly rather than iterating.
+    Base class of the two optimizers, which are called the same way.
     """
-
-    @property
-    def is_algebraic(self) -> bool:
-        return True
 
     @abstractmethod
     def fit(
@@ -107,15 +95,20 @@ class AlgebraicOptimizer(BaseOptimizer):
         opt_config: OptimizationConfig,
         airfoil: AirfoilData,
         callback: Callable[..., bool] | None = None,
+        should_stop: Callable[[], bool] | None = None,
     ) -> RawOptimResult:
         """
-        Fit splines using an algebraic method.
+        Fit splines to the airfoil's sections.
         
         Args:
             config: Spline configuration
             opt_config: Optimization configuration
             airfoil: Airfoil data to fit
-            callback: Optional progress callback(x, error)
+            callback: Optional progress callback, always called as
+                ``callback(x, error, preview=(control points per section,
+                knots per section or None, degree), step=<bool>)``;
+                returns true to stop
+            should_stop: Optional check for a cancel request
             
         Returns:
             RawOptimResult with computed control points

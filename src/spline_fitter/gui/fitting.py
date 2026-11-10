@@ -32,7 +32,6 @@ from ..optimization.models import (
     FitResult,
     IterationRecord,
     OptimizationConfig,
-    OptimizerType,
     SplineConfig,
 )
 from .background import run_in_background
@@ -57,11 +56,9 @@ def _count(value: int, noun: str) -> str:
 
 def fit_effort(result, opt_config: OptimizationConfig, evaluations: int) -> str:
     """What a fit took: its residual evaluations, and the refits of a
-    tolerance search; Direct LSQ counts its linear solves instead."""
+    tolerance search (Direct LSQ, a single solve, is one evaluation)."""
     if opt_config.tolerance is not None:
         return f"{_count(result.nit, 'refit')}, {_count(evaluations, 'evaluation')}"
-    if opt_config.optimizer == OptimizerType.DIRECT_LSQ:
-        return _count(evaluations or result.nit, "solve")
     return _count(evaluations, "evaluation")
 
 
@@ -98,6 +95,20 @@ class FittingController:
         if active_sweeps:
             self._run_sweep_fit(config, opt_config, active_sweeps)
             return
+
+        # The split belongs to the fit: a changed section count re-splits
+        # the airfoil now, not when the Sections value changes
+        if w._airfoil.num_sections != config.num_sections:
+            airfoil = w._airfoil
+            try:
+                w._airfoil = create_airfoil_data(
+                    list(airfoil.coordinates), filename=airfoil.filename,
+                    name=airfoil.name, precision=airfoil.precision,
+                    num_sections=config.num_sections,
+                )
+            except ValueError as e:
+                w.statusBar().showMessage(str(e))
+                return
 
         # Clear sweep state when doing single fit
         self._sweep_results = []
@@ -542,10 +553,12 @@ class FittingController:
         order = {self._window._sweep_sections: 0, self._window._sweep_degree: 1}
         boxes = sorted(zip((box for box, _ in axes), values, strict=True),
                        key=lambda bv: order.get(bv[0], 2))
-        for box, _ in boxes:
-            box.stop_sweep()
-        for box, v in boxes:
-            box.spinbox.setValue(v)
+        # One undo step back to the sweep settings, however long it takes
+        with self._window._settings_history.group():
+            for box, _ in boxes:
+                box.stop_sweep()
+            for box, v in boxes:
+                box.spinbox.setValue(v)
 
     def _show_sweep_comparison(self) -> tuple[tuple, FitResult]:
         """Plot the errors of all project runs along the sweep's x axis and

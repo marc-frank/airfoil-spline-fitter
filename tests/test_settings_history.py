@@ -36,3 +36,20 @@ def test_user_change_right_after_a_quiet_change_is_a_step():
     # Back to before the user's change, with the quiet change kept
     assert (user.value(), auto.value()) == (0, 5)
     assert not history.can_undo()
+
+
+def test_a_group_is_one_step_even_when_the_timer_expires_inside():
+    user, auto, history = _history()
+    user.setValue(1)  # pending: the group commits it as a step of its own
+    with history.group():
+        user.setValue(2)
+        assert not history._timer.isActive()  # no merge timer to expire mid-group
+        auto.setValue(3)
+        with history.group():  # an inner group is part of the outer one
+            auto.setValue(4)
+        assert len(history._states) == 2
+    assert len(history._states) == 3
+    history.undo()
+    assert (user.value(), auto.value()) == (1, 0)
+    history.undo()
+    assert (user.value(), auto.value()) == (0, 0)

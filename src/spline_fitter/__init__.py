@@ -16,7 +16,7 @@ Architecture
 The package is organized into focused modules:
 
     optimization    Data models (optimization.models), optimizer wrappers, error logging
-    spline          Core B-spline mathematics, curve evaluation and fairness metrics
+    spline          B-spline curve evaluation and curvature helpers
     geometry        Coordinate processing and geometric utilities
     io              Airfoil and spline .dat files
     project_io      Project files (.asfproj)
@@ -46,14 +46,15 @@ Or programmatically:
 __version__ = "2.0.0"
 __author__ = "Airfoil Library Project"
 
+import importlib.util as _importlib_util
 import sys as _sys
 from pathlib import Path as _Path
 
-# Running from a source checkout: use the checkout's own bspline-varpro, so the
-# app and the library always come from the same revision
+# Running from a source checkout without an installed bspline-varpro: use the
+# checkout's own. An installed library is never shadowed.
 _checkout_library = _Path(__file__).resolve().parents[2] / "packages" / "bspline-varpro" / "src"
-if _checkout_library.is_dir() and str(_checkout_library) not in _sys.path:
-    _sys.path.insert(0, str(_checkout_library))
+if _importlib_util.find_spec("bspline_varpro") is None and _checkout_library.is_dir():
+    _sys.path.append(str(_checkout_library))
 
 # Core data models
 # Fit analysis
@@ -79,7 +80,6 @@ from .optimization.models import (
     AirfoilData,
     BoundingBox,
     ContinuityMode,
-    EvaluationRecord,  # Backwards compatibility alias
     FitResult,
     IterationRecord,
     OptimizationConfig,
@@ -95,21 +95,16 @@ from .project_io import (
     create_optimization_run,
     create_project,
     create_project_metadata,
-    get_run_summary,
     load_project,
     save_project,
 )
 
 # Spline mathematics
-# Fairness metrics
 from .spline import (
     BSplineCurve2D,
     compute_arc_length,
     compute_curvature_derivative,
-    compute_curve_energy,
-    compute_polygon_metrics,
     compute_signed_curvature,
-    create_open_uniform_knots,
 )
 
 __all__ = [
@@ -125,13 +120,11 @@ __all__ = [
     "FitResult",
     "BoundingBox",
     "IterationRecord",
-    "EvaluationRecord",  # Backwards compatibility alias
     "OptimizationRun",
     "ProjectFile",
     "ProjectMetadata",
     # Spline math
     "BSplineCurve2D",
-    "create_open_uniform_knots",
     "compute_signed_curvature",
     "compute_curvature_derivative",
     "compute_arc_length",
@@ -146,9 +139,6 @@ __all__ = [
     # Optimization
     "run_optimization",
     "OptimizerErrorLogger",
-    # Fairness
-    "compute_polygon_metrics",
-    "compute_curve_energy",
     # Analysis
     "fit_report",
     "scipy_curves",
@@ -158,7 +148,6 @@ __all__ = [
     "create_project",
     "create_project_metadata",
     "create_optimization_run",
-    "get_run_summary",
     # UI
     "SplineFitterWindow",
 ]

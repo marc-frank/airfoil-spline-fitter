@@ -448,7 +448,7 @@ def test_global_number_comparison_compares_the_error(window):
     comparison in the global filter compares the error; words still match
     any column."""
     for ctrl, error in ((10, 3e-4), (14, 1e-5), (12, 5e-5)):
-        _add(window, ctrl, error)
+        _add(window, ctrl, error, knot_placement="free")
     _add(window, 8, 2e-3, optimizer=OptimizerType.DIRECT_LSQ)
     table = window._run_table
     table.filter_edit.setText(">1e-5")
@@ -459,6 +459,19 @@ def test_global_number_comparison_compares_the_error(window):
     assert _column(window, "Control points") == ["14", "12"]
     table.filter_edit.setText("=free")
     assert _column(window, "Control points") == ["10", "14", "12"]
+
+
+def test_global_not_equal_term_is_the_opposite_of_equal(window):
+    """!=text matches a run when no cell equals text: the rows =text hides."""
+    _add(window, 10, 3e-4, knot_placement="uniform")
+    _add(window, 14, 1e-5, knot_placement="free")
+    _add(window, 8, 2e-3, optimizer=OptimizerType.DIRECT_LSQ)  # Knots blank
+    assert _column(window, "Knots") == ["Uniform", "Free", ""]
+    table = window._run_table
+    table.filter_edit.setText("=free")
+    assert _column(window, "Control points") == ["14"]
+    table.filter_edit.setText("!=free")
+    assert _column(window, "Control points") == ["10", "8"]
 
 
 @pytest.mark.parametrize("order", [Qt.SortOrder.AscendingOrder, Qt.SortOrder.DescendingOrder])
