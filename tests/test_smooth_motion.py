@@ -7,7 +7,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtCore import QPoint, QPointF, Qt  # noqa: E402
+from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt  # noqa: E402
 from PyQt6.QtGui import QWheelEvent  # noqa: E402
 from PyQt6.QtTest import QTest  # noqa: E402
 from PyQt6.QtWidgets import QApplication, QListWidget, QScrollArea, QWidget  # noqa: E402
@@ -22,6 +22,9 @@ _APP = QApplication.instance() or QApplication([])
 
 @pytest.fixture
 def app():
+    # Windows of earlier tests freed with deleteLater are deleted here, not
+    # during a glide, whose timing the tests measure
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
     install_smooth_scrolling(_APP)
     return _APP
 

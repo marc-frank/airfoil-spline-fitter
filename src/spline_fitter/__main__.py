@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from typing import NoReturn
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -31,13 +32,21 @@ Examples:
     return parser.parse_args()
 
 
-def main() -> int:
+def main() -> NoReturn:
     """
-    Run the spline fitter application.
+    Run the spline fitter application, then end the process with the event
+    loop's exit code (0 for success).
 
-    Returns:
-        Exit code (0 for success)
+    It does not return: PyQt and pyqtgraph can crash while the interpreter
+    tears down Qt objects after a clean exit (pyqtgraph's own notes say so),
+    so the process ends before that teardown, once the window is destroyed
+    (which saves its settings) and logging and the output are flushed.
     """
+    import gc
+    import logging
+    import os
+
+    from PyQt6.QtCore import QEvent
     from PyQt6.QtWidgets import QApplication
 
     from .gui.ui import SplineFitterWindow
@@ -61,7 +70,21 @@ def main() -> int:
     window.showMaximized()
 
     # Run event loop
-    return app.exec()
+    code = app.exec()
+
+    # Destroy the window while the application still exists (its QSettings
+    # writes reach the store when they are destroyed with it)
+    window.deleteLater()
+    app.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    del window
+    gc.collect()
+    # Exit handlers are skipped (a library's handler can crash once the window
+    # is gone; pyqtgraph's cleanup already ran when the application quit); the
+    # application registers none, and logging is flushed here instead
+    logging.shutdown()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(code)
 
 
 def cli_entry() -> None:
