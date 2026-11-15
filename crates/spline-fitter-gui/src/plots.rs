@@ -1,23 +1,24 @@
 //! The plots: the airfoil with its fit and overlays, convergence, the
 //! comparison of runs, and the thickness and camber of a report.
 //!
-//! egui_plot supplies the frame, axes, grid and panning; every item is
-//! painted through the plot's transform, so lines break at gaps, markers
-//! have the Loft shapes and items stack in drawing order. Log axes plot
-//! `log10` of the values with decade labels. The wheel zooms about the
-//! cursor in a short glide.
+//! A plot is a framed canvas with axes on the left and bottom, drawn as the
+//! Python version drew them (see `axes`); egui_plot supplies the transform
+//! and panning. Every item is painted through the transform, so lines
+//! break at gaps, markers have the Loft shapes and items stack in drawing
+//! order. Log axes plot `log10` of the values with decade labels. The
+//! wheel zooms about the cursor in a short glide.
 
 use std::time::Instant;
 
 use eframe::egui::{self, Color32, Event, MouseWheelUnit, Pos2, Rect, Response, Shape, Stroke, Ui, Vec2 as EVec2};
-use egui_plot::{GridMark, Plot, PlotBounds, PlotPoint, PlotTransform};
+use egui_plot::{Plot, PlotBounds, PlotPoint, PlotTransform};
 use spline_fitter::analysis::{foot_points, FootPoints};
 use spline_fitter::bspline_varpro::basis::{distinct, linspace};
-use spline_fitter::formatting::number;
 use spline_fitter::{BSpline, Vec2};
 
+use crate::axes;
 use crate::overlays::{comb, deviation, Deviation, ParityStrokes, Strokes};
-use crate::theme::{alpha, size, Palette, INK, TEETH_ALPHA};
+use crate::theme::{alpha, size, typeface, Palette, INK, TEETH_ALPHA};
 
 /// A running zoom glide.
 struct Glide {
@@ -27,28 +28,30 @@ struct Glide {
     center: PlotPoint,
 }
 
-/// View state of one plot: the zoom glide, a pending range and whether it
-/// follows its data.
+/// View state of one plot: the zoom glide, a pending range, whether it
+/// follows its data and the space its axes keep for tick labels.
 pub struct View {
     glide: Option<Glide>,
+    /// Data bounds to show on the next frame, padded for the plot's size.
     pending: Option<PlotBounds>,
     /// Fit the range to the data when it changes, until the user zooms or pans.
     pub follow: bool,
+    /// Width of the left axis's labels and height of the bottom axis's.
+    left_text: f32,
+    bottom_text: f32,
 }
 
 impl Default for View {
     fn default() -> Self {
-        View { glide: None, pending: None, follow: true }
+        View { glide: None, pending: None, follow: true, left_text: 30.0, bottom_text: 18.0 }
     }
 }
 
 impl View {
-    /// Shows `bounds` (with a margin) on the next frame.
+    /// Shows `bounds` (padded as an automatic range) on the next frame.
     pub fn fit(&mut self, bounds: Option<PlotBounds>) {
         if let Some(b) = bounds {
-            let (min, max) = (b.min(), b.max());
-            let pad = [(max[0] - min[0]).max(1e-12) * 0.05, (max[1] - min[1]).max(1e-12) * 0.05];
-            self.pending = Some(PlotBounds::from_min_max([min[0] - pad[0], min[1] - pad[1]], [max[0] + pad[0], max[1] + pad[1]]));
+            self.pending = Some(b);
         }
         self.glide = None;
     }
@@ -80,19 +83,73 @@ pub struct Axes<'a> {
     pub equal_aspect: bool,
 }
 
-/// Tick text: the display decimal point; on a log axis the decades.
-fn tick_label(mark: GridMark, log: bool) -> String {
-    if log {
-        let rounded = mark.value.round();
-        if (mark.value - rounded).abs() > 1e-9 || mark.step_size < 0.99 {
-            return String::new();
-        }
-        return number(10f64.powf(rounded), "g");
-    }
-    number(mark.value, "g")
+/// Space between the plot frame and the plot item (half the 3 px outline
+/// of an export, rounded up, inside the 1 px border).
+const FRAME_INSET: f32 = 3.0;
+/// The plot item's margins: small at the axes, even above and right.
+const AXIS_MARGIN: f32 = size::TIGHT;
+const PLOT_MARGIN: f32 = 24.0;
+/// What an axis label adds to its axis (0.8 of the label's line box).
+const LABEL_EXTENT: f32 = 17.6;
+/// Gap between the axis line and its tick labels: left, bottom.
+const TICK_OFFSET: [f32; 2] = [5.0, 2.0];
+/// Tick labels a point below the base size; axis labels at the base size.
+const TICK_FONT: f32 = typeface::BASE * 8.0 / 9.0;
+
+/// Ticks of one axis, per level: screen positions and labels (`None`: not drawn).
+struct AxisTicks {
+    levels: Vec<Vec<(f32, Option<String>)>>,
 }
 
-/// Shows a plot frame and returns its transform; `paint` draws the items.
+/// The ticks of an axis showing `range` on `length` pixels, or the given
+/// labels of a categorical axis.
+fn axis_ticks(
+    range: (f64, f64),
+    length: f32,
+    log: bool,
+    labels: Option<&[(f64, String)]>,
+    to_screen: impl Fn(f64) -> f32,
+    measure: impl Fn(&str) -> f32,
+) -> AxisTicks {
+    let levels: Vec<(Vec<f64>, Vec<String>)> = match labels {
+        Some(given) => vec![(given.iter().map(|g| g.0).collect(), given.iter().map(|g| g.1.clone()).collect())],
+        None => {
+            let decade = axes::decade_in_view(range.0, range.1);
+            axes::tick_values(range.0, range.1, length as f64, log)
+                .into_iter()
+                .map(|l| {
+                    let strings = axes::tick_strings(&l.values, l.spacing, log, decade);
+                    (l.values, strings)
+                })
+                .collect()
+        }
+    };
+    let (a, b) = (to_screen(range.0), to_screen(range.1));
+    let (low, high) = (a.min(b), a.max(b));
+    let positioned: Vec<Vec<(f32, String)>> = levels
+        .iter()
+        .map(|(values, strings)| {
+            values
+                .iter()
+                .zip(strings)
+                .map(|(&v, s)| (to_screen(v), s.clone()))
+                .filter(|(x, _)| *x >= low - 0.5 && *x <= high + 0.5)
+                .collect()
+        })
+        .collect();
+    let extents: Vec<Vec<f32>> =
+        positioned.iter().map(|l| l.iter().filter(|(_, s)| !s.is_empty()).map(|(_, s)| measure(s)).collect()).collect();
+    let labelled = if labels.is_some() { positioned.len() } else { axes::labelled_levels(&extents, length) };
+    AxisTicks {
+        levels: positioned
+            .into_iter()
+            .enumerate()
+            .map(|(i, l)| l.into_iter().map(|(x, s)| (x, (i < labelled && !s.is_empty()).then_some(s))).collect())
+            .collect(),
+    }
+}
+
+/// Shows a framed plot and returns its response; `paint` draws the items.
 pub fn show_plot(
     ui: &mut Ui,
     p: &Palette,
@@ -102,94 +159,194 @@ pub fn show_plot(
     motion_ms: u64,
     paint: impl FnOnce(&Canvas),
 ) -> Response {
-    let rect = ui.available_rect_before_wrap();
-    ui.painter().rect_filled(rect, 0.0, p.canvas);
+    let outer = ui.available_rect_before_wrap();
+    let radius = egui::CornerRadius::same(size::RADIUS);
+    ui.painter().rect_filled(outer, radius, p.canvas);
+    ui.painter().rect_stroke(outer, radius, Stroke::new(1.0, p.rule), egui::StrokeKind::Inside);
+    let item = outer.shrink(FRAME_INSET);
+    let left = item.left() + AXIS_MARGIN + view.left_text + TICK_OFFSET[0] + LABEL_EXTENT;
+    let bottom = item.bottom() - AXIS_MARGIN - (view.bottom_text + TICK_OFFSET[1] + LABEL_EXTENT);
+    let frame = Rect::from_min_max(egui::pos2(left, item.top() + PLOT_MARGIN), egui::pos2(item.right() - PLOT_MARGIN, bottom));
+    let frame = if frame.width() > 1.0 && frame.height() > 1.0 { frame } else { Rect::from_min_size(item.min, EVec2::splat(2.0)) };
+
     let log_x = axes.log_x;
     let log_y = axes.log_y;
-    let ticks = axes.x_ticks.map(|t| t.to_vec());
     let mut plot = Plot::new(id)
-        .x_axis_label(egui::RichText::new(axes.x_label).color(p.text_2))
-        .y_axis_label(egui::RichText::new(axes.y_label).color(p.text_2))
+        .show_axes(false)
+        .show_grid(false)
+        .show_x(false)
+        .show_y(false)
         .allow_zoom(false)
         .allow_scroll(false)
         .allow_boxed_zoom(false)
         .allow_double_click_reset(false)
         .show_background(false)
-        .auto_bounds(false)
-        .grid_color(alpha(p.text_2, (crate::theme::GRID_ALPHA * 255.0) as u8 + 10))
-        .x_axis_formatter(move |mark, _| match &ticks {
-            Some(ticks) => ticks.iter().find(|(v, _)| (v - mark.value).abs() < 1e-9).map(|(_, t)| t.clone()).unwrap_or_default(),
-            None => tick_label(mark, log_x),
-        })
-        .y_axis_formatter(move |mark, _| tick_label(mark, log_y))
-        .label_formatter(|_| None);
+        .auto_bounds(false);
     if axes.equal_aspect {
         plot = plot.data_aspect(1.0);
     }
-    let pending = view.pending.take();
+    // An automatic range is padded by 1/sqrt(pixels) of its width, 2 to 10 %.
+    let pending = view.pending.take().map(|b| {
+        let (x0, x1) = axes::padded(b.min()[0], b.max()[0], axes::auto_padding(frame.width() as f64));
+        let (y0, y1) = axes::padded(b.min()[1], b.max()[1], axes::auto_padding(frame.height() as f64));
+        PlotBounds::from_min_max([x0, y0], [x1, y1])
+    });
     let glide = &mut view.glide;
     let mut user_moved = false;
-    let response = plot.show(ui, |plot_ui| {
-        if let Some(b) = pending {
-            plot_ui.set_plot_bounds(b);
-        }
-        let response = plot_ui.response().clone();
-        if response.dragged() {
-            *glide = None;
-            user_moved = true;
-        }
-        if response.double_clicked() {
-            user_moved = false;
-        }
-        // Wheel: glide the zoom about the cursor.
-        if response.hovered() {
-            let notches: f64 = plot_ui.ctx().input(|i| {
-                i.events
-                    .iter()
-                    .map(|e| match e {
-                        Event::MouseWheel { unit: MouseWheelUnit::Line, delta, .. } => delta.y as f64,
-                        Event::MouseWheel { unit: MouseWheelUnit::Point, delta, .. } => delta.y as f64 / 50.0,
-                        Event::MouseWheel { unit: MouseWheelUnit::Page, delta, .. } => delta.y as f64 * 3.0,
-                        _ => 0.0,
-                    })
-                    .sum()
-            });
-            if notches != 0.0 {
-                let log = 1.02f64.ln() * 15.0 * notches;
-                let remaining = glide.as_ref().map_or(0.0, |g| g.total * (1.0 - g.done));
-                let center = plot_ui.pointer_coordinate().unwrap_or_else(|| {
-                    let b = plot_ui.plot_bounds();
-                    PlotPoint::new((b.min()[0] + b.max()[0]) / 2.0, (b.min()[1] + b.max()[1]) / 2.0)
-                });
-                *glide = Some(Glide { total: log + remaining, done: 0.0, start: Instant::now(), center });
-                user_moved = true;
-            }
-        }
-        if let Some(g) = glide {
-            let progress = if motion_ms == 0 {
-                1.0
-            } else {
-                let t = (g.start.elapsed().as_secs_f64() * 1000.0 / motion_ms as f64).min(1.0);
-                1.0 - (1.0 - t).powi(3)
-            };
-            let factor = (g.total * (progress - g.done)).exp() as f32;
-            plot_ui.zoom_bounds(EVec2::splat(factor), g.center);
-            g.done = progress;
-            if progress >= 1.0 {
-                *glide = None;
-            } else {
-                plot_ui.ctx().request_repaint();
-            }
-        }
-    });
+    let response = ui
+        .scope_builder(egui::UiBuilder::new().max_rect(frame), |ui| {
+            plot.show(ui, |plot_ui| {
+                if let Some(b) = pending {
+                    plot_ui.set_plot_bounds(b);
+                }
+                let response = plot_ui.response().clone();
+                if response.dragged() {
+                    *glide = None;
+                    user_moved = true;
+                }
+                if response.double_clicked() {
+                    user_moved = false;
+                }
+                // Wheel: glide the zoom about the cursor.
+                if response.hovered() {
+                    let notches: f64 = plot_ui.ctx().input(|i| {
+                        i.events
+                            .iter()
+                            .map(|e| match e {
+                                Event::MouseWheel { unit: MouseWheelUnit::Line, delta, .. } => delta.y as f64,
+                                Event::MouseWheel { unit: MouseWheelUnit::Point, delta, .. } => delta.y as f64 / 50.0,
+                                Event::MouseWheel { unit: MouseWheelUnit::Page, delta, .. } => delta.y as f64 * 3.0,
+                                _ => 0.0,
+                            })
+                            .sum()
+                    });
+                    if notches != 0.0 {
+                        let log = 1.02f64.ln() * 15.0 * notches;
+                        let remaining = glide.as_ref().map_or(0.0, |g| g.total * (1.0 - g.done));
+                        let center = plot_ui.pointer_coordinate().unwrap_or_else(|| {
+                            let b = plot_ui.plot_bounds();
+                            PlotPoint::new((b.min()[0] + b.max()[0]) / 2.0, (b.min()[1] + b.max()[1]) / 2.0)
+                        });
+                        *glide = Some(Glide { total: log + remaining, done: 0.0, start: Instant::now(), center });
+                        user_moved = true;
+                    }
+                }
+                if let Some(g) = glide {
+                    let progress = if motion_ms == 0 {
+                        1.0
+                    } else {
+                        let t = (g.start.elapsed().as_secs_f64() * 1000.0 / motion_ms as f64).min(1.0);
+                        1.0 - (1.0 - t).powi(3)
+                    };
+                    let factor = (g.total * (progress - g.done)).exp() as f32;
+                    plot_ui.zoom_bounds(EVec2::splat(factor), g.center);
+                    g.done = progress;
+                    if progress >= 1.0 {
+                        *glide = None;
+                    } else {
+                        plot_ui.ctx().request_repaint();
+                    }
+                }
+            })
+        })
+        .inner;
+    ui.allocate_rect(outer, egui::Sense::hover());
     if user_moved {
         view.follow = false;
     }
     if response.response.double_clicked() {
         view.follow = true;
     }
-    let canvas = Canvas { painter: ui.painter_at(*response.transform.frame()), transform: response.transform, log_x, log_y };
+    let transform = response.transform;
+    let frame = *transform.frame();
+    let bounds = *transform.bounds();
+    let tick_font = egui::FontId::proportional(TICK_FONT);
+    let measure = |text: &str| ui.painter().layout_no_wrap(text.to_string(), tick_font.clone(), p.text_2).size();
+    let x_ticks = axis_ticks(
+        (bounds.min()[0], bounds.max()[0]),
+        frame.width(),
+        log_x,
+        axes.x_ticks,
+        |v| transform.position_from_point_x(v),
+        |s| measure(s).x,
+    );
+    let y_ticks = axis_ticks(
+        (bounds.min()[1], bounds.max()[1]),
+        frame.height(),
+        log_y,
+        None,
+        |v| transform.position_from_point_y(v),
+        |s| measure(s).y * 0.8,
+    );
+
+    // The grid: every tick level, fainter for lower levels.
+    let painter = ui.painter_at(frame);
+    let grid = |index: usize, count: usize, length: f32| {
+        let a = axes::grid_alpha(index, count, length as f64, crate::theme::GRID_ALPHA as f64);
+        alpha(p.text_2, a.round().clamp(0.0, 255.0) as u8)
+    };
+    for (i, level) in x_ticks.levels.iter().enumerate() {
+        let color = grid(i, level.len(), frame.width());
+        for (x, _) in level {
+            painter.vline(x.round() + 0.5, frame.y_range(), Stroke::new(1.0, color));
+        }
+    }
+    for (i, level) in y_ticks.levels.iter().enumerate() {
+        let color = grid(i, level.len(), frame.height());
+        for (y, _) in level {
+            painter.hline(frame.x_range(), y.round() + 0.5, Stroke::new(1.0, color));
+        }
+    }
+
+    let canvas = Canvas { painter: ui.painter_at(frame), transform, log_x, log_y };
     paint(&canvas);
+
+    // Axis lines, tick labels and axis labels.
+    let painter = ui.painter_at(outer);
+    let line = Stroke::new(1.0, p.text_2);
+    painter.vline(frame.left() - 0.5, frame.top() - 1.0..=frame.bottom() + 1.0, line);
+    painter.hline(frame.left() - 1.0..=frame.right() + 1.0, frame.bottom() + 0.5, line);
+    let mut widest: f32 = 0.0;
+    for (y, text) in y_ticks.levels.iter().flatten() {
+        let Some(text) = text else { continue };
+        if *y < frame.top() - 15.0 || *y > frame.bottom() + 15.0 {
+            continue;
+        }
+        let galley = painter.layout_no_wrap(text.clone(), tick_font.clone(), p.text_2);
+        let size = galley.size();
+        widest = widest.max(size.x);
+        painter.galley(egui::pos2(frame.left() - TICK_OFFSET[0] - size.x, y - size.y / 2.0), galley, p.text_2);
+    }
+    let mut tallest: f32 = 0.0;
+    for (x, text) in x_ticks.levels.iter().flatten() {
+        let Some(text) = text else { continue };
+        let galley = painter.layout_no_wrap(text.clone(), tick_font.clone(), p.text_2);
+        let size = galley.size();
+        if x - size.x / 2.0 < frame.left() - 1.0 || x + size.x / 2.0 > frame.right() + 1.0 {
+            continue;
+        }
+        tallest = tallest.max(size.y * 0.8);
+        painter.galley(egui::pos2(x - size.x / 2.0, frame.bottom() + TICK_OFFSET[1] + 0.5), galley, p.text_2);
+    }
+    let label_font = egui::FontId::proportional(typeface::BASE);
+    if !axes.x_label.is_empty() {
+        let bottom_axis = view.bottom_text + TICK_OFFSET[1] + LABEL_EXTENT;
+        let at = egui::pos2(frame.center().x, frame.bottom() + bottom_axis - 6.0);
+        painter.text(at, egui::Align2::CENTER_CENTER, axes.x_label, label_font.clone(), p.text_2);
+    }
+    if !axes.y_label.is_empty() {
+        let galley = painter.layout_no_wrap(axes.y_label.to_string(), label_font, p.text_2);
+        let center = egui::pos2(item.left() + AXIS_MARGIN + 6.0, frame.center().y);
+        let at = center + EVec2::new(-galley.size().y / 2.0, galley.size().x / 2.0);
+        painter.add(egui::epaint::TextShape::new(at, galley, p.text_2).with_angle(-std::f32::consts::FRAC_PI_2));
+    }
+    let left_text = axes::text_space(view.left_text, widest);
+    let bottom_text = axes::text_space(view.bottom_text, tallest.max(18.0));
+    if (left_text, bottom_text) != (view.left_text, view.bottom_text) {
+        view.left_text = left_text;
+        view.bottom_text = bottom_text;
+        ui.ctx().request_repaint();
+    }
     response.response
 }
 

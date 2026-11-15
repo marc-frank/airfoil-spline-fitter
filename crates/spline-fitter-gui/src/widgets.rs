@@ -8,27 +8,45 @@ use crate::theme::{size, typeface, Glyph, Palette, INK, INK_HOVER, ON_INK};
 
 /// An uppercase caption naming a region.
 pub fn caption(ui: &mut Ui, p: &Palette, text: &str) -> Response {
-    ui.label(RichText::new(text.to_uppercase()).size(typeface::CAPTION).strong().color(p.text_3).extra_letter_spacing(0.8))
+    ui.label(
+        RichText::new(text.to_uppercase()).font(crate::fonts::semibold_id(typeface::CAPTION)).color(p.text_3).extra_letter_spacing(1.0),
+    )
 }
 
-/// Muted text: hints and notes.
+/// Muted text: hints and notes, a size below the base.
 pub fn muted(ui: &mut Ui, p: &Palette, text: impl Into<String>) -> Response {
-    ui.label(RichText::new(text.into()).color(p.text_3))
+    ui.label(RichText::new(text.into()).size(typeface::MUTED).color(p.text_3))
 }
 
 /// A form row: a label column of fixed width, then the field.
 pub fn form_row<R>(ui: &mut Ui, p: &Palette, label: &str, enabled: bool, tooltip: &str, field: impl FnOnce(&mut Ui) -> R) -> R {
-    ui.horizontal(|ui| {
-        ui.set_min_height(size::CONTROL_HEIGHT);
-        let color = if enabled { p.text_2 } else { p.text_3 };
-        let (rect, response) = ui.allocate_exact_size(Vec2::new(size::LABEL_WIDTH, size::CONTROL_HEIGHT), Sense::hover());
-        ui.painter().text(rect.left_center(), egui::Align2::LEFT_CENTER, label, FontId::proportional(typeface::BASE), color);
-        if !tooltip.is_empty() {
-            response.on_hover_text(tooltip);
-        }
-        field(ui)
-    })
-    .inner
+    form_row_of(ui, p, label, enabled, tooltip, size::CONTROL_HEIGHT, field)
+}
+
+/// A form row holding a check box: as tall as a line of text.
+pub fn check_row<R>(ui: &mut Ui, p: &Palette, label: &str, enabled: bool, field: impl FnOnce(&mut Ui) -> R) -> R {
+    form_row_of(ui, p, label, enabled, "", size::CHECK_ROW_HEIGHT, field)
+}
+
+fn form_row_of<R>(ui: &mut Ui, p: &Palette, label: &str, enabled: bool, tooltip: &str, height: f32, field: impl FnOnce(&mut Ui) -> R) -> R {
+    // A horizontal layout starts as tall as an interactive item.
+    let interact = ui.spacing().interact_size.y;
+    ui.spacing_mut().interact_size.y = height;
+    let inner = ui
+        .horizontal(|ui| {
+            ui.set_min_height(height);
+            let color = if enabled { p.text_2 } else { p.text_3 };
+            let (rect, response) = ui.allocate_exact_size(Vec2::new(size::LABEL_WIDTH, height), Sense::hover());
+            ui.add_space(size::GROUP - ui.spacing().item_spacing.x);
+            ui.painter().text(rect.left_center(), egui::Align2::LEFT_CENTER, label, FontId::proportional(typeface::BASE), color);
+            if !tooltip.is_empty() {
+                response.on_hover_text(tooltip);
+            }
+            field(ui)
+        })
+        .inner;
+    ui.spacing_mut().interact_size.y = interact;
+    inner
 }
 
 /// The primary action, in ink.
@@ -42,14 +60,54 @@ pub fn primary_button(ui: &mut Ui, text: &str, width: f32) -> Response {
         INK
     };
     ui.painter().rect_filled(rect, CornerRadius::same(size::RADIUS), fill);
-    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, text, FontId::proportional(typeface::BASE), ON_INK);
+    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, text, crate::fonts::semibold_id(typeface::BASE), ON_INK);
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// The outline of a checked button or segment: the selection line.
+pub fn outline_checked(ui: &Ui, p: &Palette, response: &Response, radius: CornerRadius) {
+    if ui.is_enabled() {
+        ui.painter().rect_stroke(response.rect, radius, egui::Stroke::new(1.0, p.select_line), egui::StrokeKind::Inside);
+    }
+}
+
+/// A checkable tool button, outlined when checked.
+pub fn toggle_button(ui: &mut Ui, p: &Palette, text: &str, checked: bool, tooltip: &str) -> Response {
+    let padding = ui.spacing().button_padding.x;
+    ui.spacing_mut().button_padding.x = size::TOOL_BUTTON_PADDING;
+    let response = ui.add(Button::new(text).selected(checked).min_size(Vec2::new(0.0, size::CONTROL_HEIGHT)));
+    ui.spacing_mut().button_padding.x = padding;
+    if checked {
+        outline_checked(ui, p, &response, CornerRadius::same(size::RADIUS));
+    }
+    if tooltip.is_empty() {
+        response
+    } else {
+        response.on_hover_text(tooltip)
+    }
+}
+
+/// A flat square button showing a glyph: no frame until hovered.
+pub fn flat_icon_button(ui: &mut Ui, p: &Palette, glyph: Glyph, tooltip: &str) -> Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(size::CONTROL_HEIGHT), Sense::click());
+    if response.hovered() && ui.is_enabled() {
+        ui.painter().rect_filled(rect, CornerRadius::same(size::RADIUS), p.field_hover);
+    }
+    glyph.paint(ui.painter(), rect.center(), size::GLYPH, if ui.is_enabled() { p.text_2 } else { p.text_3 });
+    if tooltip.is_empty() {
+        response
+    } else {
+        response.on_hover_text(tooltip)
+    }
 }
 
 /// A square button showing a glyph.
 pub fn icon_button(ui: &mut Ui, p: &Palette, glyph: Glyph, checked: bool, tooltip: &str) -> Response {
     let side = size::CONTROL_HEIGHT;
     let response = ui.add(Button::new("").min_size(Vec2::splat(side)).selected(checked));
+    if checked {
+        outline_checked(ui, p, &response, CornerRadius::same(size::RADIUS));
+    }
     let color = if !ui.is_enabled() {
         p.text_3
     } else if checked {
@@ -69,6 +127,7 @@ pub fn icon_button(ui: &mut Ui, p: &Palette, glyph: Glyph, checked: bool, toolti
 /// Joined buttons for a choice of two to four short options; returns true
 /// when the choice changed.
 pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, items: &[(T, &str, &str)], width: f32) -> bool {
+    let select_line = ui.visuals().widgets.active.bg_stroke.color;
     let mut changed = false;
     let n = items.len() as f32;
     let each = (width / n).floor();
@@ -82,8 +141,11 @@ pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, items: &[(T, &
                 ne: if i + 1 == items.len() { r } else { 0 },
                 se: if i + 1 == items.len() { r } else { 0 },
             };
-            let mut response =
-                ui.add_sized([each, size::CONTROL_HEIGHT], Button::new(*text).selected(*value == *item).corner_radius(radius));
+            let checked = *value == *item;
+            let mut response = ui.add_sized([each, size::CONTROL_HEIGHT], Button::new(*text).selected(checked).corner_radius(radius));
+            if checked && ui.is_enabled() {
+                ui.painter().rect_stroke(response.rect, radius, egui::Stroke::new(1.0, select_line), egui::StrokeKind::Inside);
+            }
             if !tooltip.is_empty() {
                 response = response.on_hover_text(*tooltip);
             }
@@ -133,8 +195,9 @@ pub struct NumberFormat<'a> {
     pub step: &'a dyn Fn(f64, i32) -> f64,
 }
 
-/// A text field holding a number, with step arrows; edits apply on Enter
-/// or when the field loses focus. Returns true when the value changed.
+/// A spin box: a text field holding a number, with step arrows inside its
+/// frame (hidden while disabled); edits apply on Enter or when the field
+/// loses focus. Returns true when the value changed.
 pub fn number_field(
     ui: &mut Ui,
     p: &Palette,
@@ -149,70 +212,97 @@ pub fn number_field(
     let buffer_id = id.with("buffer");
     let mut changed = false;
     let arrows = 16.0;
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 0.0;
-        let editing: Option<String> = ui.data(|d| d.get_temp(buffer_id));
-        let mut text = editing.clone().unwrap_or_else(|| (fmt.format)(*value));
-        let edit = TextEdit::singleline(&mut text)
-            .id(id)
-            .font(FontId::monospace(typeface::BASE))
-            .desired_width((width - arrows).max(30.0))
-            .align(egui::Align2::LEFT_CENTER)
-            .min_size(Vec2::new(0.0, size::CONTROL_HEIGHT));
-        let response = ui.add(edit);
-        let mut response = if tooltip.is_empty() { response } else { response.on_hover_text(tooltip) };
-        let commit = |text: &str, value: &mut f64| {
-            if let Some(v) = (fmt.parse)(text) {
-                let v = v.clamp(range.0, range.1);
-                if v != *value {
-                    *value = v;
-                    return true;
-                }
-            }
-            false
-        };
-        if response.has_focus() {
-            let (up, down) = ui.input(|i| (i.key_pressed(Key::ArrowUp), i.key_pressed(Key::ArrowDown)));
-            if up || down {
-                let v = (fmt.step)(*value, if up { 1 } else { -1 }).clamp(range.0, range.1);
-                changed |= v != *value;
+    let enabled = ui.is_enabled();
+    let (outer, frame_response) = ui.allocate_exact_size(Vec2::new(width.max(40.0), size::CONTROL_HEIGHT), Sense::hover());
+    let background = ui.painter().add(egui::Shape::Noop);
+    let editing: Option<String> = ui.data(|d| d.get_temp(buffer_id));
+    let mut text = editing.clone().unwrap_or_else(|| (fmt.format)(*value));
+    let text_rect = egui::Rect::from_min_max(outer.min, egui::pos2(outer.right() - arrows, outer.bottom()));
+    let edit = TextEdit::singleline(&mut text)
+        .id(id)
+        .frame(egui::Frame::NONE.inner_margin(egui::Margin { left: (size::GAP + 1.0) as i8, right: 0, top: 0, bottom: 0 }))
+        .font(FontId::monospace(typeface::BASE))
+        .align(egui::Align2::LEFT_CENTER)
+        .desired_width(text_rect.width() - size::GAP - 1.0)
+        .min_size(text_rect.size());
+    // In a child, so the layout cursor stays after the whole field.
+    let response = ui.new_child(egui::UiBuilder::new().max_rect(text_rect)).add(edit);
+    let mut response = if tooltip.is_empty() { response } else { response.on_hover_text(tooltip) };
+    let commit = |text: &str, value: &mut f64| {
+        if let Some(v) = (fmt.parse)(text) {
+            let v = v.clamp(range.0, range.1);
+            if v != *value {
                 *value = v;
-                text = (fmt.format)(*value);
+                return true;
             }
-            ui.data_mut(|d| d.insert_temp(buffer_id, text.clone()));
-        } else if editing.is_some() {
-            changed |= commit(&text, value);
-            ui.data_mut(|d| d.remove::<String>(buffer_id));
         }
-        if response.lost_focus() && editing.is_some() {
-            changed |= commit(&text, value);
-            ui.data_mut(|d| d.remove::<String>(buffer_id));
+        false
+    };
+    if response.has_focus() {
+        let (up, down) = ui.input(|i| (i.key_pressed(Key::ArrowUp), i.key_pressed(Key::ArrowDown)));
+        if up || down {
+            let v = (fmt.step)(*value, if up { 1 } else { -1 }).clamp(range.0, range.1);
+            changed |= v != *value;
+            *value = v;
+            text = (fmt.format)(*value);
         }
-        // Step arrows.
-        let (rect, _) = ui.allocate_exact_size(Vec2::new(arrows, size::CONTROL_HEIGHT), Sense::hover());
-        let half = rect.height() / 2.0;
+        ui.data_mut(|d| d.insert_temp(buffer_id, text.clone()));
+    } else if editing.is_some() {
+        changed |= commit(&text, value);
+        ui.data_mut(|d| d.remove::<String>(buffer_id));
+    }
+    if response.lost_focus() && editing.is_some() {
+        changed |= commit(&text, value);
+        ui.data_mut(|d| d.remove::<String>(buffer_id));
+    }
+    // Step arrows inside the frame, gone while disabled.
+    let arrow_rect = egui::Rect::from_min_max(egui::pos2(outer.right() - arrows, outer.top()), outer.max);
+    let half = arrow_rect.height() / 2.0;
+    let mut hovered = frame_response.hovered() || response.hovered();
+    if enabled {
         for (k, glyph) in [(1, Glyph::ChevronUp), (-1, Glyph::ChevronDown)] {
             let r = if k == 1 {
-                egui::Rect::from_min_size(rect.min, Vec2::new(arrows, half))
+                egui::Rect::from_min_size(arrow_rect.min, Vec2::new(arrows, half))
             } else {
-                egui::Rect::from_min_size(rect.min + Vec2::new(0.0, half), Vec2::new(arrows, half))
+                egui::Rect::from_min_size(arrow_rect.min + Vec2::new(0.0, half), Vec2::new(arrows, half))
             };
             let arrow = ui.interact(r, id.with(k), Sense::click());
-            if arrow.hovered() && ui.is_enabled() {
-                ui.painter().rect_filled(r, 0.0, p.field_hover);
+            hovered |= arrow.hovered();
+            if arrow.hovered() {
+                ui.painter().rect_filled(r.shrink(1.0), 0.0, p.field_hover);
             }
-            glyph.paint(ui.painter(), r.center(), 8.0, if ui.is_enabled() { p.text_2 } else { p.text_3 });
-            if arrow.clicked() && ui.is_enabled() {
+            glyph.paint(ui.painter(), r.center(), 9.0, p.text_2);
+            if arrow.clicked() {
                 let v = (fmt.step)(*value, k).clamp(range.0, range.1);
                 changed |= v != *value;
                 *value = v;
                 ui.data_mut(|d| d.remove::<String>(buffer_id));
             }
         }
-        if changed {
-            response.mark_changed();
-        }
-    });
+    }
+    let border = if !enabled {
+        p.rule
+    } else if response.has_focus() {
+        p.select_line
+    } else if hovered {
+        p.rule_strong
+    } else {
+        p.rule
+    };
+    let radius = CornerRadius::same(size::RADIUS);
+    ui.painter().set(
+        background,
+        egui::Shape::Rect(egui::epaint::RectShape::new(
+            outer,
+            radius,
+            if enabled { p.field } else { p.panel },
+            egui::Stroke::new(1.0, border),
+            egui::StrokeKind::Inside,
+        )),
+    );
+    if changed {
+        response.mark_changed();
+    }
     changed
 }
 
@@ -308,26 +398,39 @@ pub fn sweep_toggle(ui: &mut Ui, p: &Palette, active: &mut bool, allowed: bool) 
 }
 
 /// The header of a collapsible section: chevron, uppercase title, badge.
+/// The chevron and title toggle the section and brighten on hover.
 pub fn collapsible_header(ui: &mut Ui, p: &Palette, title: &str, open: &mut bool, badge: &str, badge_tip: &str) {
+    let font = crate::fonts::semibold_id(typeface::CAPTION);
+    let text = title.to_uppercase();
+    let galley = ui.painter().layout_no_wrap(text.clone(), font.clone(), p.text_3);
+    let height = galley.size().y.max(size::GLYPH);
+    let indent = size::GLYPH + 9.0;
+    let interact = ui.spacing().interact_size.y;
+    ui.spacing_mut().interact_size.y = height;
     ui.horizontal(|ui| {
+        let (rect, response) =
+            ui.allocate_exact_size(Vec2::new(indent + galley.size().x + 1.0 * text.len() as f32, height), Sense::click());
+        let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+        let color = if response.hovered() { p.text } else { p.text_3 };
         let glyph = if *open { Glyph::ChevronDown } else { Glyph::ChevronRight };
-        let text = RichText::new(format!("      {}", title.to_uppercase()))
-            .size(typeface::CAPTION)
-            .strong()
-            .color(p.text_3)
-            .extra_letter_spacing(0.8);
-        let response = ui.add(Button::new(text).frame(false)).on_hover_cursor(egui::CursorIcon::PointingHand);
-        glyph.paint(ui.painter(), response.rect.left_center() + Vec2::new(4.0, 0.0), size::GLYPH, p.text_3);
+        glyph.paint(ui.painter(), rect.left_center() + Vec2::new(size::GLYPH / 2.0, 0.0), size::GLYPH, color);
+        let job = egui::text::LayoutJob::single_section(
+            text,
+            egui::TextFormat { font_id: font, color, extra_letter_spacing: 1.0, ..Default::default() },
+        );
+        let galley = ui.painter().layout_job(job);
+        ui.painter().galley(egui::pos2(rect.left() + indent, rect.center().y - galley.size().y / 2.0), galley, color);
         if response.clicked() {
             *open = !*open;
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if !badge.is_empty() {
-                let r = ui.label(RichText::new(badge).color(p.text_2).size(typeface::SMALL));
+                let r = ui.label(RichText::new(badge).color(p.text_2).size(typeface::CAPTION));
                 r.on_hover_text(badge_tip);
             }
         });
     });
+    ui.spacing_mut().interact_size.y = interact;
 }
 
 /// A thin horizontal rule.
@@ -377,6 +480,7 @@ pub fn readout_list(ui: &mut Ui, p: &Palette, title: &str, pairs: &[(String, Str
 /// A combo box of texts; returns true when the choice changed.
 pub fn combo(
     ui: &mut Ui,
+    p: &Palette,
     id_salt: impl std::hash::Hash + std::fmt::Debug,
     selected: &mut usize,
     items: &[&str],
@@ -384,9 +488,19 @@ pub fn combo(
     tooltip: &str,
 ) -> bool {
     let before = *selected;
+    // As wide as the longest item, its padding and the drop-down glyph.
+    let width = if width > 0.0 {
+        width
+    } else {
+        let font = FontId::proportional(typeface::BASE);
+        let longest = items.iter().map(|t| ui.painter().layout_no_wrap(t.to_string(), font.clone(), p.text).size().x).fold(0.0, f32::max);
+        longest + size::COMBO_EXTRA
+    };
+    let glyph = p.text_2;
     let response = egui::ComboBox::from_id_salt(id_salt)
-        .width(width)
+        .width(width - 2.0 * ui.spacing().button_padding.x)
         .selected_text(items.get(*selected).copied().unwrap_or(""))
+        .icon(move |ui, rect, _visuals, _open| Glyph::ChevronDown.paint(ui.painter(), rect.center(), size::GLYPH, glyph))
         .show_ui(ui, |ui| {
             for (i, item) in items.iter().enumerate() {
                 ui.selectable_value(selected, i, *item);

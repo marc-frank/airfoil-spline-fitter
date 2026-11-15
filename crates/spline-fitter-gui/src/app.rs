@@ -402,14 +402,14 @@ impl App {
             ui.horizontal(|ui| {
                 widgets::caption(ui, &p, "Convergence");
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if widgets::combo(ui, "loss_log", &mut self.loss.log_mode, &["None", "X only", "Y only", "Both"], 80.0, "") {
+                    if widgets::combo(ui, &p, "loss_log", &mut self.loss.log_mode, &["None", "X only", "Y only", "Both"], 0.0, "") {
                         self.loss.view.follow = true;
                     }
-                    ui.label("Log scale");
-                    if widgets::combo(ui, "loss_x", &mut self.loss.x_axis, &["Iterations", "Time"], 90.0, "") {
+                    ui.label(RichText::new("Log scale").color(p.text_2));
+                    if widgets::combo(ui, &p, "loss_x", &mut self.loss.x_axis, &["Iterations", "Time"], 0.0, "") {
                         self.loss.view.follow = true;
                     }
-                    ui.label("X axis");
+                    ui.label(RichText::new("X axis").color(p.text_2));
                 });
             });
             self.loss.show(ui, &p, self.zoom_ms);
@@ -418,25 +418,50 @@ impl App {
 
     fn plot_toolbar(&mut self, ui: &mut Ui) {
         let p = self.palette.clone();
-        ui.horizontal_wrapped(|ui| {
-            let knots = ui.add(egui::Button::new("Knots").selected(self.main_plot.show_knots).min_size(egui::vec2(0.0, size::CONTROL_HEIGHT)))
-                .on_hover_text("Mark the curve points at the knots of every section.");
+        // The live preview setting at the right of the display toggles, or
+        // under them when the plot is too narrow for both.
+        let font = egui::FontId::proportional(crate::theme::typeface::BASE);
+        let measure = |ui: &Ui, t: &str| ui.painter().layout_no_wrap(t.to_string(), font.clone(), p.text).size().x;
+        let longest = LiveMode::LABELS.iter().map(|t| measure(ui, t)).fold(0.0, f32::max);
+        let live_width = measure(ui, "Live preview") + size::GAP + longest + size::COMBO_EXTRA;
+        let mut wraps = false;
+        ui.horizontal(|ui| {
+            let knots =
+                widgets::toggle_button(ui, &p, "Knots", self.main_plot.show_knots, "Mark the curve points at the knots of every section.");
             if knots.clicked() {
                 self.main_plot.show_knots = !self.main_plot.show_knots;
                 self.main_plot.refresh_knots();
             }
             crate::dialogs::comb_toggle(self, ui);
             crate::dialogs::deviation_toggle(self, ui);
-            ui.add_space(size::PAD_LARGE);
-            ui.label(RichText::new("Live preview").color(p.text_2));
-            let mut mode = self.live_mode as usize;
-            if widgets::combo(ui, "live_mode", &mut mode, &LiveMode::LABELS, 90.0, "How often the plots update while fitting.\nMinimal: only at the end. Moderate: once a second.\nDetailed: every iteration (slower).") {
-                self.live_mode = LiveMode::ALL[mode];
-                if let Some(live) = self.running.as_ref().map(|r| r.live()) {
-                    live.set_mode(self.live_mode);
-                }
+            wraps = ui.available_width() < live_width + size::GAP;
+            if !wraps {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| self.live_preview(ui, &p, true));
             }
         });
+        if wraps {
+            ui.add_space(size::GAP - ui.spacing().item_spacing.y);
+            ui.horizontal(|ui| self.live_preview(ui, &p, false));
+        }
+    }
+
+    /// The Live preview label and combo (`reversed` in a right-to-left row).
+    fn live_preview(&mut self, ui: &mut Ui, p: &crate::theme::Palette, reversed: bool) {
+        let label = |ui: &mut Ui| ui.label(RichText::new("Live preview").color(p.text_2));
+        if !reversed {
+            label(ui);
+        }
+        let mut mode = self.live_mode as usize;
+        let tip = "How often the plots update while fitting.\nMinimal: only at the end. Moderate: once a second.\nDetailed: every iteration (slower).";
+        if widgets::combo(ui, p, "live_mode", &mut mode, &LiveMode::LABELS, 0.0, tip) {
+            self.live_mode = LiveMode::ALL[mode];
+            if let Some(live) = self.running.as_ref().map(|r| r.live()) {
+                live.set_mode(self.live_mode);
+            }
+        }
+        if reversed {
+            label(ui);
+        }
     }
 }
 
@@ -450,9 +475,14 @@ impl eframe::App for App {
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(self.title()));
 
         let p = self.palette.clone();
-        egui::Panel::top("menu")
-            .frame(egui::Frame::new().fill(p.window).inner_margin(egui::Margin::symmetric(4, 2)))
-            .show(ui, |ui| self.menu_bar(ui));
+        let menu = egui::Panel::top("menu").exact_size(size::MENU_BAR_HEIGHT).frame(egui::Frame::new().fill(p.window)).show(ui, |ui| {
+            ui.spacing_mut().button_padding = egui::vec2(10.0, 4.0);
+            ui.spacing_mut().item_spacing.x = 0.0;
+            ui.spacing_mut().interact_size.y = size::MENU_BAR_HEIGHT - 1.0;
+            self.menu_bar(ui)
+        });
+        let r = menu.response.rect;
+        ui.painter().hline(r.x_range(), r.bottom() - 0.5, egui::Stroke::new(1.0, p.rule));
         self.status_bar(ui);
         self.sidebar(ui);
         if self.explorer_visible {

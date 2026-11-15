@@ -190,7 +190,7 @@ impl App {
                 let answer = modal(ctx, "Export CAD", 380.0, |ui| {
                     form_row(ui, &p, "Format", true, "", |ui| {
                         let labels: Vec<&str> = CAD_FORMATS.iter().map(|(l, _)| *l).collect();
-                        widgets::combo(ui, "cad_format", &mut choice.format, &labels, 200.0, "");
+                        widgets::combo(ui, &p, "cad_format", &mut choice.format, &labels, 200.0, "");
                     });
                     form_row(ui, &p, "Units", true, "", |ui| {
                         let items: Vec<(&'static str, &str, &str)> = CAD_UNITS.iter().map(|u| (*u, *u, "")).collect();
@@ -467,32 +467,29 @@ impl App {
         ui.vertical(|ui| {
             ui.horizontal(|ui| {
                 widgets::caption(ui, &p, "Runs");
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let metrics: Vec<usize> = (0..COLUMNS.len()).filter(|&c| COLUMNS[c].metric).collect();
-                    let names: Vec<&str> = metrics.iter().map(|&c| COLUMNS[c].name).collect();
-                    let mut y = metrics.iter().position(|&c| c == self.explorer.y_column).unwrap_or(0);
-                    if widgets::combo(ui, "cmp_y", &mut y, &names, 110.0, "The fit metric plotted for each run") {
-                        self.explorer.y_column = metrics[y];
-                        self.explorer.forget_points();
-                        self.refresh_comparison();
-                    }
-                    ui.label("Y axis");
-                    let all: Vec<&str> = COLUMNS.iter().map(|c| c.name).collect();
-                    let mut x = self.explorer.x_column;
-                    if widgets::combo(
-                        ui,
-                        "cmp_x",
-                        &mut x,
-                        &all,
-                        110.0,
-                        "The explorer column the runs are plotted along.\nOnly the runs that pass the explorer's filter are shown.",
-                    ) {
-                        self.explorer.x_column = x;
-                        self.explorer.forget_points();
-                        self.refresh_comparison();
-                    }
-                    ui.label("X axis");
-                });
+                // The two combos share the width left after the labels.
+                let font = egui::FontId::proportional(crate::theme::typeface::BASE);
+                let labels: f32 =
+                    ["X axis", "Y axis"].iter().map(|t| ui.painter().layout_no_wrap(t.to_string(), font.clone(), p.text_2).size().x).sum();
+                let each = ((ui.available_width() - labels - 4.0 * size::GAP) / 2.0).max(60.0);
+                ui.label(egui::RichText::new("X axis").color(p.text_2));
+                let all: Vec<&str> = COLUMNS.iter().map(|c| c.name).collect();
+                let mut x = self.explorer.x_column;
+                let tip = "The explorer column the runs are plotted along.\nOnly the runs that pass the explorer's filter are shown.";
+                if widgets::combo(ui, &p, "cmp_x", &mut x, &all, each, tip) {
+                    self.explorer.x_column = x;
+                    self.explorer.forget_points();
+                    self.refresh_comparison();
+                }
+                ui.label(egui::RichText::new("Y axis").color(p.text_2));
+                let metrics: Vec<usize> = (0..COLUMNS.len()).filter(|&c| COLUMNS[c].metric).collect();
+                let names: Vec<&str> = metrics.iter().map(|&c| COLUMNS[c].name).collect();
+                let mut y = metrics.iter().position(|&c| c == self.explorer.y_column).unwrap_or(0);
+                if widgets::combo(ui, &p, "cmp_y", &mut y, &names, each, "The fit metric plotted for each run") {
+                    self.explorer.y_column = metrics[y];
+                    self.explorer.forget_points();
+                    self.refresh_comparison();
+                }
             });
             self.comparison.show(ui, &p, self.zoom_ms);
         });
@@ -535,12 +532,23 @@ fn split_toggle(
     let mut changed = false;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
-        let r = ui.add(egui::Button::new(text).selected(*on).min_size(egui::vec2(0.0, size::CONTROL_HEIGHT))).on_hover_text(tip);
+        let left = egui::CornerRadius { nw: size::RADIUS, sw: size::RADIUS, ne: 0, se: 0 };
+        ui.spacing_mut().button_padding.x = size::TOOL_BUTTON_PADDING;
+        let r = ui
+            .add(egui::Button::new(text).selected(*on).corner_radius(left).min_size(egui::vec2(0.0, size::CONTROL_HEIGHT)))
+            .on_hover_text(tip);
+        if *on {
+            widgets::outline_checked(ui, p, &r, left);
+        }
         if r.clicked() {
             *on = !*on;
             toggled = true;
         }
-        let arrow = ui.add(egui::Button::new("").min_size(egui::vec2(18.0, size::CONTROL_HEIGHT))).on_hover_text(arrow_tip);
+        let right = egui::CornerRadius { nw: 0, sw: 0, ne: size::RADIUS, se: size::RADIUS };
+        ui.spacing_mut().button_padding.x = 0.0;
+        let arrow = ui
+            .add(egui::Button::new("").corner_radius(right).min_size(egui::vec2(size::ARROW_BUTTON_WIDTH, size::CONTROL_HEIGHT)))
+            .on_hover_text(arrow_tip);
         Glyph::ChevronDown.paint(ui.painter(), arrow.rect.center(), size::GLYPH, p.text_2);
         egui::Popup::from_toggle_button_response(&arrow)
             .id(egui::Id::unique(id))
@@ -568,7 +576,7 @@ pub fn comb_toggle(app: &mut App, ui: &mut Ui) {
     let (toggled, changed) = split_toggle(ui, &p, toggle, &mut plot.comb_on, |ui| {
         let mut changed = false;
         form_row(ui, &p, "Quantity", true, "", |ui| {
-            changed |= widgets::combo(ui, "comb_quantity", &mut settings.quantity, &QUANTITIES, 180.0, "")
+            changed |= widgets::combo(ui, &p, "comb_quantity", &mut settings.quantity, &QUANTITIES, 180.0, "")
         });
         form_row(ui, &p, "Height", true, "", |ui| {
             let mut h = settings.height;

@@ -185,12 +185,26 @@ pub mod size {
     pub const PAD: f32 = 12.0;
     pub const PAD_LARGE: f32 = 16.0;
     pub const CONTROL_HEIGHT: f32 = 26.0;
+    /// Space on each side of a button's text (a push button is 22 px wider
+    /// than its text, a tool button 31 px).
+    pub const BUTTON_PADDING: f32 = 11.0;
+    pub const TOOL_BUTTON_PADDING: f32 = 15.5;
+    /// The drop-down half of a split toggle.
+    pub const ARROW_BUTTON_WIDTH: f32 = 24.0;
+    /// A combo box is this much wider than its longest item.
+    pub const COMBO_EXTRA: f32 = 34.0;
+    /// A form row holding only a check box: a line of text.
+    pub const CHECK_ROW_HEIGHT: f32 = 16.0;
+    /// The menu bar: a line of text and 4 px above and below.
+    pub const MENU_BAR_HEIGHT: f32 = 24.0;
     pub const GLYPH: f32 = 10.0;
     pub const GLYPH_LARGE: f32 = 16.0;
     pub const RADIUS: u8 = 3;
     pub const LABEL_WIDTH: f32 = 92.0;
     pub const FIELD_MIN_WIDTH: f32 = 70.0;
-    pub const SIDEBAR_WIDTH: f32 = 330.0;
+    /// The sidebar's default width: its widest row (the smoothing sweep of
+    /// Advanced, two fields and the toggle) at the base type size.
+    pub const SIDEBAR_WIDTH: f32 = 410.0;
     pub const SIDEBAR_MIN_WIDTH: f32 = 300.0;
     pub const EXPLORER_WIDTH: f32 = 570.0;
     pub const EXPLORER_MIN_WIDTH: f32 = 180.0;
@@ -212,6 +226,8 @@ pub mod typeface {
     pub const BASE: f32 = 12.0;
     pub const SMALL: f32 = 10.5;
     pub const CAPTION: f32 = 10.0;
+    /// Muted notes: a caption plus one.
+    pub const MUTED: f32 = 11.0;
     pub const READOUT: f32 = 15.0;
     pub const HEADING: f32 = 15.0;
 }
@@ -222,6 +238,17 @@ pub const TEETH_ALPHA: u8 = 90;
 pub const GRID_ALPHA: f32 = 0.10;
 
 /// Applies the palette and the sizes to every style of the context.
+/// Colors scroll handles as the strong rule (the text grey when hovered or
+/// grabbed) in `ui`; egui paints them with the button fills, so only for a
+/// region without buttons.
+pub fn scroll_handles(ui: &mut egui::Ui, p: &Palette) {
+    ui.visuals_mut().extreme_bg_color = p.panel;
+    let w = &mut ui.visuals_mut().widgets;
+    w.inactive.bg_fill = p.rule_strong;
+    w.hovered.bg_fill = p.text_3;
+    w.active.bg_fill = p.text_3;
+}
+
 pub fn apply(ctx: &egui::Context, p: &Palette) {
     let mut visuals = if p.dark { egui::Visuals::dark() } else { egui::Visuals::light() };
     let radius = CornerRadius::same(size::RADIUS);
@@ -261,10 +288,21 @@ pub fn apply(ctx: &egui::Context, p: &Palette) {
         style.visuals = visuals.clone();
         style.spacing.interact_size = Vec2::new(40.0, size::CONTROL_HEIGHT);
         style.spacing.item_spacing = Vec2::splat(size::GAP);
-        style.spacing.button_padding = Vec2::new(8.0, 2.0);
+        style.spacing.button_padding = Vec2::new(size::BUTTON_PADDING, 2.0);
         style.spacing.window_margin = Margin::same(size::PAD_LARGE as i8);
         style.spacing.menu_margin = Margin::same(4);
         style.spacing.combo_width = size::FIELD_MIN_WIDTH;
+        // Scroll bars: a 10 px track, shown whenever the content overflows.
+        style.spacing.scroll = egui::style::ScrollStyle {
+            floating: false,
+            // A 6 px handle with 2 px around it: a 10 px track.
+            bar_width: 6.0,
+            handle_min_length: 24.0,
+            bar_inner_margin: 2.0,
+            bar_outer_margin: 2.0,
+            foreground_color: false,
+            ..egui::style::ScrollStyle::solid()
+        };
         style.text_styles = [
             (TextStyle::Body, FontId::new(typeface::BASE, FontFamily::Proportional)),
             (TextStyle::Button, FontId::new(typeface::BASE, FontFamily::Proportional)),

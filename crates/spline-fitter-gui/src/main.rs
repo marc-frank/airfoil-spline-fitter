@@ -4,6 +4,7 @@
 
 mod actions;
 mod app;
+mod axes;
 mod chime;
 mod dialogs;
 mod explorer;

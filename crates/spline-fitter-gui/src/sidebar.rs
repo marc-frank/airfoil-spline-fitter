@@ -15,7 +15,7 @@ fn section(ui: &mut Ui, p: &Palette, title: &str, content: impl FnOnce(&mut Ui))
     egui::Frame::new().inner_margin(egui::Margin { left: 12, right: 12, top: 10, bottom: 12 }).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = size::GAP;
         caption(ui, p, title);
-        ui.add_space(2.0);
+        ui.add_space(3.0);
         content(ui);
     });
     widgets::rule(ui, p);
@@ -23,7 +23,7 @@ fn section(ui: &mut Ui, p: &Palette, title: &str, content: impl FnOnce(&mut Ui))
 
 /// The field width beside a form label.
 fn field_width(ui: &Ui) -> f32 {
-    (ui.available_width() - size::LABEL_WIDTH - size::GAP).max(size::FIELD_MIN_WIDTH)
+    (ui.available_width() - size::LABEL_WIDTH - size::GROUP).max(size::FIELD_MIN_WIDTH)
 }
 
 /// An integer spin box with its sweep toggle and end box.
@@ -53,10 +53,14 @@ impl App {
         egui::Panel::left("sidebar").resizable(true).default_size(size::SIDEBAR_WIDTH).min_size(size::SIDEBAR_MIN_WIDTH).frame(frame).show(
             ui,
             |ui| {
-                egui::Panel::bottom("run_bar")
+                let bar = egui::Panel::bottom("run_bar")
                     .frame(egui::Frame::new().fill(p.window).inner_margin(egui::Margin::same(12)))
                     .show(ui, |ui| self.run_bar(ui));
+                let top = bar.response.rect;
+                ui.painter().hline(top.x_range(), top.top(), egui::Stroke::new(1.0, p.rule));
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                    // Sections and their rules follow without gaps.
+                    ui.spacing_mut().item_spacing.y = 0.0;
                     self.data_card(ui);
                     let fitting = self.fitting();
                     ui.add_enabled_ui(!fitting, |ui| {
@@ -81,7 +85,10 @@ impl App {
                 let tip = self.airfoil_path.clone();
                 ui.vertical(|ui| {
                     ui.set_width(ui.available_width() - 80.0);
-                    let r = ui.add(egui::Label::new(RichText::new(name).strong().color(p.text)).truncate());
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    let r = ui.add(
+                        egui::Label::new(RichText::new(name).font(crate::fonts::semibold_id(typeface::BASE)).color(p.text)).truncate(),
+                    );
                     let m = muted(ui, &p, detail);
                     if !tip.is_empty() {
                         r.on_hover_text(&tip);
@@ -175,7 +182,7 @@ impl App {
                 });
             }
             if view.varpro {
-                form_row(ui, &p, "Grow points", true, "", |ui| {
+                widgets::check_row(ui, &p, "Grow points", true, |ui| {
                     ui.checkbox(&mut s.grow, "Add where the fit is worst").on_hover_text(
                         "On: start from the fewest control points and add them where the\nfit is worst, refitting after each step.\nOff: start from the Control points setting (Curve). With a tolerance\ngoal the count can still grow or shrink from there to meet it.",
                     );
@@ -244,15 +251,14 @@ impl App {
     fn advanced_section(&mut self, ui: &mut Ui) {
         let p = self.palette.clone();
         let (badge, badge_tip) = self.baseline.badge(&self.settings);
-        egui::Frame::new().inner_margin(egui::Margin { left: 6, right: 12, top: 6, bottom: 6 }).show(ui, |ui| {
-            widgets::collapsible_header(ui, &p, "Advanced", &mut self.advanced_open, &badge, &badge_tip);
-        });
-        if !self.advanced_open {
-            widgets::rule(ui, &p);
-            return;
-        }
         let fitting = self.fitting();
-        egui::Frame::new().inner_margin(egui::Margin { left: 12, right: 12, top: 0, bottom: 12 }).show(ui, |ui| {
+        egui::Frame::new().inner_margin(egui::Margin { left: 12, right: 12, top: 10, bottom: 12 }).show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = size::GAP;
+            widgets::collapsible_header(ui, &p, "Advanced", &mut self.advanced_open, &badge, &badge_tip);
+            if !self.advanced_open {
+                return;
+            }
+            ui.add_space(size::GROUP - size::GAP);
             ui.add_enabled_ui(!fitting, |ui| {
                 let s = &mut self.settings;
                 let view = s.view(false);
@@ -297,7 +303,7 @@ impl App {
                         });
                     });
                 }
-                form_row(ui, &p, "Junctions", view.has_junctions, "", |ui| {
+                widgets::check_row(ui, &p, "Junctions", view.has_junctions, |ui| {
                     ui.add_enabled_ui(view.has_junctions, |ui| {
                         ui.checkbox(&mut s.optimize_junctions, "Optimize positions").on_hover_text("Optimize the position of every junction, instead of keeping the\nsection split points fixed. The split points are where the junctions\nstart; the data is fitted by the whole curve, so points move between\nsections with them.");
                     });
@@ -311,7 +317,8 @@ impl App {
         let p = self.palette.clone();
         let width = ui.available_width();
         if self.fitting() {
-            if widgets::button(ui, "Cancel", "").clicked() {
+            // Cancel takes the Fit button's place.
+            if ui.add_sized([width, size::CONTROL_HEIGHT], egui::Button::new("Cancel")).clicked() {
                 if let Some(r) = &self.running {
                     r.cancel();
                 }
@@ -339,34 +346,47 @@ impl App {
         } else {
             String::new()
         };
-        egui::Grid::new("readouts").num_columns(3).spacing([16.0, 2.0]).show(ui, |ui| {
-            for c in [error_caption, "Control points", "Time"] {
-                muted(ui, &p, c);
-            }
-            ui.end_row();
-            let readout = |ui: &mut Ui, text: &str| ui.label(RichText::new(text).monospace().size(typeface::READOUT).color(p.text));
-            readout(ui, &error_value);
-            let r = readout(ui, &count_text);
-            if !count_tip.is_empty() {
-                r.on_hover_text(count_tip);
-            }
-            readout(ui, &format_duration(fit.elapsed_seconds));
-            ui.end_row();
-        });
-        ui.add_space(size::GAP);
+        // Three readouts in equal columns, a caption above each value.
+        let column = (width - 2.0 * size::GROUP) / 3.0;
         ui.horizontal(|ui| {
-            if widgets::button(ui, "Save .dat", "Save fitted airfoil coordinates (.dat)").clicked() {
-                self.on_save_airfoil();
+            ui.spacing_mut().item_spacing.x = size::GROUP;
+            let readouts = [
+                (error_caption, error_value, String::new()),
+                ("Control points", count_text, count_tip),
+                ("Time", format_duration(fit.elapsed_seconds), String::new()),
+            ];
+            for (caption, value, tip) in readouts {
+                ui.allocate_ui_with_layout(egui::vec2(column, 0.0), Layout::top_down(Align::Min), |ui| {
+                    ui.set_width(column);
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    muted(ui, &p, caption);
+                    let r = ui.label(RichText::new(value).monospace().size(typeface::READOUT).color(p.text));
+                    if !tip.is_empty() {
+                        r.on_hover_text(tip);
+                    }
+                });
             }
-            if widgets::button(ui, "Save spline", "Save spline control points and knots (.spline.dat)").clicked() {
-                self.on_save_spline();
-            }
-            if widgets::button(ui, "Export CAD", "Export the exact B-spline curves as STEP, IGES or DXF").clicked() {
-                self.on_export_cad();
+        });
+        ui.add_space(size::PAD - size::GAP);
+        // The exports share the row in equal widths.
+        let each = (width - 2.0 * size::GAP) / 3.0;
+        ui.horizontal(|ui| {
+            let exports: [Export; 3] = [
+                ("Save .dat", "Save fitted airfoil coordinates (.dat)", App::on_save_airfoil),
+                ("Save spline", "Save spline control points and knots (.spline.dat)", App::on_save_spline),
+                ("Export CAD", "Export the exact B-spline curves as STEP, IGES or DXF", App::on_export_cad),
+            ];
+            for (text, tip, action) in exports {
+                if ui.add_sized([each, size::CONTROL_HEIGHT], egui::Button::new(text)).on_hover_text(tip).clicked() {
+                    action(self);
+                }
             }
         });
     }
 }
+
+/// A run bar export: its text, tooltip and action.
+type Export = (&'static str, &'static str, fn(&mut App));
 
 /// The Knot spacing field: three decimals, 0 to 0.5 in steps of 0.01.
 fn knot_gap_field(ui: &mut Ui, p: &Palette, value: &mut f64, width: f32) {
