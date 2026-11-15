@@ -84,7 +84,8 @@ enum Answer {
 
 /// A modal dialog with a title; the content returns the answer.
 fn modal(ctx: &egui::Context, title: &str, width: f32, content: impl FnOnce(&mut Ui) -> Answer) -> Answer {
-    let response = egui::Modal::new(egui::Id::unique(("dialog", title))).show(ctx, |ui| {
+    let frame = egui::Frame::popup(&ctx.global_style()).inner_margin(egui::Margin::same(size::PAD_LARGE as i8));
+    let response = egui::Modal::new(egui::Id::unique(("dialog", title))).frame(frame).show(ctx, |ui| {
         ui.set_width(width);
         ui.heading(title);
         ui.add_space(size::GROUP);

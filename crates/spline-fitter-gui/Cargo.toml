@@ -22,3 +22,7 @@ sys-locale = "0.3"
 dirs = "7"
 serde_json.workspace = true
 image = { version = "0.25", default-features = false, features = ["png"] }
+
+[dev-dependencies]
+egui_kittest = { version = "0.37", features = ["eframe", "wgpu", "snapshot"] }
+tempfile = "3"

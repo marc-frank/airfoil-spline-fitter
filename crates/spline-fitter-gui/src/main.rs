@@ -19,6 +19,8 @@ mod settings;
 mod sidebar;
 mod store;
 mod theme;
+#[cfg(test)]
+mod ui_tests;
 mod widgets;
 
 use eframe::egui;

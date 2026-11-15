@@ -384,7 +384,7 @@ impl App {
             ui.allocate_ui(egui::vec2(ui.available_width(), main_height), |ui| self.main_plot.show(ui, &p, self.zoom_ms));
             ui.add_space(size::GAP);
             let rest = ui.available_height();
-            let wide = ui.available_width() >= 2.0 * 260.0 + size::GROUP;
+            let wide = ui.available_width() >= 2.0 * 440.0 + size::GROUP;
             if wide {
                 let half = (ui.available_width() - size::GROUP) / 2.0;
                 ui.horizontal(|ui| {

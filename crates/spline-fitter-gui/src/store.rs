@@ -13,6 +13,9 @@ pub struct Store {
 
 impl Store {
     pub fn open() -> Self {
+        if cfg!(test) {
+            return Store { path: None, values: Map::new() };
+        }
         let path = dirs::config_dir().map(|d| d.join("AirfoilSplineFitter").join("settings.json"));
         let values = path
             .as_ref()
@@ -21,12 +24,6 @@ impl Store {
             .and_then(|v| v.as_object().cloned())
             .unwrap_or_default();
         Store { path, values }
-    }
-
-    /// A store that keeps nothing (tests).
-    #[cfg(test)]
-    pub fn memory() -> Self {
-        Store { path: None, values: Map::new() }
     }
 
     fn save(&self) {

@@ -1,0 +1,152 @@
+//! The window driven headlessly: the reference session of the
+//! specification (section 21, item 17), with screenshots on request.
+
+use std::time::Duration;
+
+use egui_kittest::Harness;
+use spline_fitter::models::OptimizerType;
+
+use crate::app::App;
+
+fn harness() -> Harness<'static, App> {
+    let logs = std::env::temp_dir().join("spline_fitter_test_logs");
+    std::env::set_var("SPLINE_FITTER_LOG_DIR", &logs);
+    Harness::builder().with_size([1500.0, 950.0]).wgpu().build_eframe(|cc| {
+        let app = App::new(cc);
+        spline_fitter::formatting::set_decimal_point('.');
+        app
+    })
+}
+
+/// Runs frames until the running fit (or sweep) ends.
+fn finish(h: &mut Harness<'static, App>) {
+    for _ in 0..3000 {
+        h.step();
+        if !h.state().fitting() {
+            h.run_steps(3);
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    panic!("the fit did not end");
+}
+
+/// Saves a screenshot when `SPLINE_FITTER_SHOTS` names a folder.
+fn shot(h: &mut Harness<'static, App>, name: &str) {
+    if let Some(dir) = std::env::var_os("SPLINE_FITTER_SHOTS") {
+        let image = h.render().expect("the window renders");
+        std::fs::create_dir_all(&dir).unwrap();
+        image.save(std::path::Path::new(&dir).join(format!("{name}.png"))).unwrap();
+    }
+}
+
+#[test]
+fn reference_session() {
+    let mut h = harness();
+    h.run_steps(3);
+    {
+        let app = h.state();
+        assert_eq!(app.status, "Ready");
+        let s = &app.settings;
+        assert_eq!(s.optimizer, OptimizerType::VarPro);
+        assert!(!s.tolerance_goal && s.auto_tolerance && !s.grow && s.geometric);
+        assert_eq!((s.degree.value.value, s.control_points.value.value, s.sections.value.value, s.continuity), (5, 25, 2, 3));
+    }
+    shot(&mut h, "1_start");
+
+    h.state_mut().new_naca_airfoil("2412", 81, true);
+    h.run_steps(3);
+    assert_eq!(h.state().status, "Created: NACA 2412 (161 points, 2 sections: [81, 81])");
+    assert_eq!(h.state().settings.tolerance, 1e-6);
+    shot(&mut h, "2_naca");
+
+    h.state_mut().on_fit();
+    finish(&mut h);
+    {
+        let app = h.state();
+        assert!(app.status.starts_with("Completed (VarPro LM): 40 evaluations in "), "{}", app.status);
+        assert!(app.status.ends_with(" | Error 8.978e-07 | max deviation 4.59e-06, RMS 8.98e-07, 49 control points"), "{}", app.status);
+        assert_eq!(app.projects.label(), "Unsaved project*\n1 optimization run");
+        assert_eq!(app.fit.as_ref().unwrap().section_counts(), vec![25, 25]);
+    }
+    h.state_mut().main_plot.comb_on = true;
+    h.state_mut().main_plot.refresh_comb();
+    h.run_steps(3);
+    shot(&mut h, "3_varpro_fit");
+
+    {
+        let app = h.state_mut();
+        app.settings.optimizer = OptimizerType::DirectLsq;
+        app.settings.continuity = 2;
+    }
+    h.run_steps(2);
+    h.state_mut().on_fit();
+    finish(&mut h);
+    {
+        let app = h.state();
+        assert!(app.status.starts_with("Completed (Direct LSQ): 2 solves in "), "{}", app.status);
+        assert!(app.status.contains(" | Error 2.94"), "{}", app.status);
+        assert_eq!(app.projects.runs().len(), 2);
+    }
+    shot(&mut h, "4_direct_lsq");
+
+    // One undo step returns the optimizer and the continuity.
+    let current = h.state().settings.values();
+    h.state_mut().history.commit(&current);
+    h.state_mut().undo();
+    h.run_steps(2);
+    assert_eq!(h.state().settings.optimizer, OptimizerType::VarPro);
+    assert_eq!(h.state().settings.continuity, 3);
+
+    // A sweep of the control points 25..26.
+    {
+        let app = h.state_mut();
+        app.settings.control_points.toggle(true);
+        app.settings.control_points.end.set(26);
+    }
+    h.run_steps(2);
+    h.state_mut().on_fit();
+    finish(&mut h);
+    {
+        let app = h.state();
+        assert!(app.status.starts_with("Sweep complete: 2 fits in "), "{}", app.status);
+        assert!(app.status.ends_with(" | Best: Control points 25, error 8.978e-07"), "{}", app.status);
+        assert!(!app.settings.control_points.active);
+        assert_eq!(app.settings.control_points.value.value, 25);
+    }
+    shot(&mut h, "5_sweep");
+}
+
+#[test]
+fn light_theme_and_dialogs() {
+    let mut h = harness();
+    h.state_mut().set_theme(Some(crate::theme::ThemeMode::Light), Some(30));
+    h.state_mut().new_naca_airfoil("0012", 61, false);
+    h.run_steps(3);
+    {
+        let app = h.state_mut();
+        app.settings.tolerance_goal = true;
+        app.settings.auto_tolerance = false;
+        app.settings.tolerance = 1e-4;
+        app.settings.sections.value.set(3);
+        app.advanced_open = true;
+    }
+    h.run_steps(3);
+    assert!(h.state().status.starts_with("Re-split: NACA 0012 (121 points, 3 sections: "), "{}", h.state().status);
+    h.state_mut().settings.sections.value.set(2);
+    h.run_steps(3);
+    h.state_mut().on_fit();
+    finish(&mut h);
+    assert!(h.state().status.starts_with("Completed (VarPro LM): "), "{}", h.state().status);
+    h.state_mut().main_plot.deviation_on = true;
+    h.state_mut().main_plot.show_knots = true;
+    h.state_mut().main_plot.refresh_knots();
+    h.state_mut().main_plot.refresh_deviation();
+    h.state_mut().on_report();
+    h.run_steps(4);
+    shot(&mut h, "6_light_tolerance_report");
+    h.state_mut().report = None;
+    h.state_mut().on_export_cad();
+    h.run_steps(3);
+    shot(&mut h, "7_cad_dialog");
+}

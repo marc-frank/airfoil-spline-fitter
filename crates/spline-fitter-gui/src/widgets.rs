@@ -248,9 +248,9 @@ pub fn sweep_toggle(ui: &mut Ui, p: &Palette, active: &mut bool, allowed: bool) 
 pub fn collapsible_header(ui: &mut Ui, p: &Palette, title: &str, open: &mut bool, badge: &str, badge_tip: &str) {
     ui.horizontal(|ui| {
         let glyph = if *open { Glyph::ChevronDown } else { Glyph::ChevronRight };
-        let text = RichText::new(format!("   {}", title.to_uppercase())).size(typeface::CAPTION).strong().color(p.text_3).extra_letter_spacing(0.8);
+        let text = RichText::new(format!("      {}", title.to_uppercase())).size(typeface::CAPTION).strong().color(p.text_3).extra_letter_spacing(0.8);
         let response = ui.add(Button::new(text).frame(false)).on_hover_cursor(egui::CursorIcon::PointingHand);
-        glyph.paint(ui.painter(), response.rect.left_center() + Vec2::new(6.0, 0.0), size::GLYPH, p.text_3);
+        glyph.paint(ui.painter(), response.rect.left_center() + Vec2::new(4.0, 0.0), size::GLYPH, p.text_3);
         if response.clicked() {
             *open = !*open;
         }

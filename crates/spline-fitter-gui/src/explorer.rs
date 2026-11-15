@@ -324,7 +324,7 @@ impl App {
         egui::Panel::right("explorer")
             .resizable(true)
             .default_size(size::EXPLORER_WIDTH)
-            .min_size(size::EXPLORER_MIN_WIDTH)
+            .size_range(size::EXPLORER_MIN_WIDTH..=ui.available_width() * 0.6)
             .frame(egui::Frame::new().fill(p.panel).inner_margin(egui::Margin { left: 12, right: 12, top: 10, bottom: 12 }))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
@@ -340,8 +340,14 @@ impl App {
                 self.filter_bar(ui);
                 let details_height = 150.0;
                 let table_height = (ui.available_height() - details_height - size::CONTROL_HEIGHT - 3.0 * size::GROUP).max(80.0);
-                ui.allocate_ui(egui::vec2(ui.available_width(), table_height), |ui| {
-                    if self.explorer.pivot { self.pivot_table(ui) } else { self.run_table(ui) }
+                let width = ui.available_width();
+                ui.allocate_ui(egui::vec2(width, table_height), |ui| {
+                    ui.set_max_width(width);
+                    if self.explorer.pivot {
+                        self.pivot_table(ui);
+                    } else {
+                        egui::ScrollArea::horizontal().id_salt("runs_h").auto_shrink([false, false]).show(ui, |ui| self.run_table(ui));
+                    }
                 });
                 ui.add_space(size::GROUP);
                 self.details(ui);
@@ -464,7 +470,7 @@ impl App {
         let mut clicked: Option<(String, egui::Modifiers)> = None;
         let mut double: Option<String> = None;
         let delete = ui.input(|i| i.key_pressed(egui::Key::Delete));
-        let columns: Vec<usize> = (1..COLUMNS.len()).collect();
+        let columns: Vec<usize> = (0..COLUMNS.len()).collect();
         let mut builder = TableBuilder::new(ui).id_salt("runs").striped(false).resizable(true).sense(Sense::click()).auto_shrink([false, false]);
         for _ in &columns {
             builder = builder.column(TableColumn::auto().at_least(48.0).clip(true));
