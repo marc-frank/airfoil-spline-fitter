@@ -127,7 +127,7 @@ impl ExplorerState {
 /// Run table: header and row heights, and what a header and a cell add to
 /// their text (padding, and the header's sort and filter glyphs).
 const HEADER_HEIGHT: f32 = 28.0;
-const ROW_HEIGHT: f32 = 30.0;
+const ROW_HEIGHT: f32 = 28.0;
 const HEADER_EXTRA: f32 = 48.0;
 const CELL_EXTRA: f32 = 18.0;
 
@@ -440,6 +440,12 @@ impl App {
     }
 
     /// Selects a run by a click with the modifiers held.
+    /// Selects one run, as a plain click on it does.
+    #[cfg(test)]
+    pub fn select_run(&mut self, id: &str) {
+        self.click_run(id, &[id.to_string()], egui::Modifiers::NONE);
+    }
+
     fn click_run(&mut self, id: &str, order: &[String], modifiers: egui::Modifiers) {
         let selected = &mut self.projects.selected;
         if modifiers.shift {
@@ -789,7 +795,7 @@ impl App {
                 let all = shown_excluded.is_empty();
                 let none = values.iter().all(|v| shown_excluded.contains(&v.1));
                 let mut select_all = all;
-                let r = ui.add(egui::Checkbox::new(&mut select_all, "Select all").indeterminate(!all && !none));
+                let r = widgets::tristate_checkbox(ui, &p, &mut select_all, !all && !none, "Select all");
                 if r.clicked() {
                     keep(popup, false);
                     if popup.excluded.is_empty() {
@@ -803,7 +809,7 @@ impl App {
                         let mut checked = !shown_excluded.contains(&v.1);
                         let text = if v.1.is_empty() { "Not used" } else { v.1.as_str() };
                         let color = if ruled_out.contains(&v.1) { p.text_3 } else { p.text };
-                        if ui.checkbox(&mut checked, RichText::new(text).color(color)).clicked() {
+                        if widgets::checkbox(ui, &p, &mut checked, RichText::new(text).color(color)).clicked() {
                             keep(popup, false);
                             if checked {
                                 popup.excluded.remove(&v.1);

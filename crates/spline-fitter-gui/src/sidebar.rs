@@ -139,7 +139,9 @@ impl App {
                 });
                 form_row(ui, &p, "Max deviation", view.tolerance_mode, "", |ui| {
                     ui.horizontal(|ui| {
-                        let auto_w = 60.0;
+                        // The check box: its 14 px box, 6 px and its text.
+                        let font = egui::FontId::proportional(typeface::BASE);
+                        let auto_w = 14.0 + size::GAP + ui.painter().layout_no_wrap("Auto".into(), font, p.text).size().x.ceil() + 2.0;
                         ui.add_enabled_ui(view.tolerance_mode && !s.auto_tolerance, |ui| {
                             widgets::scientific_field(
                                 ui,
@@ -152,7 +154,7 @@ impl App {
                             );
                         });
                         ui.add_enabled_ui(view.tolerance_mode, |ui| {
-                            ui.checkbox(&mut s.auto_tolerance, "Auto").on_hover_text(
+                            widgets::checkbox(ui, &p, &mut s.auto_tolerance, "Auto").on_hover_text(
                                 "Derive the tolerance from the decimal precision of the file and\nthe estimated noise of the points.",
                             );
                         });
@@ -183,7 +185,7 @@ impl App {
             }
             if view.varpro {
                 widgets::check_row(ui, &p, "Grow points", true, |ui| {
-                    ui.checkbox(&mut s.grow, "Add where the fit is worst").on_hover_text(
+                    widgets::checkbox(ui, &p, &mut s.grow, "Add where the fit is worst").on_hover_text(
                         "On: start from the fewest control points and add them where the\nfit is worst, refitting after each step.\nOff: start from the Control points setting (Curve). With a tolerance\ngoal the count can still grow or shrink from there to meet it.",
                     );
                 });
@@ -305,7 +307,7 @@ impl App {
                 }
                 widgets::check_row(ui, &p, "Junctions", view.has_junctions, |ui| {
                     ui.add_enabled_ui(view.has_junctions, |ui| {
-                        ui.checkbox(&mut s.optimize_junctions, "Optimize positions").on_hover_text("Optimize the position of every junction, instead of keeping the\nsection split points fixed. The split points are where the junctions\nstart; the data is fitted by the whole curve, so points move between\nsections with them.");
+                        widgets::checkbox(ui, &p, &mut s.optimize_junctions, "Optimize positions").on_hover_text("Optimize the position of every junction, instead of keeping the\nsection split points fixed. The split points are where the junctions\nstart; the data is fitted by the whole curve, so points move between\nsections with them.");
                     });
                 });
             });
@@ -348,7 +350,7 @@ impl App {
         };
         // Three readouts in equal columns, a caption above each value.
         let column = (width - 2.0 * size::GROUP) / 3.0;
-        ui.horizontal(|ui| {
+        ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = size::GROUP;
             let readouts = [
                 (error_caption, error_value, String::new()),

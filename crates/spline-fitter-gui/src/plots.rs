@@ -81,6 +81,14 @@ pub struct Axes<'a> {
     /// Text labels at positions of the x axis (a categorical axis).
     pub x_ticks: Option<&'a [(f64, String)]>,
     pub equal_aspect: bool,
+    /// Pixels an automatic range keeps around the data for its largest
+    /// marker (0.7072 of its outer width, as pyqtgraph pads a scatter).
+    pub marker_pad: f32,
+}
+
+/// The pixel padding of a marker `side` pixels wide with a `pen` outline.
+pub fn marker_pad(side: f32, pen: f32) -> f32 {
+    0.7072 * (side + pen)
 }
 
 /// Space between the plot frame and the plot item (half the 3 px outline
@@ -186,9 +194,15 @@ pub fn show_plot(
         plot = plot.data_aspect(1.0);
     }
     // An automatic range is padded by 1/sqrt(pixels) of its width, 2 to 10 %.
+    // The markers' pixels widen the range first, as in pyqtgraph.
+    let pad = axes.marker_pad as f64;
+    let range = |lo: f64, hi: f64, pixels: f32| {
+        let px = if hi > lo { (hi - lo) / pixels.max(1.0) as f64 } else { 0.0 };
+        axes::padded(lo - pad * px, hi + pad * px, axes::auto_padding(pixels as f64))
+    };
     let pending = view.pending.take().map(|b| {
-        let (x0, x1) = axes::padded(b.min()[0], b.max()[0], axes::auto_padding(frame.width() as f64));
-        let (y0, y1) = axes::padded(b.min()[1], b.max()[1], axes::auto_padding(frame.height() as f64));
+        let (x0, x1) = range(b.min()[0], b.max()[0], frame.width());
+        let (y0, y1) = range(b.min()[1], b.max()[1], frame.height());
         PlotBounds::from_min_max([x0, y0], [x1, y1])
     });
     let glide = &mut view.glide;
@@ -261,7 +275,12 @@ pub fn show_plot(
     let frame = *transform.frame();
     let bounds = *transform.bounds();
     let tick_font = egui::FontId::proportional(TICK_FONT);
-    let measure = |text: &str| ui.painter().layout_no_wrap(text.to_string(), tick_font.clone(), p.text_2).size();
+    // Label boxes as Qt measures them: every glyph hinted to whole pixels.
+    let measure = |text: &str| {
+        let glyph = |c: char| ui.painter().layout_no_wrap(c.to_string(), tick_font.clone(), p.text_2).size();
+        let width = text.chars().map(|c| glyph(c).x.round()).sum::<f32>();
+        EVec2::new(width, glyph('0').y.ceil())
+    };
     let x_ticks = axis_ticks(
         (bounds.min()[0], bounds.max()[0]),
         frame.width(),
@@ -433,10 +452,6 @@ impl Canvas {
         }
     }
 
-    pub fn text(&self, at: Pos2, text: &str, color: Color32) {
-        self.painter.text(at, egui::Align2::RIGHT_TOP, text, egui::FontId::proportional(crate::theme::typeface::SMALL), color);
-    }
-
     pub fn frame(&self) -> Rect {
         *self.transform.frame()
     }
@@ -584,7 +599,8 @@ impl MainPlot {
     }
 
     pub fn show(&mut self, ui: &mut Ui, p: &Palette, motion_ms: u64) {
-        let axes = Axes { x_label: "x", y_label: "y", log_x: false, log_y: false, x_ticks: None, equal_aspect: true };
+        let pad = marker_pad(size::CONTROL_SIZE, 1.0);
+        let axes = Axes { x_label: "x", y_label: "y", log_x: false, log_y: false, x_ticks: None, equal_aspect: true, marker_pad: pad };
         show_plot(ui, p, "main_plot", &mut self.view, &axes, motion_ms, |c| {
             let draw_strokes = |strokes: &ParityStrokes, dots: Option<&[Vec<Vec2>; 2]>| {
                 for (parity, s) in strokes.iter().enumerate() {
@@ -686,7 +702,8 @@ impl LossPlot {
             }
         }
         let x_label = if self.x_axis == 0 { "Iterations" } else { "Time (s)" };
-        let axes = Axes { x_label, y_label: "Error", log_x, log_y, x_ticks: None, equal_aspect: false };
+        let pad = marker_pad(size::TRACE_POINT, 0.0);
+        let axes = Axes { x_label, y_label: "Error", log_x, log_y, x_ticks: None, equal_aspect: false, marker_pad: pad };
         show_plot(ui, p, "loss_plot", &mut self.view, &axes, motion_ms, |c| {
             c.markers(points.iter().copied(), Marker::Circle, size::TRACE_POINT, p.trace(), Stroke::NONE);
         });
@@ -729,6 +746,9 @@ impl ComparisonPlot {
             log_y: self.log_y,
             x_ticks: ticks.as_deref(),
             equal_aspect: false,
+            // Room for the run marker around every point, so moving the
+            // marker never rescales the plot.
+            marker_pad: marker_pad(size::MARKER_SIZE, 2.0),
         };
         let (points, marked, connected) = (&self.points, &self.marked, self.connected);
         show_plot(ui, p, "comparison_plot", &mut self.view, &axes, motion_ms, |c| {
@@ -741,6 +761,13 @@ impl ComparisonPlot {
     }
 }
 
+/// The chart legend (pyqtgraph's, 12 px in from the top right): its
+/// names end this far from the plot's right edge, the first row's centre
+/// this far below its top, rows this far apart.
+const LEGEND_INSET: f32 = 25.0;
+const LEGEND_FIRST: f32 = 34.0;
+const LEGEND_ROW: f32 = 24.0;
+
 /// Thickness and camber along the chord, in percent, each maximum marked.
 pub fn shape_plot(ui: &mut Ui, p: &Palette, shape: &spline_fitter::bspline_varpro::airfoil::Shape, view: &mut View) {
     let pct = |xs: &[f64], ys: &[f64]| xs.iter().zip(ys).map(|(x, y)| [100.0 * x, 100.0 * y]).collect::<Vec<_>>();
@@ -750,8 +777,15 @@ pub fn shape_plot(ui: &mut Ui, p: &Palette, shape: &spline_fitter::bspline_varpr
         view.fit(bounds_of(thickness.iter().chain(camber.iter()).copied()));
         view.follow = false;
     }
-    let axes =
-        Axes { x_label: "Chord (%)", y_label: "Percent of the chord", log_x: false, log_y: false, x_ticks: None, equal_aspect: false };
+    let axes = Axes {
+        x_label: "Chord (%)",
+        y_label: "Percent of the chord",
+        log_x: false,
+        log_y: false,
+        x_ticks: None,
+        equal_aspect: false,
+        marker_pad: marker_pad(7.0, 2.0),
+    };
     show_plot(ui, p, "shape_plot", view, &axes, 0, |c| {
         c.polyline(thickness.iter().copied(), Stroke::new(1.5, p.trace()), false);
         c.polyline(camber.iter().copied(), Stroke::new(1.5, p.construction), true);
@@ -769,8 +803,22 @@ pub fn shape_plot(ui: &mut Ui, p: &Palette, shape: &spline_fitter::bspline_varpr
             p.construction,
             Stroke::new(2.0, p.canvas),
         );
-        let top_right = c.frame().right_top() + EVec2::new(-12.0, 12.0);
-        c.text(top_right, "Thickness", p.trace());
-        c.text(top_right + EVec2::new(0.0, 16.0), "Camber", p.construction);
+        // The legend: a line sample beside each name, inset at the top right.
+        let font = egui::FontId::proportional(typeface::BASE);
+        let names = [("Thickness", p.trace(), false), ("Camber", p.construction, true)];
+        let widest =
+            names.iter().map(|(n, ..)| c.painter.layout_no_wrap(n.to_string(), font.clone(), p.text_2).size().x).fold(0.0, f32::max);
+        let left = c.frame().right() - LEGEND_INSET - widest;
+        for (i, (name, color, dashed)) in names.into_iter().enumerate() {
+            let y = c.frame().top() + LEGEND_FIRST + i as f32 * LEGEND_ROW;
+            let sample = [egui::pos2(left - 30.0, y), egui::pos2(left - 10.0, y)];
+            let stroke = Stroke::new(1.5, color);
+            if dashed {
+                c.painter.extend(Shape::dashed_line(&sample, stroke, 6.0, 4.0));
+            } else {
+                c.painter.line_segment(sample, stroke);
+            }
+            c.painter.text(egui::pos2(left, y), egui::Align2::LEFT_CENTER, name, font.clone(), p.text_2);
+        }
     });
 }

@@ -87,6 +87,124 @@ pub fn toggle_button(ui: &mut Ui, p: &Palette, text: &str, checked: bool, toolti
     }
 }
 
+/// A check box: a 14 px box (the selection grey with a check when
+/// checked), 6 px, then its text; a line of text tall.
+pub fn checkbox(ui: &mut Ui, p: &Palette, checked: &mut bool, text: impl Into<RichText>) -> Response {
+    tristate_checkbox(ui, p, checked, false, text)
+}
+
+/// A check box that can show a dash: some of what it stands for checked.
+pub fn tristate_checkbox(ui: &mut Ui, p: &Palette, checked: &mut bool, partly: bool, text: impl Into<RichText>) -> Response {
+    const BOX: f32 = 14.0;
+    let enabled = ui.is_enabled();
+    let text: RichText = text.into();
+    let color = if enabled { p.text } else { p.text_3 };
+    let galley = egui::WidgetText::from(text).into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Body);
+    let height = galley.size().y.max(BOX);
+    let (rect, mut response) = ui.allocate_exact_size(Vec2::new(BOX + size::GAP + galley.size().x, height), Sense::click());
+    if response.clicked() {
+        *checked = !*checked;
+        response.mark_changed();
+    }
+    let indicator = egui::Rect::from_center_size(egui::pos2(rect.left() + BOX / 2.0, rect.center().y), Vec2::splat(BOX));
+    let (fill, border) = match (enabled, *checked || partly) {
+        (false, _) => (p.panel, p.rule),
+        (true, true) => (p.select, p.select_line),
+        (true, false) if response.hovered() => (p.field, p.select_line),
+        (true, false) => (p.field, p.rule_strong),
+    };
+    ui.painter().rect(indicator, CornerRadius::same(2), fill, egui::Stroke::new(1.0, border), egui::StrokeKind::Inside);
+    if partly {
+        Glyph::Dash.paint(ui.painter(), indicator.center(), BOX, p.text);
+    } else if *checked {
+        Glyph::Check.paint(ui.painter(), indicator.center(), BOX, p.text);
+    }
+    ui.painter().galley(egui::pos2(indicator.right() + size::GAP, rect.center().y - galley.size().y / 2.0), galley, color);
+    response.on_hover_cursor(egui::CursorIcon::Default)
+}
+
+/// A one-line text field in the Loft frame (as a spin box's, without
+/// arrows); at most `limit` characters (0: any).
+pub fn text_field(ui: &mut Ui, p: &Palette, id_salt: &str, text: &mut String, width: f32, hint: &str, limit: usize) -> Response {
+    let enabled = ui.is_enabled();
+    let (outer, frame_response) = ui.allocate_exact_size(Vec2::new(width, size::CONTROL_HEIGHT), Sense::hover());
+    let background = ui.painter().add(egui::Shape::Noop);
+    let mut edit = TextEdit::singleline(text)
+        .id(ui.make_persistent_id(id_salt))
+        .frame(egui::Frame::NONE.inner_margin(egui::Margin {
+            left: (size::GAP + 1.0) as i8,
+            right: (size::GAP + 1.0) as i8,
+            top: 0,
+            bottom: 0,
+        }))
+        .hint_text(hint)
+        .align(egui::Align2::LEFT_CENTER)
+        .desired_width(width - 2.0 * (size::GAP + 1.0))
+        .min_size(outer.size());
+    if limit > 0 {
+        edit = edit.char_limit(limit);
+    }
+    let response = ui.new_child(egui::UiBuilder::new().max_rect(outer)).add(edit);
+    let border = if !enabled {
+        p.rule
+    } else if response.has_focus() {
+        p.select_line
+    } else if response.hovered() || frame_response.hovered() {
+        p.rule_strong
+    } else {
+        p.rule
+    };
+    ui.painter().set(
+        background,
+        egui::Shape::Rect(egui::epaint::RectShape::new(
+            outer,
+            CornerRadius::same(size::RADIUS),
+            if enabled { p.field } else { p.panel },
+            egui::Stroke::new(1.0, border),
+            egui::StrokeKind::Inside,
+        )),
+    );
+    response
+}
+
+/// The temperature slider: a 4 px groove from cool to warm and a 12 px
+/// round handle; values -100 to 100.
+pub fn temperature_slider(ui: &mut Ui, p: &Palette, value: &mut i32, width: f32) -> Response {
+    let height = 24.0;
+    let (rect, mut response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click_and_drag());
+    let handle = 12.0;
+    let span = (rect.left() + handle / 2.0)..=(rect.right() - handle / 2.0);
+    if let Some(pos) = response.interact_pointer_pos().filter(|_| response.dragged() || response.clicked()) {
+        let t = ((pos.x - span.start()) / (span.end() - span.start())).clamp(0.0, 1.0);
+        let v = (-100.0 + 200.0 * t).round() as i32;
+        if v != *value {
+            *value = v;
+            response.mark_changed();
+        }
+    }
+    // The groove, exaggerated from cool to warm so it can be read.
+    let groove = egui::Rect::from_center_size(rect.center(), Vec2::new(width, 4.0));
+    let steps = 32;
+    let mut mesh = egui::Mesh::default();
+    for i in 0..=steps {
+        let t = i as f32 / steps as f32;
+        let color = crate::theme::grey(0.62, -4.0 + 8.0 * t as f64);
+        let x = groove.left() + t * groove.width();
+        mesh.colored_vertex(egui::pos2(x, groove.top()), color);
+        mesh.colored_vertex(egui::pos2(x, groove.bottom()), color);
+        if i > 0 {
+            let k = 2 * i as u32;
+            mesh.add_triangle(k - 2, k - 1, k);
+            mesh.add_triangle(k - 1, k, k + 1);
+        }
+    }
+    ui.painter().add(egui::Shape::mesh(mesh));
+    let x = span.start() + (*value as f32 + 100.0) / 200.0 * (span.end() - span.start());
+    let fill = if response.hovered() || response.dragged() { p.text } else { p.text_2 };
+    ui.painter().circle(egui::pos2(x, rect.center().y), handle / 2.0, fill, egui::Stroke::new(1.0, p.canvas));
+    response
+}
+
 /// A flat square button showing a glyph: no frame until hovered.
 pub fn flat_icon_button(ui: &mut Ui, p: &Palette, glyph: Glyph, tooltip: &str) -> Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(size::CONTROL_HEIGHT), Sense::click());
@@ -441,40 +559,46 @@ pub fn rule(ui: &mut Ui, p: &Palette) {
 
 /// Label and value pairs in as many columns as fit.
 pub fn readout_list(ui: &mut Ui, p: &Palette, title: &str, pairs: &[(String, String)]) {
+    // The title (a message when there are no pairs), muted.
+    let color = if pairs.is_empty() { p.text_3 } else { p.text };
+    ui.add(egui::Label::new(RichText::new(title).size(typeface::MUTED).color(color)).wrap());
     if pairs.is_empty() {
-        muted(ui, p, title);
         return;
     }
-    ui.label(RichText::new(title).color(p.text).strong());
-    let mono = FontId::monospace(typeface::BASE);
-    let body = FontId::proportional(typeface::BASE);
-    let width = |text: &str, font: &FontId| ui.fonts_mut(|f| f.layout_no_wrap(text.to_string(), font.clone(), p.text).size().x);
-    let label_w: Vec<f32> = pairs.iter().map(|(l, _)| width(l, &body)).collect();
-    let value_w: Vec<f32> = pairs.iter().map(|(_, v)| width(v, &mono) + 8.0).collect();
+    ui.add_space(size::GAP - ui.spacing().item_spacing.y);
+    let label_font = FontId::proportional(typeface::MUTED);
+    let value_font = FontId::monospace(typeface::BASE);
+    let painter = ui.painter().clone();
+    let labels: Vec<_> = pairs.iter().map(|(l, _)| painter.layout_no_wrap(l.clone(), label_font.clone(), p.text_3)).collect();
+    let values: Vec<_> = pairs.iter().map(|(_, v)| painter.layout_no_wrap(v.clone(), value_font.clone(), p.text)).collect();
+    let label_w: Vec<f32> = labels.iter().map(|g| g.size().x).collect();
+    let value_w: Vec<f32> = values.iter().map(|g| g.size().x + size::GROUP).collect();
+    // Per column of pairs: the widest label and value.
+    let columns_of = |n: usize| -> Vec<(f32, f32)> {
+        (0..n)
+            .map(|c| {
+                let idx = (c..pairs.len()).step_by(n);
+                (idx.clone().map(|i| label_w[i]).fold(0.0, f32::max), idx.map(|i| value_w[i]).fold(0.0, f32::max))
+            })
+            .collect()
+    };
+    let needed = |n: usize| columns_of(n).iter().map(|(l, v)| l + v).sum::<f32>() + (n as f32 - 1.0) * size::PAD_LARGE;
     let available = ui.available_width();
-    let columns = (1..=pairs.len().max(1))
-        .rev()
-        .find(|&k| {
-            let total: f32 = (0..k)
-                .map(|c| {
-                    let idx: Vec<usize> = (c..pairs.len()).step_by(k).collect();
-                    idx.iter().map(|&i| label_w[i]).fold(0.0, f32::max) + idx.iter().map(|&i| value_w[i]).fold(0.0, f32::max)
-                })
-                .sum();
-            total + (k as f32 - 1.0) * 16.0 <= available
-        })
-        .unwrap_or(1);
-    egui::Grid::new(ui.next_auto_id()).num_columns(columns * 2).spacing([8.0, 2.0]).show(ui, |ui| {
-        for (i, (label, value)) in pairs.iter().enumerate() {
-            ui.label(RichText::new(label).color(p.text_3));
-            ui.label(RichText::new(value).font(mono.clone()).color(p.text));
-            if (i + 1) % columns == 0 {
-                ui.end_row();
-            } else {
-                ui.add_space(16.0);
-            }
-        }
-    });
+    // As many pairs to a line as fit, the spare width shared between them.
+    let n = (2..=pairs.len()).rev().find(|&n| needed(n) <= available).unwrap_or(1);
+    let columns = columns_of(n);
+    let spare = ((available - needed(n)) / n as f32).max(0.0);
+    let line = labels.iter().chain(&values).map(|g| g.size().y).fold(0.0, f32::max);
+    let rows = pairs.len().div_ceil(n);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(available, rows as f32 * (line + 1.0) - 1.0), Sense::hover());
+    for (i, (label, value)) in labels.into_iter().zip(values).enumerate() {
+        let (row, c) = (i / n, i % n);
+        let x = rect.left() + columns[..c].iter().map(|(l, v)| l + v + size::PAD_LARGE + spare).sum::<f32>();
+        let y = rect.top() + row as f32 * (line + 1.0);
+        let (lh, vh) = (label.size().y, value.size().y);
+        painter.galley(egui::pos2(x, y + (line - lh) / 2.0), label, p.text_3);
+        painter.galley(egui::pos2(x + columns[c].0 + size::GROUP, y + (line - vh) / 2.0), value, p.text);
+    }
 }
 
 /// A combo box of texts; returns true when the choice changed.
@@ -498,7 +622,7 @@ pub fn combo(
     };
     let glyph = p.text_2;
     let response = egui::ComboBox::from_id_salt(id_salt)
-        .width(width - 2.0 * ui.spacing().button_padding.x)
+        .width(width)
         .selected_text(items.get(*selected).copied().unwrap_or(""))
         .icon(move |ui, rect, _visuals, _open| Glyph::ChevronDown.paint(ui.painter(), rect.center(), size::GLYPH, glyph))
         .show_ui(ui, |ui| {

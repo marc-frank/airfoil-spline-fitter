@@ -113,6 +113,15 @@ fn reference_session() {
         assert_eq!(app.settings.control_points.value.value, 25);
     }
     shot(&mut h, "5_sweep");
+
+    // A run selected in the explorer, then Advanced open.
+    let first = h.state().projects.runs()[0].run_id.clone();
+    h.state_mut().select_run(&first);
+    h.run_steps(3);
+    shot(&mut h, "8_selected");
+    h.state_mut().advanced_open = true;
+    h.run_steps(3);
+    shot(&mut h, "9_advanced");
 }
 
 #[test]
@@ -130,6 +139,7 @@ fn light_theme_and_dialogs() {
         app.advanced_open = true;
     }
     h.run_steps(3);
+    shot(&mut h, "6a_light_settings");
     // The section count runs the rules only; the next fit splits.
     assert_eq!(h.state().status, "Created: NACA 0012 (121 points, 2 sections: [61, 61])");
     assert_eq!(h.state().airfoil.as_ref().unwrap().num_sections(), 2);
@@ -149,9 +159,11 @@ fn light_theme_and_dialogs() {
     h.state_mut().main_plot.show_knots = true;
     h.state_mut().main_plot.refresh_knots();
     h.state_mut().main_plot.refresh_deviation();
+    h.run_steps(3);
+    shot(&mut h, "6_light_tolerance");
     h.state_mut().on_report();
     h.run_steps(4);
-    shot(&mut h, "6_light_tolerance_report");
+    shot(&mut h, "6r_report");
     h.state_mut().report = None;
     h.state_mut().on_export_cad();
     h.run_steps(3);
@@ -169,4 +181,36 @@ fn light_theme_and_dialogs() {
     finish(&mut h);
     assert!(h.state().status.starts_with("Completed (Direct LSQ): 1 evaluation in "), "{}", h.state().status);
     assert_eq!(h.state().airfoil.as_ref().unwrap().num_sections(), 3);
+}
+
+/// Every dialog, for screenshots (the dialogs are windows of their own;
+/// under test they show inside the main window).
+#[test]
+fn dialogs() {
+    use crate::dialogs::Dialog;
+    let mut h = harness();
+    h.state_mut().dialog = Some(Dialog::naca(&h.state().store));
+    h.run_steps(3);
+    shot(&mut h, "d_naca");
+    h.state_mut().dialog = None;
+    h.state_mut().new_naca_airfoil("2412", 81, true);
+    h.state_mut().on_fit();
+    finish(&mut h);
+    shot(&mut h, "d_base");
+    for (name, dialog) in [
+        ("d_points", Dialog::points_per_side(81)),
+        ("d_cad", Dialog::cad(&h.state().store)),
+        ("d_theme", Dialog::theme(h.state())),
+        ("d_motion", Dialog::motion(h.state())),
+        ("d_batch", Dialog::batch()),
+    ] {
+        h.state_mut().dialog = Some(dialog);
+        h.run_steps(3);
+        shot(&mut h, name);
+        h.state_mut().dialog = None;
+    }
+    h.state_mut().on_report();
+    h.run_steps(4);
+    shot(&mut h, "d_report");
+    assert!(h.state().modal_open());
 }

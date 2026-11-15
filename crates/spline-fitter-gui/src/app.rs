@@ -248,7 +248,19 @@ impl App {
     fn menu_bar(&mut self, ui: &mut Ui) {
         let fitting = self.fitting();
         let has_fit = self.fit.is_some() && !fitting;
-        egui::MenuBar::new().ui(ui, |ui| {
+        // Bar items with 10 px beside and 4 px above their text; menu items
+        // 5 px above and about 22 px beside (Python: 20 left, 24 right).
+        let bar = egui::style::StyleModifier::new(|style| {
+            egui::containers::menu::menu_style(style);
+            style.spacing.button_padding = egui::vec2(10.0, 4.0);
+            style.spacing.item_spacing.x = 0.0;
+        });
+        let items = egui::style::StyleModifier::new(|style| {
+            egui::containers::menu::menu_style(style);
+            style.spacing.button_padding = egui::vec2(22.0, 5.0);
+            style.spacing.item_spacing.y = 0.0;
+        });
+        egui::MenuBar::new().style(bar).config(egui::containers::menu::MenuConfig::new().style(items)).ui(ui, |ui| {
             ui.menu_button("File", |ui| {
                 let item = |ui: &mut Ui, text: &str, shortcut: &str, enabled: bool| {
                     ui.add_enabled(enabled, egui::Button::new(text).shortcut_text(shortcut)).clicked()
@@ -468,6 +480,15 @@ impl App {
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        // Behind a dialog (a window of its own) the main window takes no input.
+        if self.modal_open() && !ctx.embed_viewports() {
+            ctx.input_mut(|i| {
+                i.pointer = Default::default();
+                i.events.clear();
+                i.keys_down.clear();
+                i.smooth_scroll_delta = egui::Vec2::ZERO;
+            });
+        }
         self.apply_theme(&ctx);
         self.tick_job(&ctx);
         self.shortcuts(&ctx);
@@ -476,8 +497,6 @@ impl eframe::App for App {
 
         let p = self.palette.clone();
         let menu = egui::Panel::top("menu").exact_size(size::MENU_BAR_HEIGHT).frame(egui::Frame::new().fill(p.window)).show(ui, |ui| {
-            ui.spacing_mut().button_padding = egui::vec2(10.0, 4.0);
-            ui.spacing_mut().item_spacing.x = 0.0;
             ui.spacing_mut().interact_size.y = size::MENU_BAR_HEIGHT - 1.0;
             self.menu_bar(ui)
         });

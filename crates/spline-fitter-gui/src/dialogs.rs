@@ -11,7 +11,7 @@ use crate::overlays::QUANTITIES;
 use crate::plots::{shape_plot, View};
 use crate::runs::COLUMNS;
 use crate::store::Store;
-use crate::theme::{size, Glyph, ThemeMode};
+use crate::theme::{size, Glyph, Palette, ThemeMode};
 use crate::widgets::{self, form_row, muted, Field, IntOptions};
 
 /// Motion durations: steps of 25, 0 shown as Off.
@@ -85,93 +85,134 @@ enum Answer {
     Reject,
 }
 
-/// A modal dialog with a title; the content returns the answer.
-fn modal(ctx: &egui::Context, title: &str, width: f32, content: impl FnOnce(&mut Ui) -> Answer) -> Answer {
-    let frame = egui::Frame::popup(&ctx.global_style()).inner_margin(egui::Margin::same(size::PAD_LARGE as i8));
-    let response = egui::Modal::new(egui::Id::unique(("dialog", title))).frame(frame).show(ctx, |ui| {
-        ui.set_width(width);
-        ui.heading(title);
-        ui.add_space(size::GROUP);
-        content(ui)
-    });
-    if response.should_close() {
-        return Answer::Reject;
-    }
-    response.inner
+/// Padding of a settings dialog, and of a Qt input dialog.
+const DIALOG_MARGIN: f32 = size::PAD_LARGE;
+const INPUT_DIALOG_MARGIN: f32 = 11.0;
+
+/// The report window: as wide as the Python version's, taller with a chart.
+const REPORT_WIDTH: f32 = 560.0;
+
+/// A dialog in a window of its own, `width` wide; its height follows the
+/// content. Where the platform has a single window (as under test) it is
+/// a window inside the main one. The content returns the answer; closing
+/// the window or Escape rejects.
+fn open_dialog(ctx: &egui::Context, title: &str, width: f32, margin: f32, content: impl FnOnce(&mut Ui) -> Answer) -> Answer {
+    let height_id = egui::Id::unique(("dialog_height", title));
+    let height: f32 = ctx.data(|d| d.get_temp(height_id)).unwrap_or(120.0);
+    let builder = egui::ViewportBuilder::default()
+        .with_title(title)
+        .with_inner_size([width, height])
+        .with_resizable(false)
+        .with_minimize_button(false)
+        .with_maximize_button(false);
+    let mut content = Some(content);
+    ctx.show_viewport_immediate(egui::ViewportId::from_hash_of(("dialog", title)), builder, |ui, class| {
+        let mut answer = Answer::Open;
+        // An embedded window brings its own margin.
+        let embedded = class == egui::ViewportClass::EmbeddedWindow;
+        let inner = if embedded { 0 } else { margin as i8 };
+        let frame = egui::Frame::new().fill(ui.visuals().window_fill).inner_margin(egui::Margin::same(inner));
+        let used = frame
+            .show(ui, |ui| {
+                ui.set_width(width - 2.0 * margin);
+                ui.spacing_mut().item_spacing.y = size::GAP;
+                if let Some(content) = content.take() {
+                    answer = content(ui);
+                }
+                ui.min_rect().height()
+            })
+            .inner;
+        if class != egui::ViewportClass::EmbeddedWindow {
+            let wanted = (used + 2.0 * margin).ceil();
+            if (wanted - height).abs() > 0.5 {
+                ui.ctx().data_mut(|d| d.insert_temp(height_id, wanted));
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(width, wanted)));
+            }
+            if ui.input(|i| i.viewport().close_requested()) {
+                answer = Answer::Reject;
+            }
+        }
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            answer = Answer::Reject;
+        }
+        answer
+    })
 }
 
-/// Dialog buttons: reset-role at the left, then accept, then reject.
-fn buttons(ui: &mut Ui, accept: Option<&str>, reject: &str, reset: Option<(&str, &str)>) -> (bool, bool, bool) {
+/// A dialog button: 22 px wider than its text; the default one outlined in
+/// the selection line (Enter presses it).
+fn dialog_button(ui: &mut Ui, p: &Palette, text: &str, default: bool, enabled: bool) -> bool {
+    let response = ui.add_enabled(enabled, egui::Button::new(text).min_size(egui::vec2(0.0, size::CONTROL_HEIGHT)));
+    if default && enabled {
+        widgets::outline_checked(ui, p, &response, egui::CornerRadius::same(size::RADIUS));
+    }
+    response.clicked() || (default && enabled && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+}
+
+/// The button row: a reset-role button at the left; at the right the
+/// accept button (the default) and the reject button, 6 px apart.
+fn buttons(ui: &mut Ui, p: &Palette, accept: Option<(&str, bool)>, reject: &str, reset: Option<(&str, &str)>) -> (bool, bool, bool) {
     let (mut a, mut r, mut z) = (false, false, false);
-    ui.add_space(size::GROUP);
-    ui.horizontal(|ui| {
+    let row = egui::vec2(ui.available_width(), size::CONTROL_HEIGHT);
+    ui.allocate_ui_with_layout(row, Layout::left_to_right(Align::Center), |ui| {
         if let Some((text, tip)) = reset {
-            z = widgets::button(ui, text, tip).clicked();
+            z = ui.add(egui::Button::new(text).min_size(egui::vec2(0.0, size::CONTROL_HEIGHT))).on_hover_text(tip).clicked();
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            r = widgets::button(ui, reject, "").clicked();
-            if let Some(text) = accept {
-                a = widgets::button(ui, text, "").clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter));
+            r = dialog_button(ui, p, reject, false, true);
+            if let Some((text, enabled)) = accept {
+                a = dialog_button(ui, p, text, true, enabled);
             }
         });
     });
     (a, r, z)
 }
 
+/// The answer of a button row.
+fn answer_of(accepted: bool, rejected: bool) -> Answer {
+    if accepted {
+        Answer::Accept
+    } else if rejected {
+        Answer::Reject
+    } else {
+        Answer::Open
+    }
+}
+
 impl App {
+    /// Whether a dialog or the report is open (the main window then takes
+    /// no input, as behind a modal dialog).
+    pub fn modal_open(&self) -> bool {
+        self.dialog.is_some() || self.report.is_some()
+    }
+
     pub fn show_dialogs(&mut self, ctx: &egui::Context) {
         self.report_window(ctx);
         let Some(mut dialog) = self.dialog.take() else { return };
         let p = self.palette.clone();
+        let form = |width: f32| width - 2.0 * DIALOG_MARGIN - size::LABEL_WIDTH - size::GROUP;
         let keep = match &mut dialog {
             Dialog::Naca { code, per_side, closed } => {
                 let valid = code.len() == 4 && code.chars().all(|c| c.is_ascii_digit());
-                let answer = modal(ctx, "New NACA airfoil", 360.0, |ui| {
+                const WIDTH: f32 = 250.0;
+                let answer = open_dialog(ctx, "New NACA airfoil", WIDTH, DIALOG_MARGIN, |ui| {
                     form_row(ui, &p, "Digits", true, "", |ui| {
-                        ui.add(egui::TextEdit::singleline(code).char_limit(4).desired_width(120.0)).on_hover_text(
-                            "Four digits: the camber in percent of the chord, its position in tenths\nof the chord, and the thickness in percent. 2412 has 2% camber at 40%\nof the chord and is 12% thick; 0012 is symmetric.",
-                        );
+                        let tip = "Four digits: the camber in percent of the chord, its position in tenths\nof the chord, and the thickness in percent. 2412 has 2% camber at 40%\nof the chord and is 12% thick; 0012 is symmetric.";
+                        widgets::text_field(ui, &p, "naca_code", code, form(WIDTH), "", 4).on_hover_text(tip);
                     });
                     form_row(ui, &p, "Points per side", true, "", |ui| {
-                        widgets::int_field(
-                            ui,
-                            &p,
-                            "naca_points",
-                            per_side,
-                            (10, crate::settings::UNLIMITED),
-                            Field::new(120.0, "Spaced closer toward the leading and trailing edge"),
-                            IntOptions::default(),
-                        );
+                        let f = Field::new(form(WIDTH), "Spaced closer toward the leading and trailing edge");
+                        widgets::int_field(ui, &p, "naca_points", per_side, (10, crate::settings::UNLIMITED), f, IntOptions::default());
                     });
                     form_row(ui, &p, "Trailing edge", true, "", |ui| {
-                        widgets::segmented(
-                            ui,
-                            closed,
-                            &[
-                                (true, "Closed", "Modified thickness coefficient: a sharp trailing edge"),
-                                (false, "Open", "Original thickness coefficient: a thin blunt trailing edge"),
-                            ],
-                            160.0,
-                        );
+                        let items = [
+                            (true, "Closed", "Modified thickness coefficient: a sharp trailing edge"),
+                            (false, "Open", "Original thickness coefficient: a thin blunt trailing edge"),
+                        ];
+                        widgets::segmented(ui, closed, &items, form(WIDTH));
                     });
-                    let mut accepted = false;
-                    let mut rejected = false;
-                    ui.add_space(size::GROUP);
-                    ui.horizontal(|ui| {
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            rejected = widgets::button(ui, "Cancel", "").clicked();
-                            accepted = ui
-                                .add_enabled(valid, egui::Button::new("Create").min_size(egui::vec2(0.0, size::CONTROL_HEIGHT)))
-                                .clicked();
-                        });
-                    });
-                    if accepted {
-                        Answer::Accept
-                    } else if rejected {
-                        Answer::Reject
-                    } else {
-                        Answer::Open
-                    }
+                    let (a, r, _) = buttons(ui, &p, Some(("Create", valid)), "Cancel", None);
+                    answer_of(a, r)
                 });
                 match answer {
                     Answer::Accept if valid => {
@@ -187,40 +228,30 @@ impl App {
                 }
             }
             Dialog::Cad(choice) => {
-                let answer = modal(ctx, "Export CAD", 380.0, |ui| {
+                const WIDTH: f32 = 349.0;
+                let answer = open_dialog(ctx, "Export CAD", WIDTH, DIALOG_MARGIN, |ui| {
                     form_row(ui, &p, "Format", true, "", |ui| {
                         let labels: Vec<&str> = CAD_FORMATS.iter().map(|(l, _)| *l).collect();
-                        widgets::combo(ui, &p, "cad_format", &mut choice.format, &labels, 200.0, "");
+                        widgets::combo(ui, &p, "cad_format", &mut choice.format, &labels, 0.0, "");
                     });
                     form_row(ui, &p, "Units", true, "", |ui| {
                         let items: Vec<(&'static str, &str, &str)> = CAD_UNITS.iter().map(|u| (*u, *u, "")).collect();
-                        widgets::segmented(ui, &mut choice.units, &items, 200.0);
+                        widgets::segmented(ui, &mut choice.units, &items, form(WIDTH));
                     });
                     form_row(ui, &p, "Scale", true, "", |ui| {
-                        widgets::scientific_field(
-                            ui,
-                            &p,
-                            "cad_scale",
-                            &mut choice.scale,
-                            (1e-6, f64::INFINITY),
-                            1.0,
-                            Field::new(200.0, "Coordinates are multiplied by this factor, for example the chord length."),
+                        let f = Field::new(80.0, "Coordinates are multiplied by this factor, for example the chord length.");
+                        widgets::scientific_field(ui, &p, "cad_scale", &mut choice.scale, (1e-6, f64::INFINITY), 1.0, f);
+                    });
+                    widgets::check_row(ui, &p, "Sections", true, |ui| {
+                        widgets::checkbox(ui, &p, &mut choice.merge, "Merge sections into one curve").on_hover_text(
+                            "Write the whole chain as a single B-spline (junctions become knots).\nOtherwise every section is its own curve.",
                         );
                     });
-                    form_row(ui, &p, "Sections", true, "", |ui| {
-                        ui.checkbox(&mut choice.merge, "Merge sections into one curve").on_hover_text("Write the whole chain as a single B-spline (junctions become knots).\nOtherwise every section is its own curve.");
+                    widgets::check_row(ui, &p, "Trailing edge", true, |ui| {
+                        widgets::checkbox(ui, &p, &mut choice.close_te, "Close a blunt trailing edge with a line");
                     });
-                    form_row(ui, &p, "Trailing edge", true, "", |ui| {
-                        ui.checkbox(&mut choice.close_te, "Close a blunt trailing edge with a line");
-                    });
-                    let (a, r, _) = buttons(ui, Some("Export..."), "Cancel", None);
-                    if a {
-                        Answer::Accept
-                    } else if r {
-                        Answer::Reject
-                    } else {
-                        Answer::Open
-                    }
+                    let (a, r, _) = buttons(ui, &p, Some(("Export...", true)), "Cancel", None);
+                    answer_of(a, r)
                 });
                 match answer {
                     Answer::Accept => {
@@ -237,38 +268,28 @@ impl App {
             }
             Dialog::Batch => {
                 let (mut source, mut target) = (self.batch_source.clone(), self.batch_target.clone());
-                let answer = modal(ctx, "Batch convert", size::DIALOG_MIN_WIDTH, |ui| {
+                let answer = open_dialog(ctx, "Batch convert", size::DIALOG_MIN_WIDTH, DIALOG_MARGIN, |ui| {
                     muted(ui, &p, "Fit every .dat file in the source folder with the current settings\nand save each as .spline.dat in the target folder.");
                     for (label, folder) in [("Source", &mut source), ("Target", &mut target)] {
                         form_row(ui, &p, label, true, "", |ui| {
-                            ui.horizontal(|ui| {
-                                ui.add(
-                                    egui::Label::new(
-                                        RichText::new(if folder.is_empty() { "Not chosen" } else { folder.as_str() }).color(p.text_3),
-                                    )
-                                    .wrap(),
-                                );
-                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    if widgets::button(ui, "Choose...", "").clicked() {
-                                        let home = dirs::home_dir().unwrap_or_default();
-                                        if let Some(dir) =
-                                            rfd::FileDialog::new().set_title(format!("{label} folder")).set_directory(home).pick_folder()
-                                        {
-                                            *folder = dir.to_string_lossy().into_owned();
-                                        }
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                if widgets::button(ui, "Choose...", "").clicked() {
+                                    let home = dirs::home_dir().unwrap_or_default();
+                                    if let Some(dir) =
+                                        rfd::FileDialog::new().set_title(format!("{label} folder")).set_directory(home).pick_folder()
+                                    {
+                                        *folder = dir.to_string_lossy().into_owned();
                                     }
+                                }
+                                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                                    let text = if folder.is_empty() { "Not chosen" } else { folder.as_str() };
+                                    ui.add(egui::Label::new(RichText::new(text).color(p.text_3)).truncate());
                                 });
                             });
                         });
                     }
-                    let (a, r, _) = buttons(ui, Some("Convert"), "Close", None);
-                    if a {
-                        Answer::Accept
-                    } else if r {
-                        Answer::Reject
-                    } else {
-                        Answer::Open
-                    }
+                    let (a, r, _) = buttons(ui, &p, Some(("Convert", true)), "Close", None);
+                    answer_of(a, r)
                 });
                 self.batch_source = source;
                 self.batch_target = target;
@@ -283,7 +304,8 @@ impl App {
             }
             Dialog::Theme { pending, slider } => {
                 let mut mode = self.theme_mode;
-                let answer = modal(ctx, "Theme", 380.0, |ui| {
+                const WIDTH: f32 = 418.0;
+                let answer = open_dialog(ctx, "Theme", WIDTH, DIALOG_MARGIN, |ui| {
                     form_row(ui, &p, "Mode", true, "", |ui| {
                         let items: Vec<(ThemeMode, &str, &str)> = ThemeMode::ALL
                             .iter()
@@ -291,13 +313,11 @@ impl App {
                                 (*m, m.label(), if *m == ThemeMode::System { "Follow the light or dark setting of the system" } else { "" })
                             })
                             .collect();
-                        widgets::segmented(ui, &mut mode, &items, 240.0);
+                        widgets::segmented(ui, &mut mode, &items, form(WIDTH));
                     });
                     form_row(ui, &p, "Temperature", true, "", |ui| {
                         ui.label(RichText::new("Cool").color(p.text_2));
-                        ui.spacing_mut().slider_width = size::SLIDER_WIDTH;
-                        let r = ui
-                            .add(egui::Slider::new(slider, -100..=100).show_value(false))
+                        let r = widgets::temperature_slider(ui, &p, slider, size::SLIDER_WIDTH)
                             .on_hover_text("Tint the greys cool (blue) or warm (sand); neutral in the middle");
                         if r.dragged() && slider.abs() <= 4 {
                             *slider = 0;
@@ -307,16 +327,12 @@ impl App {
                         }
                         ui.label(RichText::new("Warm").color(p.text_2));
                     });
-                    let (_, r, z) = buttons(ui, None, "Close", Some(("Neutral", "Untinted greys (the default)")));
+                    let (_, r, z) = buttons(ui, &p, None, "Close", Some(("Neutral", "Untinted greys (the default)")));
                     if z {
                         *slider = 0;
                         *pending = Some((0, Instant::now() - Duration::from_millis(100)));
                     }
-                    if r {
-                        Answer::Reject
-                    } else {
-                        Answer::Open
-                    }
+                    answer_of(false, r)
                 });
                 if mode != self.theme_mode {
                     self.set_theme(Some(mode), None);
@@ -334,39 +350,25 @@ impl App {
             }
             Dialog::Motion => {
                 let (mut scroll, mut zoom) = (self.scroll_ms as usize, self.zoom_ms as usize);
-                let answer = modal(ctx, "Scrolling and zooming", 380.0, |ui| {
+                const WIDTH: f32 = 299.0;
+                let answer = open_dialog(ctx, "Scrolling and zooming", WIDTH, DIALOG_MARGIN, |ui| {
                     form_row(ui, &p, "Scrolling", true, "", |ui| {
-                        widgets::int_field(
-                            ui,
-                            &p,
-                            "scroll_ms",
-                            &mut scroll,
-                            (0, 1000),
-                            Field::new(200.0, "How long a wheel step glides in lists, tables, panels and documents; off jumps at once"),
-                            MILLISECONDS,
+                        let f = Field::new(
+                            form(WIDTH),
+                            "How long a wheel step glides in lists, tables, panels and documents; off jumps at once",
                         );
+                        widgets::int_field(ui, &p, "scroll_ms", &mut scroll, (0, 1000), f, MILLISECONDS);
                     });
                     form_row(ui, &p, "Zooming", true, "", |ui| {
-                        widgets::int_field(
-                            ui,
-                            &p,
-                            "zoom_ms",
-                            &mut zoom,
-                            (0, 1000),
-                            Field::new(200.0, "How long a wheel step glides when zooming a plot; off jumps at once"),
-                            MILLISECONDS,
-                        );
+                        let f = Field::new(form(WIDTH), "How long a wheel step glides when zooming a plot; off jumps at once");
+                        widgets::int_field(ui, &p, "zoom_ms", &mut zoom, (0, 1000), f, MILLISECONDS);
                     });
-                    let (_, r, z) = buttons(ui, None, "Close", Some(("Default", "350 milliseconds scrolling, 650 zooming")));
+                    let (_, r, z) = buttons(ui, &p, None, "Close", Some(("Default", "350 milliseconds scrolling, 650 zooming")));
                     if z {
                         scroll = DEFAULT_SCROLL_MS as usize;
                         zoom = DEFAULT_ZOOM_MS as usize;
                     }
-                    if r {
-                        Answer::Reject
-                    } else {
-                        Answer::Open
-                    }
+                    answer_of(false, r)
                 });
                 if (scroll as u64, zoom as u64) != (self.scroll_ms, self.zoom_ms) {
                     self.set_motion(scroll as u64, zoom as u64);
@@ -374,17 +376,14 @@ impl App {
                 !matches!(answer, Answer::Reject)
             }
             Dialog::PointsPerSide { value } => {
-                let answer = modal(ctx, "Save fitted airfoil", 380.0, |ui| {
-                    ui.label("Points per side, spaced closer toward the leading and trailing edge");
-                    widgets::int_field(ui, &p, "points_per_side", value, (3, 100_000), Field::new(160.0, ""), IntOptions::default());
-                    let (a, r, _) = buttons(ui, Some("OK"), "Cancel", None);
-                    if a {
-                        Answer::Accept
-                    } else if r {
-                        Answer::Reject
-                    } else {
-                        Answer::Open
-                    }
+                const WIDTH: f32 = 370.0;
+                let answer = open_dialog(ctx, "Save fitted airfoil", WIDTH, INPUT_DIALOG_MARGIN, |ui| {
+                    let text = RichText::new("Points per side, spaced closer toward the leading and trailing edge").color(p.text);
+                    ui.add(egui::Label::new(text).extend());
+                    let f = Field::new(WIDTH - 2.0 * INPUT_DIALOG_MARGIN, "");
+                    widgets::int_field(ui, &p, "points_per_side", value, (3, 100_000), f, IntOptions::default());
+                    let (a, r, _) = buttons(ui, &p, Some(("OK", true)), "Cancel", None);
+                    answer_of(a, r)
                 });
                 match answer {
                     Answer::Accept => {
@@ -405,59 +404,59 @@ impl App {
         }
     }
 
+    /// The fit report: a window of its own with the report as a document
+    /// above the thickness and camber chart, and a Close button.
     fn report_window(&mut self, ctx: &egui::Context) {
         let Some(window) = self.report.as_mut() else { return };
         let p = self.palette.clone();
-        let mut open = true;
         let height = if window.shape.is_some() { 720.0 } else { 520.0 };
-        egui::Window::new("Fit report").open(&mut open).collapsible(false).resizable(true).default_size([560.0, height]).show(ctx, |ui| {
-            egui::ScrollArea::vertical().max_height(if window.shape.is_some() { 380.0 } else { f32::INFINITY }).show(ui, |ui| {
-                ui.label(RichText::new(&window.title).heading().color(p.text));
-                ui.add_space(size::GROUP);
-                egui::Grid::new("report_rows").num_columns(2).spacing([24.0, 4.0]).show(ui, |ui| {
-                    for row in window.report.rows() {
-                        ui.label(RichText::new(row.label).color(p.text_2));
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new(&row.value).monospace().color(p.text));
-                            match row.note {
-                                Some(Note::Ok(t)) => {
-                                    ui.label(RichText::new(format!("({t})")).color(p.ok));
-                                }
-                                Some(Note::Warn(t)) => {
-                                    ui.label(RichText::new(format!("({t})")).strong().color(p.warn));
-                                }
-                                None => {}
-                            }
-                        });
-                        ui.end_row();
-                    }
-                });
-                let junctions = window.report.junction_rows();
-                if !junctions.is_empty() {
-                    ui.add_space(size::PAD);
-                    ui.label(RichText::new("Junctions").strong().color(p.text));
-                    egui::Grid::new("report_junctions").num_columns(5).spacing([24.0, 4.0]).show(ui, |ui| {
-                        for c in JUNCTION_COLUMNS {
-                            ui.label(RichText::new(c).strong().color(p.text_3));
-                        }
-                        ui.end_row();
-                        for row in junctions {
-                            for cell in row {
-                                ui.label(RichText::new(cell).monospace().color(p.text));
-                            }
-                            ui.end_row();
-                        }
-                    });
-                }
+        let builder =
+            egui::ViewportBuilder::default().with_title("Fit report").with_inner_size([REPORT_WIDTH, height]).with_minimize_button(false);
+        let mut close = false;
+        ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("fit_report"), builder, |ui, class| {
+            let frame = egui::Frame::new().fill(ui.visuals().window_fill).inner_margin(egui::Margin {
+                left: 0,
+                right: 0,
+                top: 0,
+                bottom: size::PAD_LARGE as i8,
             });
-            if let Some(shape) = &window.shape {
-                ui.add_space(size::PAD);
-                ui.allocate_ui(egui::vec2(ui.available_width(), ui.available_height().max(size::SHAPE_PLOT_HEIGHT)), |ui| {
-                    shape_plot(ui, &p, shape, &mut window.view)
-                });
+            frame.show(ui, |ui| {
+                if class == egui::ViewportClass::EmbeddedWindow {
+                    ui.set_width(REPORT_WIDTH);
+                    ui.set_height(height - size::PAD_LARGE);
+                }
+                let pad = size::PAD_LARGE;
+                let total = ui.available_height();
+                // The document and the chart share the height above the buttons.
+                let below = size::CONTROL_HEIGHT + pad;
+                let parts = if window.shape.is_some() { 2.0 } else { 1.0 };
+                let each = ((total - below - pad * (parts - 1.0)) / parts).max(80.0);
+                let width = ui.available_width();
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(width, each), egui::Sense::hover());
+                report_document(ui, &p, rect, &window.title, &window.report);
+                let mut top = rect.bottom() + pad;
+                if let Some(shape) = &window.shape {
+                    let chart = egui::Rect::from_min_size(
+                        egui::pos2(rect.left() + pad, top),
+                        egui::vec2(width - 2.0 * pad, each.max(size::SHAPE_PLOT_HEIGHT)),
+                    );
+                    ui.allocate_rect(chart, egui::Sense::hover());
+                    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(chart));
+                    shape_plot(&mut child, &p, shape, &mut window.view);
+                    top = chart.bottom() + pad;
+                }
+                let row =
+                    egui::Rect::from_min_size(egui::pos2(rect.left() + pad, top), egui::vec2(width - 2.0 * pad, size::CONTROL_HEIGHT));
+                ui.allocate_rect(row, egui::Sense::hover());
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(row).layout(Layout::right_to_left(Align::Center)));
+                close |= dialog_button(&mut child, &p, "Close", false, true);
+            });
+            if class != egui::ViewportClass::EmbeddedWindow {
+                close |= ui.input(|i| i.viewport().close_requested());
             }
+            close |= ui.input(|i| i.key_pressed(egui::Key::Escape));
         });
-        if !open {
+        if close {
             self.report = None;
         }
     }
@@ -508,6 +507,86 @@ impl ReportWindow {
     pub fn new(title: String, report: Report, shape: Option<Shape>) -> Self {
         ReportWindow { title, report, shape, view: View::default() }
     }
+}
+
+/// The report as the Python version's text browser showed it: a framed,
+/// scrolling document with a heading, a table of label and value rows and
+/// the junction table.
+fn report_document(ui: &mut Ui, p: &Palette, rect: egui::Rect, title: &str, report: &Report) {
+    const ROW: f32 = 31.0;
+    let radius = egui::CornerRadius::same(size::RADIUS);
+    ui.painter().rect_filled(rect, radius, p.panel);
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(1.0)));
+    crate::theme::scroll_handles(&mut child, p);
+    let body = egui::FontId::proportional(crate::theme::typeface::BASE);
+    let mono = egui::FontId::monospace(crate::theme::typeface::BASE);
+    let painter = child.painter().clone();
+    let width = |text: &str, font: &egui::FontId| painter.layout_no_wrap(text.to_string(), font.clone(), p.text).size().x;
+    let rows = report.rows();
+    let label_w = rows.iter().map(|r| width(r.label, &body)).fold(0.0, f32::max);
+    egui::ScrollArea::vertical().id_salt("report_document").auto_shrink([false, false]).show(&mut child, |ui| {
+        egui::Frame::new().inner_margin(egui::Margin::same(size::PAD_LARGE as i8)).show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            ui.label(RichText::new(title).font(crate::fonts::semibold_id(crate::theme::typeface::HEADING)).color(p.text));
+            ui.add_space(size::PAD);
+            for row in &rows {
+                ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), ROW), Layout::left_to_right(Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    ui.add_space(3.0);
+                    let (cell, _) = ui.allocate_exact_size(egui::vec2(label_w + 14.0, ROW), egui::Sense::hover());
+                    ui.painter().text(cell.left_center(), egui::Align2::LEFT_CENTER, row.label, body.clone(), p.text);
+                    ui.label(RichText::new(&row.value).font(mono.clone()).color(p.text));
+                    match row.note {
+                        Some(Note::Ok(t)) => {
+                            ui.label(RichText::new(format!(" ({t})")).font(mono.clone()).color(p.ok));
+                        }
+                        Some(Note::Warn(t)) => {
+                            ui.label(
+                                RichText::new(format!(" ({t})"))
+                                    .font(crate::fonts::semibold_id(crate::theme::typeface::BASE))
+                                    .color(p.warn),
+                            );
+                        }
+                        None => {}
+                    }
+                });
+            }
+            let junctions = report.junction_rows();
+            if !junctions.is_empty() {
+                ui.add_space(size::PAD);
+                ui.label(RichText::new("Junctions").font(crate::fonts::semibold_id(crate::theme::typeface::BASE)).color(p.text));
+                ui.add_space(size::GAP);
+                let widths: Vec<f32> = (0..5)
+                    .map(|c| {
+                        let head = width(JUNCTION_COLUMNS[c], &body);
+                        junctions.iter().map(|r| width(&r[c], &mono)).fold(head, f32::max) + 12.0
+                    })
+                    .collect();
+                let line = |ui: &mut Ui, cells: &[String], header: bool| {
+                    let (r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW), egui::Sense::hover());
+                    let mut x = r.left() + 3.0;
+                    for (c, text) in cells.iter().enumerate() {
+                        let (font, color) = if header {
+                            (crate::fonts::semibold_id(crate::theme::typeface::BASE), p.text_3)
+                        } else {
+                            (mono.clone(), p.text)
+                        };
+                        ui.painter().text(egui::pos2(x, r.center().y), egui::Align2::LEFT_CENTER, text, font, color);
+                        x += widths[c];
+                    }
+                    if header {
+                        let right = r.left() + 3.0 + widths.iter().sum::<f32>();
+                        ui.painter().hline(r.left()..=right, r.bottom() - 4.0, egui::Stroke::new(1.0, p.rule));
+                    }
+                };
+                line(ui, &JUNCTION_COLUMNS.iter().map(|s| s.to_string()).collect::<Vec<_>>(), true);
+                for row in &junctions {
+                    line(ui, row, false);
+                }
+            }
+        });
+    });
+    ui.painter().rect_stroke(rect, radius, egui::Stroke::new(1.0, p.rule), egui::StrokeKind::Inside);
 }
 
 /// The texts of a toggle with settings.
