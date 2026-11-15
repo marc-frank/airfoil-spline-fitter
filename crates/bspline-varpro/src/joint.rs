@@ -10,8 +10,8 @@
 
 use nalgebra::{DMatrix, DVector};
 
-use crate::basis::{basis_matrix, bending_energy_matrix, matrix_root, num_control_points};
-use crate::chain::{chain_data, chain_deviations, groups};
+use crate::basis::{bending_energy_matrix, matrix_root, num_control_points, SparseRows};
+use crate::chain::{chain_data, chain_deviations, locate};
 use crate::fitting::{ChainOptions, FitResult};
 use crate::linalg::{block_diag, lstsq, matrix_to_points, null_space, points_to_matrix};
 use crate::{bail, Observer, Progress, Result, Vec2};
@@ -88,20 +88,9 @@ impl JointProblem {
         DVector::from_fn(z.len(), |i, _| z[(i / 2, i % 2)])
     }
 
-    fn basis(&self, u: &[f64], order: usize) -> DMatrix<f64> {
-        let mut m = DMatrix::zeros(u.len(), *self.offsets.last().unwrap());
-        for (s, (rows, local)) in groups(u, self.knots.len()).into_iter().enumerate() {
-            if rows.is_empty() {
-                continue;
-            }
-            let block = basis_matrix(&local, &self.knots[s], self.degree, order);
-            for (r, &row) in rows.iter().enumerate() {
-                for c in 0..block.ncols() {
-                    m[(row, self.offsets[s] + c)] = block[(r, c)];
-                }
-            }
-        }
-        m
+    fn basis(&self, u: &[f64], order: usize) -> SparseRows {
+        let s = self.knots.len();
+        SparseRows::new(u, &self.knots, &self.offsets, self.degree, order, |v| locate(v, s))
     }
 
     fn residual(&mut self, u: &[f64], z: &DVector<f64>) -> DVector<f64> {
@@ -112,7 +101,7 @@ impl JointProblem {
         self.evaluations += 1;
         let p = self.control_points(z);
         let n = self.basis(u, 0);
-        let fitted = &n * &p;
+        let fitted = n.mul(&p);
         let penalty = &self.rp0 + &self.rz * self.z_matrix(z);
         let rows = 2 * (self.data.len() + penalty.nrows());
         let mut r = DVector::zeros(rows);
@@ -130,9 +119,9 @@ impl JointProblem {
         if !with_jacobian {
             return Evaluation { r, tangent: DMatrix::zeros(0, 0), jz: DMatrix::zeros(0, 0) };
         }
-        let tangent = self.basis(u, 1) * &p;
+        let tangent = self.basis(u, 1).mul(&p);
         // kron(M, I₂): row 2i + k, column 2j + k holds M[i, j].
-        let nz = n * &self.z_basis;
+        let nz = n.mul(&self.z_basis);
         let mut jz = DMatrix::zeros(rows, 2 * self.num_z());
         for (offset, m) in [(0, &nz), (self.data.len(), &self.rz)] {
             for i in 0..m.nrows() {
@@ -319,7 +308,7 @@ pub fn solve_joint(
 /// Fit state of a joint solution, with the knots and θ of `template`.
 fn to_result(problem: &JointProblem, u: &[f64], z: &DVector<f64>, template: &FitResult) -> FitResult {
     let p = problem.control_points(z);
-    let fitted = problem.basis(u, 0) * &p;
+    let fitted = problem.basis(u, 0).mul(&p);
     let misfit: f64 = (0..problem.data.len()).map(|i| (fitted.row(i).transpose() - problem.data[i]).norm_squared()).sum();
     FitResult {
         control_points: problem.offsets.windows(2).map(|w| matrix_to_points(&p.rows(w[0], w[1] - w[0]).into_owned())).collect(),

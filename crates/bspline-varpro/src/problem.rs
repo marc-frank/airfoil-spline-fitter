@@ -21,8 +21,8 @@ use std::cell::RefCell;
 
 use nalgebra::{DMatrix, DVector};
 
-use crate::basis::{basis_matrix, bending_energy_matrix, matrix_root, num_control_points, validate_knots};
-use crate::chain::{chain_data, chain_parameters, groups, initial_chain_parameters};
+use crate::basis::{bending_energy_matrix, matrix_root, num_control_points, validate_knots, SparseRows};
+use crate::chain::{chain_data, chain_parameters, initial_chain_parameters, locate};
 use crate::constraints::{ChainConstraints, Constraints, End, Junction};
 use crate::kkt::KktSolver;
 use crate::linalg::{block_diag, matrix_to_points, points_to_matrix};
@@ -45,7 +45,7 @@ pub const SPEED_SLACK: f64 = 1.0;
 struct Solution {
     u: Vec<f64>,
     theta: Vec<f64>,
-    n: DMatrix<f64>,
+    n: SparseRows,
     p: DMatrix<f64>,
     mu: DMatrix<f64>,
     kkt: KktSolver,
@@ -224,20 +224,9 @@ impl VarProProblem {
     }
 
     /// The `(points, controls)` basis (or derivative) matrix of the chain.
-    fn block_matrix(&self, u: &[f64], order: usize) -> DMatrix<f64> {
-        let mut m = DMatrix::zeros(u.len(), self.total_controls());
-        for (s, (rows, local)) in groups(u, self.num_sections()).into_iter().enumerate() {
-            if rows.is_empty() {
-                continue;
-            }
-            let block = basis_matrix(&local, &self.knots[s], self.degree, order);
-            for (r, &row) in rows.iter().enumerate() {
-                for c in 0..block.ncols() {
-                    m[(row, self.offsets[s] + c)] = block[(r, c)];
-                }
-            }
-        }
-        m
+    fn block_matrix(&self, u: &[f64], order: usize) -> SparseRows {
+        let s = self.num_sections();
+        SparseRows::new(u, &self.knots, &self.offsets, self.degree, order, |v| locate(v, s))
     }
 
     /// Solves the KKT system at `(u, θ)` unless that is the cached point.
@@ -245,7 +234,7 @@ impl VarProProblem {
         let fresh = self.cache.borrow().as_ref().is_some_and(|s| s.u == u && s.theta == theta);
         if !fresh {
             let n = self.block_matrix(u, 0);
-            let mut a = n.transpose() * &n;
+            let mut a = n.gram();
             if let Some(s) = &self.bending_energy {
                 a += s * self.smoothing;
             }
@@ -256,7 +245,7 @@ impl VarProProblem {
             let total = self.total_controls();
             let center = DMatrix::from_fn(total, 2, |_, k| self.center[k]);
             let centered = DMatrix::from_fn(self.num_points(), 2, |i, k| self.data[i][k] - self.center[k]);
-            let rhs = n.transpose() * centered;
+            let rhs = n.tr_mul(&centered);
             let d = &constraints.d - &constraints.c * &center;
             let (offset, mu) = kkt.solve_full(&rhs, Some(&d));
             let p = offset + center;
@@ -286,7 +275,7 @@ impl VarProProblem {
         let solution = self.solve(u, theta);
         let layout = self.layout();
         let mut r = DVector::zeros(self.num_residuals());
-        let fitted = &solution.n * &solution.p;
+        let fitted = solution.n.mul(&solution.p);
         let mut sum = 0.0;
         for i in 0..self.num_points() {
             for k in 0..2 {
@@ -324,19 +313,24 @@ impl VarProProblem {
     }
 
     /// Data and penalty rows of `∂r/∂x` for control-point sensitivities
-    /// `dP[k]` (one `(T, m)` matrix per coordinate).
-    fn stack(&self, n: &DMatrix<f64>, dp: [DMatrix<f64>; 2]) -> DMatrix<f64> {
+    /// `dP[k]` (one `(T, m)` matrix per coordinate); the other rows are zero.
+    fn stack(&self, n: &SparseRows, dp: [DMatrix<f64>; 2]) -> DMatrix<f64> {
         let layout = self.layout();
         let columns = dp[0].ncols();
         let mut j = DMatrix::zeros(self.num_residuals(), columns);
         for (k, dpk) in dp.iter().enumerate() {
-            let data = n * dpk;
             let penalty = &self.penalty_root * dpk;
-            for i in 0..data.nrows() {
-                j.row_mut(2 * i + k).copy_from(&data.row(i));
-            }
-            for i in 0..penalty.nrows() {
-                j.row_mut(layout.data + 2 * i + k).copy_from(&penalty.row(i));
+            for col in 0..columns {
+                let source = dpk.column(col);
+                let source = source.as_slice();
+                let mut target = j.column_mut(col);
+                for i in 0..self.num_points() {
+                    let (start, values) = n.row(i);
+                    target[2 * i + k] = values.iter().zip(&source[start..start + values.len()]).map(|(a, b)| a * b).sum();
+                }
+                for i in 0..penalty.nrows() {
+                    target[layout.data + 2 * i + k] = penalty[(i, col)];
+                }
             }
         }
         j
@@ -350,16 +344,22 @@ impl VarProProblem {
         let solution = self.solve(u, theta);
         let dn = self.block_matrix(u, 1);
         let n = &solution.n;
-        let tangent = &dn * &solution.p;
-        let misfit = &self.data_matrix - n * &solution.p;
+        let tangent = dn.mul(&solution.p);
+        let misfit = &self.data_matrix - n.mul(&solution.p);
+        // Column j of the right-hand side: dN_jᵀ M_jk - N_jᵀ Tg_jk.
         let dp = [0, 1].map(|k| {
-            let mut rhs = dn.transpose();
-            let mut coupling = n.transpose();
+            let mut rhs = DMatrix::zeros(self.total_controls(), self.num_points());
             for j in 0..self.num_points() {
-                rhs.column_mut(j).scale_mut(misfit[(j, k)]);
-                coupling.column_mut(j).scale_mut(tangent[(j, k)]);
+                let (start, values) = dn.row(j);
+                for (c, v) in values.iter().enumerate() {
+                    rhs[(start + c, j)] += v * misfit[(j, k)];
+                }
+                let (start, values) = n.row(j);
+                for (c, v) in values.iter().enumerate() {
+                    rhs[(start + c, j)] -= v * tangent[(j, k)];
+                }
             }
-            solution.kkt.solve(&(rhs - coupling), None)
+            solution.kkt.solve(&rhs, None)
         });
         let mut jac = self.stack(n, dp);
         for i in 0..self.num_points() {

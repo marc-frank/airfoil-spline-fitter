@@ -58,8 +58,8 @@ impl BSpline {
         let p = self.degree;
         let span = find_span(&self.knots, p, u);
         let ders = basis_derivatives(&self.knots, p, span, u, order);
-        ders.iter()
-            .map(|row| row.iter().enumerate().map(|(j, &b)| self.control_points[span - p + j] * b).sum())
+        (0..=order)
+            .map(|k| ders[k].iter().enumerate().map(|(j, &b)| self.control_points[span - p + j] * b).sum())
             .collect()
     }
 

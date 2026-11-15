@@ -7,7 +7,7 @@ use crate::chain::{validate_chain_parameters, initial_chain_parameters, Paramete
 use crate::constraints::{End, Junction};
 use crate::lm::{levenberg_marquardt, Model, Stopped};
 use crate::problem::VarProProblem;
-use crate::reparam::{eta_jacobian, eta_to_t, t_to_eta};
+use crate::reparam::{apply_eta_jacobian, eta_to_t, t_to_eta};
 use crate::tolerance::{fit_subsampled, grow_to_counts, polish_knots};
 use crate::{bail, BSpline, Observer, Progress, Result, Vec2, STOPPED};
 
@@ -317,7 +317,7 @@ impl Model for Reduced<'_> {
 pub(crate) fn reduced_jacobian(problem: &VarProProblem, eta: &[f64], theta: &[f64]) -> DMatrix<f64> {
     let s = problem.num_sections() as f64;
     let u = eta_to_t(eta, s);
-    let ju = problem.jacobian(&u, theta) * eta_jacobian(eta, &u, s);
+    let ju = apply_eta_jacobian(&problem.jacobian(&u, theta), eta, &u, s);
     let jt = problem.parameter_jacobian(&u, theta);
     let mut j = DMatrix::zeros(ju.nrows(), eta.len() + theta.len());
     j.view_mut((0, 0), ju.shape()).copy_from(&ju);

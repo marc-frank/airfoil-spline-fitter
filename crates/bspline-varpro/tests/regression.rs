@@ -33,3 +33,39 @@ fn varpro_g3_fixed_count() {
     assert!(close(result.rms_error, 8.978e-7, 1e-3), "rms {}", result.rms_error);
     assert_eq!(result.nfev, 40);
 }
+
+/// About a minute; run with `cargo test --release -- --ignored`.
+#[test]
+#[ignore]
+fn varpro_g2_tolerance_search() {
+    use bspline_varpro::{fit_to_tolerance, FitResult, Observer, ToleranceOptions};
+
+    struct Refits(usize);
+    impl Observer for Refits {
+        fn refit(&mut self, _: &FitResult, _: f64) -> bool {
+            self.0 += 1;
+            false
+        }
+    }
+
+    let sections = naca2412();
+    let options = ToleranceOptions {
+        chain: ChainOptions {
+            continuity: Continuity::All(Junction::new(2, true, true).unwrap()),
+            smoothing: 1e-7,
+            ..ChainOptions::default()
+        },
+        max_points_per_section: None,
+        ..ToleranceOptions::default()
+    };
+    let mut refits = Refits(0);
+    let result = fit_to_tolerance(&sections, 1e-6, 5, &options, &mut refits).unwrap();
+    assert!(result.success, "{}", result.message);
+    assert_eq!(result.num_control_points(), vec![10, 11]);
+    assert_eq!(refits.0, 17);
+    // Every refit matches the reference to about nine digits; the capped
+    // knot polishes (60 evaluations, finite-difference knot columns) amplify
+    // rounding differences of the linear algebra to a few tenths of a
+    // percent in the final deviation.
+    assert!(close(result.max_deviation.unwrap(), 9.1121e-7, 1e-2));
+}

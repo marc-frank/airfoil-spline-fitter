@@ -106,85 +106,188 @@ pub fn find_span(knots: &[f64], degree: usize, u: f64) -> usize {
     low
 }
 
-/// Values and derivatives up to `order` of the `p + 1` basis functions that
-/// are nonzero on span `span` (Piegl & Tiller A2.3): `ders[k][j]` is the
-/// `k`-th derivative of `B_{span - p + j}`. Orders above `p` are zero.
-pub fn basis_derivatives(knots: &[f64], degree: usize, span: usize, u: f64, order: usize) -> Vec<Vec<f64>> {
+/// Values and derivatives of the `p + 1` basis functions that are nonzero on
+/// a span: `ders[k][j]` is the `k`-th derivative of `B_{span - p + j}`.
+#[derive(Debug, Clone)]
+pub struct BasisDerivatives {
+    width: usize,
+    values: Vec<f64>,
+}
+
+impl std::ops::Index<usize> for BasisDerivatives {
+    type Output = [f64];
+
+    fn index(&self, order: usize) -> &[f64] {
+        &self.values[order * self.width..(order + 1) * self.width]
+    }
+}
+
+/// Values and derivatives up to `order` of the basis functions nonzero on
+/// span `span` (Piegl & Tiller A2.3). Orders above `p` are zero.
+pub fn basis_derivatives(knots: &[f64], degree: usize, span: usize, u: f64, order: usize) -> BasisDerivatives {
     let p = degree;
-    let mut ndu = vec![vec![0.0; p + 1]; p + 1];
-    let mut left = vec![0.0; p + 1];
-    let mut right = vec![0.0; p + 1];
-    ndu[0][0] = 1.0;
+    let w = p + 1;
+    // ndu[j][r] at j * w + r: basis values (upper triangle) and knot differences.
+    let mut ndu = vec![0.0; w * w];
+    let mut left = vec![0.0; w];
+    let mut right = vec![0.0; w];
+    ndu[0] = 1.0;
     for j in 1..=p {
         left[j] = u - knots[span + 1 - j];
         right[j] = knots[span + j] - u;
         let mut saved = 0.0;
         for r in 0..j {
-            ndu[j][r] = right[r + 1] + left[j - r];
-            let temp = ndu[r][j - 1] / ndu[j][r];
-            ndu[r][j] = saved + right[r + 1] * temp;
+            ndu[j * w + r] = right[r + 1] + left[j - r];
+            let temp = ndu[r * w + j - 1] / ndu[j * w + r];
+            ndu[r * w + j] = saved + right[r + 1] * temp;
             saved = left[j - r] * temp;
         }
-        ndu[j][j] = saved;
+        ndu[j * w + j] = saved;
     }
-    let mut ders = vec![vec![0.0; p + 1]; order + 1];
+    let mut ders = vec![0.0; (order + 1) * w];
     for j in 0..=p {
-        ders[0][j] = ndu[j][p];
+        ders[j] = ndu[j * w + p];
     }
     let top = order.min(p);
-    let mut a = vec![vec![0.0; p + 1]; 2];
+    let mut a = vec![0.0; 2 * w];
     for r in 0..=p {
-        let (mut s1, mut s2) = (0usize, 1usize);
-        a[0][0] = 1.0;
+        let (mut s1, mut s2) = (0usize, w);
+        a[0] = 1.0;
         for k in 1..=top {
             let mut d = 0.0;
             let rk = r as isize - k as isize;
             let pk = p - k;
             if r >= k {
-                a[s2][0] = a[s1][0] / ndu[pk + 1][rk as usize];
-                d = a[s2][0] * ndu[rk as usize][pk];
+                a[s2] = a[s1] / ndu[(pk + 1) * w + rk as usize];
+                d = a[s2] * ndu[rk as usize * w + pk];
             }
             let j1 = if rk >= -1 { 1 } else { (-rk) as usize };
             let j2 = if (r as isize - 1) <= pk as isize { k - 1 } else { p - r };
             for j in j1..=j2 {
                 let idx = (rk + j as isize) as usize;
-                a[s2][j] = (a[s1][j] - a[s1][j - 1]) / ndu[pk + 1][idx];
-                d += a[s2][j] * ndu[idx][pk];
+                a[s2 + j] = (a[s1 + j] - a[s1 + j - 1]) / ndu[(pk + 1) * w + idx];
+                d += a[s2 + j] * ndu[idx * w + pk];
             }
             if r <= pk {
-                a[s2][k] = -a[s1][k - 1] / ndu[pk + 1][r];
-                d += a[s2][k] * ndu[r][pk];
+                a[s2 + k] = -a[s1 + k - 1] / ndu[(pk + 1) * w + r];
+                d += a[s2 + k] * ndu[r * w + pk];
             }
-            ders[k][r] = d;
+            ders[k * w + r] = d;
             std::mem::swap(&mut s1, &mut s2);
         }
     }
     let mut factor = p as f64;
     for k in 1..=top {
-        for value in &mut ders[k] {
-            *value *= factor;
-        }
+        ders[k * w..(k + 1) * w].iter_mut().for_each(|v| *v *= factor);
         factor *= (p - k) as f64;
     }
-    ders
+    BasisDerivatives { width: w, values: ders }
 }
 
 /// Dense matrix of the `order`-th derivatives: `N[i, j] = B_j^(order)(clip(u_i, 0, 1))`.
 pub fn basis_matrix(u: &[f64], knots: &[f64], degree: usize, order: usize) -> DMatrix<f64> {
-    let n = num_control_points(knots, degree);
-    let mut matrix = DMatrix::zeros(u.len(), n);
-    if order > degree {
-        return matrix;
-    }
-    for (row, &value) in u.iter().enumerate() {
-        let value = value.clamp(0.0, 1.0);
-        let span = find_span(knots, degree, value);
-        let ders = basis_derivatives(knots, degree, span, value, order);
-        for (j, &d) in ders[order].iter().enumerate() {
-            matrix[(row, span - degree + j)] = d;
+    SparseRows::new(u, &[knots.to_vec()], &[0, num_control_points(knots, degree)], degree, order, |v| (0, v)).to_dense()
+}
+
+/// A basis matrix stored by rows: each row has its `p + 1` possibly nonzero
+/// entries starting at a column.
+#[derive(Debug, Clone)]
+pub struct SparseRows {
+    columns: usize,
+    width: usize,
+    starts: Vec<usize>,
+    values: Vec<f64>,
+}
+
+impl SparseRows {
+    /// Rows of the `order`-th derivative basis of a chain of sections whose
+    /// columns start at `offsets`; `locate` maps a parameter to its section
+    /// and local parameter (clipped to `[0, 1]`).
+    pub fn new(
+        u: &[f64],
+        knots: &[Vec<f64>],
+        offsets: &[usize],
+        degree: usize,
+        order: usize,
+        locate: impl Fn(f64) -> (usize, f64),
+    ) -> Self {
+        let width = degree + 1;
+        let mut starts = Vec::with_capacity(u.len());
+        let mut values = Vec::with_capacity(u.len() * width);
+        for &value in u {
+            let (s, local) = locate(value);
+            let local = local.clamp(0.0, 1.0);
+            let span = find_span(&knots[s], degree, local);
+            starts.push(offsets[s] + span - degree);
+            if order > degree {
+                values.extend(std::iter::repeat(0.0).take(width));
+            } else {
+                values.extend_from_slice(&basis_derivatives(&knots[s], degree, span, local, order)[order]);
+            }
         }
+        SparseRows { columns: offsets[offsets.len() - 1], width, starts, values }
     }
-    matrix
+
+    pub fn nrows(&self) -> usize {
+        self.starts.len()
+    }
+
+    /// Start column and values of row `i`.
+    pub fn row(&self, i: usize) -> (usize, &[f64]) {
+        (self.starts[i], &self.values[i * self.width..(i + 1) * self.width])
+    }
+
+    pub fn to_dense(&self) -> DMatrix<f64> {
+        let mut m = DMatrix::zeros(self.nrows(), self.columns);
+        for i in 0..self.nrows() {
+            let (start, values) = self.row(i);
+            for (c, v) in values.iter().enumerate() {
+                m[(i, start + c)] = *v;
+            }
+        }
+        m
+    }
+
+    /// `N X`.
+    pub fn mul(&self, x: &DMatrix<f64>) -> DMatrix<f64> {
+        let mut out = DMatrix::zeros(self.nrows(), x.ncols());
+        for i in 0..self.nrows() {
+            let (start, values) = self.row(i);
+            for k in 0..x.ncols() {
+                out[(i, k)] = values.iter().enumerate().map(|(c, v)| v * x[(start + c, k)]).sum();
+            }
+        }
+        out
+    }
+
+    /// `Nᵀ X`.
+    pub fn tr_mul(&self, x: &DMatrix<f64>) -> DMatrix<f64> {
+        let mut out = DMatrix::zeros(self.columns, x.ncols());
+        for i in 0..self.nrows() {
+            let (start, values) = self.row(i);
+            for k in 0..x.ncols() {
+                let xi = x[(i, k)];
+                for (c, v) in values.iter().enumerate() {
+                    out[(start + c, k)] += v * xi;
+                }
+            }
+        }
+        out
+    }
+
+    /// `NᵀN`.
+    pub fn gram(&self) -> DMatrix<f64> {
+        let mut out = DMatrix::zeros(self.columns, self.columns);
+        for i in 0..self.nrows() {
+            let (start, values) = self.row(i);
+            for (a, va) in values.iter().enumerate() {
+                for (b, vb) in values.iter().enumerate() {
+                    out[(start + a, start + b)] += va * vb;
+                }
+            }
+        }
+        out
+    }
 }
 
 /// Gram matrix `S_ij = ∫ B_i'' B_j'' du`, scaled to trace `n` (so the

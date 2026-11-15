@@ -79,25 +79,36 @@ pub fn eta_to_t(eta: &[f64], span: f64) -> Vec<f64> {
     u
 }
 
-/// `∂u/∂η`, shape `(N, N - 1)`:
-/// `∂u_k/∂η_j = S·sigmoid(η_j)/Σsoftplus(η) · ([j < k] - u_k/S)`.
-pub fn eta_jacobian(eta: &[f64], u: &[f64], span: f64) -> DMatrix<f64> {
+/// `slope_j = S·sigmoid(η_j)/Σsoftplus(η)` (0 where `|η_j|` exceeds
+/// [`ETA_LIMIT`]), so that `∂u_k/∂η_j = slope_j·([j < k] - u_k/S)`.
+pub fn eta_slopes(eta: &[f64], span: f64) -> Vec<f64> {
     let total: f64 = eta.iter().map(|&e| softplus(sanitize(e))).sum();
-    let slope: Vec<f64> = eta
-        .iter()
+    eta.iter()
         .map(|&e| {
-            let e0 = if e.is_nan() { 0.0 } else { e };
-            if e0.abs() <= ETA_LIMIT {
-                span * sigmoid(sanitize(e)) / total
-            } else {
-                0.0
-            }
+            let inside = e.is_nan() || e.abs() <= ETA_LIMIT;
+            if inside { span * sigmoid(sanitize(e)) / total } else { 0.0 }
         })
-        .collect();
-    DMatrix::from_fn(u.len(), eta.len(), |k, j| {
-        let indicator = if j < k { 1.0 } else { 0.0 };
-        slope[j] * (indicator - u[k] / span)
-    })
+        .collect()
+}
+
+/// `∂u/∂η`, shape `(N, N - 1)`.
+pub fn eta_jacobian(eta: &[f64], u: &[f64], span: f64) -> DMatrix<f64> {
+    let slope = eta_slopes(eta, span);
+    DMatrix::from_fn(u.len(), eta.len(), |k, j| slope[j] * (f64::from(u8::from(j < k)) - u[k] / span))
+}
+
+/// `J ∂u/∂η` without forming `∂u/∂η`: column `j` is
+/// `slope_j (Σ_{k>j} J_k - J u / S)`.
+pub fn apply_eta_jacobian(j: &DMatrix<f64>, eta: &[f64], u: &[f64], span: f64) -> DMatrix<f64> {
+    let slope = eta_slopes(eta, span);
+    let weighted = j * nalgebra::DVector::from_iterator(u.len(), u.iter().map(|v| v / span));
+    let mut out = DMatrix::zeros(j.nrows(), eta.len());
+    let mut tail = nalgebra::DVector::zeros(j.nrows());
+    for c in (0..eta.len()).rev() {
+        tail += j.column(c + 1);
+        out.set_column(c, &((&tail - &weighted) * slope[c]));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -112,6 +123,15 @@ mod tests {
             assert!((a - b).abs() < 1e-14);
         }
         assert_eq!(back[5], 2.0);
+    }
+
+    #[test]
+    fn structured_product_matches() {
+        let eta = [0.3, -1.2, 2.0, 0.1];
+        let u = eta_to_t(&eta, 2.0);
+        let j = DMatrix::from_fn(3, 5, |r, c| (r * 5 + c) as f64 * 0.1 - 0.4);
+        let direct = &j * eta_jacobian(&eta, &u, 2.0);
+        assert!((apply_eta_jacobian(&j, &eta, &u, 2.0) - direct).abs().max() < 1e-14);
     }
 
     #[test]
