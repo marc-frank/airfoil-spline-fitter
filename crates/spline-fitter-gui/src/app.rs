@@ -15,7 +15,7 @@ use crate::job::LiveMode;
 use crate::plots::{ComparisonPlot, LossPlot, MainPlot};
 use crate::settings::{AdvancedBaseline, Settings, Values};
 use crate::store::Store;
-use crate::theme::{self, size, Palette, ThemeMode};
+use crate::theme::{self, size, typeface, Palette, ThemeMode};
 use crate::widgets;
 
 pub const DEFAULT_SCROLL_MS: u64 = 350;
@@ -255,90 +255,113 @@ impl App {
             style.spacing.button_padding = egui::vec2(10.0, 4.0);
             style.spacing.item_spacing.x = 0.0;
         });
-        let items = egui::style::StyleModifier::new(|style| {
+        // Menus on the field grey, 4 px above and below their items.
+        let field = self.palette.field;
+        let items = egui::style::StyleModifier::new(move |style| {
             egui::containers::menu::menu_style(style);
             style.spacing.button_padding = egui::vec2(22.0, 5.0);
             style.spacing.item_spacing.y = 0.0;
+            style.spacing.menu_margin = egui::Margin::symmetric(0, 4);
+            style.visuals.window_fill = field;
+            style.visuals.menu_corner_radius = egui::CornerRadius::ZERO;
         });
         egui::MenuBar::new().style(bar).config(egui::containers::menu::MenuConfig::new().style(items)).ui(ui, |ui| {
+            let p = self.palette.clone();
             ui.menu_button("File", |ui| {
-                let item = |ui: &mut Ui, text: &str, shortcut: &str, enabled: bool| {
-                    ui.add_enabled(enabled, egui::Button::new(text).shortcut_text(shortcut)).clicked()
-                };
-                if item(ui, "New NACA airfoil...", "Ctrl+N", !fitting) {
+                let has_project = self.projects.file.is_some();
+                let entries = [
+                    ("New NACA airfoil...", "Ctrl+N"),
+                    ("Open airfoil...", "Ctrl+O"),
+                    ("Open recent", ""),
+                    ("Save fitted airfoil (.dat)...", ""),
+                    ("Save spline (.spline.dat)...", ""),
+                    ("Export CAD (STEP, IGES, DXF)...", "Ctrl+E"),
+                    ("Open project...", "Ctrl+Shift+O"),
+                    ("Save project", "Ctrl+S"),
+                    ("Save project as...", ""),
+                    ("Batch convert...", ""),
+                    ("Exit", "Alt+F4"),
+                ];
+                let m = MenuLayout::of(ui, &entries, false);
+                if m.item(ui, &p, entries[0], !fitting, None) {
                     self.on_new_naca();
                 }
-                if item(ui, "Open airfoil...", "Ctrl+O", !fitting) {
+                if m.item(ui, &p, entries[1], !fitting, None) {
                     self.on_open_airfoil();
                 }
                 ui.add_enabled_ui(!fitting, |ui| {
+                    ui.spacing_mut().button_padding.x = m.text_x;
                     ui.menu_button("Open recent", |ui| self.recent_menu(ui));
                 });
-                ui.separator();
-                if item(ui, "Save fitted airfoil (.dat)...", "", has_fit) {
+                menu_separator(ui);
+                if m.item(ui, &p, entries[3], has_fit, None) {
                     self.on_save_airfoil();
                 }
-                if item(ui, "Save spline (.spline.dat)...", "", has_fit) {
+                if m.item(ui, &p, entries[4], has_fit, None) {
                     self.on_save_spline();
                 }
-                if item(ui, "Export CAD (STEP, IGES, DXF)...", "Ctrl+E", has_fit) {
+                if m.item(ui, &p, entries[5], has_fit, None) {
                     self.on_export_cad();
                 }
-                ui.separator();
-                if item(ui, "Open project...", "Ctrl+Shift+O", !fitting) {
+                menu_separator(ui);
+                if m.item(ui, &p, entries[6], !fitting, None) {
                     self.on_open_project();
                 }
-                let has_project = self.projects.file.is_some();
-                if item(ui, "Save project", "Ctrl+S", has_project) {
+                if m.item(ui, &p, entries[7], has_project, None) {
                     self.on_save_project();
                 }
-                if item(ui, "Save project as...", "", has_project) {
+                if m.item(ui, &p, entries[8], has_project, None) {
                     self.on_save_project_as();
                 }
-                ui.separator();
-                if item(ui, "Batch convert...", "", !fitting) {
+                menu_separator(ui);
+                if m.item(ui, &p, entries[9], !fitting, None) {
                     self.dialog = Some(Dialog::batch());
                 }
-                ui.separator();
-                if item(ui, "Exit", "Alt+F4", true) {
+                menu_separator(ui);
+                if m.item(ui, &p, entries[10], true, None) {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             });
             ui.menu_button("Edit", |ui| {
-                if ui.add_enabled(!fitting && self.history.can_undo(), egui::Button::new("Undo").shortcut_text("Ctrl+Z")).clicked() {
+                let entries = [("Undo", "Ctrl+Z"), ("Redo", "Ctrl+Y"), ("Restore deleted runs", ""), ("Paste airfoil", "Ctrl+V")];
+                let m = MenuLayout::of(ui, &entries, false);
+                if m.item(ui, &p, entries[0], !fitting && self.history.can_undo(), None) {
                     self.undo();
                 }
-                if ui.add_enabled(!fitting && self.history.can_redo(), egui::Button::new("Redo").shortcut_text("Ctrl+Y")).clicked() {
+                if m.item(ui, &p, entries[1], !fitting && self.history.can_redo(), None) {
                     self.redo();
                 }
-                if ui.add_enabled(!fitting && !self.projects.deleted.is_empty(), egui::Button::new("Restore deleted runs")).clicked() {
+                if m.item(ui, &p, entries[2], !fitting && !self.projects.deleted.is_empty(), None) {
                     self.restore_deleted_runs();
                 }
-                ui.separator();
-                if ui.add_enabled(!fitting, egui::Button::new("Paste airfoil").shortcut_text("Ctrl+V")).clicked() {
+                menu_separator(ui);
+                if m.item(ui, &p, entries[3], !fitting, None) {
                     self.on_paste();
                 }
             });
             ui.menu_button("View", |ui| {
-                if ui.add_enabled(has_fit, egui::Button::new("Fit report...").shortcut_text("Ctrl+R")).clicked() {
+                let entries =
+                    [("Fit report...", "Ctrl+R"), ("Project explorer", "Ctrl+Shift+E"), ("Theme...", ""), ("Scrolling and zooming...", "")];
+                let m = MenuLayout::of(ui, &entries, true);
+                if m.item(ui, &p, entries[0], has_fit, None) {
                     self.on_report();
                 }
-                ui.separator();
-                let mut visible = self.explorer_visible;
-                if ui.add(egui::Button::new("Project explorer").selected(visible).shortcut_text("Ctrl+Shift+E")).clicked() {
-                    visible = !visible;
+                menu_separator(ui);
+                if m.item(ui, &p, entries[1], true, Some(self.explorer_visible)) {
+                    self.explorer_visible = !self.explorer_visible;
                 }
-                self.explorer_visible = visible;
-                ui.separator();
-                if ui.button("Theme...").clicked() {
+                menu_separator(ui);
+                if m.item(ui, &p, entries[2], true, None) {
                     self.dialog = Some(Dialog::theme(self));
                 }
-                if ui.button("Scrolling and zooming...").clicked() {
+                if m.item(ui, &p, entries[3], true, None) {
                     self.dialog = Some(Dialog::motion(self));
                 }
             });
             ui.menu_button("Help", |ui| {
-                if ui.button("About").clicked() {
+                let entries = [("About", "")];
+                let m = MenuLayout::of(ui, &entries, false);
+                if m.item(ui, &p, entries[0], true, None) {
                     self.set_status(format!("{} {}", spline_fitter::APP_NAME, spline_fitter::VERSION));
                 }
             });
@@ -358,7 +381,7 @@ impl App {
                 self.open_path(std::path::Path::new(file));
             }
         }
-        ui.separator();
+        menu_separator(ui);
         if ui.button("Clear recent files").clicked() {
             self.store.set_recent_files(&[]);
         }
@@ -475,6 +498,64 @@ impl App {
             label(ui);
         }
     }
+}
+
+/// The columns of a menu as Qt lays them out: the text 20 px in (and a
+/// check column more when an item can be checked), the shortcuts in a
+/// column of their own at the right, 24 px from the edge.
+struct MenuLayout {
+    text_x: f32,
+    shortcut_x: f32,
+    width: f32,
+}
+
+impl MenuLayout {
+    const PAD_LEFT: f32 = 20.0;
+    const PAD_RIGHT: f32 = 24.0;
+    const CHECK_COLUMN: f32 = 14.0;
+    /// Between an item's text and the shortcut column.
+    const TAB: f32 = 11.0;
+    const ROW: f32 = 26.0;
+
+    fn of(ui: &Ui, entries: &[(&str, &str)], checkable: bool) -> Self {
+        let font = egui::FontId::proportional(typeface::BASE);
+        let width = |t: &str| ui.painter().layout_no_wrap(t.to_string(), font.clone(), ui.visuals().text_color()).size().x.ceil();
+        let text_x = Self::PAD_LEFT + if checkable { Self::CHECK_COLUMN } else { 0.0 };
+        let text = entries.iter().map(|(t, _)| width(t)).fold(0.0, f32::max);
+        let shortcut = entries.iter().map(|(_, s)| width(s)).fold(0.0, f32::max);
+        let tab = if shortcut > 0.0 { Self::TAB + shortcut } else { 0.0 };
+        let width = text_x + text + tab + Self::PAD_RIGHT;
+        MenuLayout { text_x, shortcut_x: width - Self::PAD_RIGHT - shortcut, width }
+    }
+
+    /// An item (checked or not when `check` is given); true when clicked,
+    /// which closes the menu.
+    fn item(&self, ui: &mut Ui, p: &crate::theme::Palette, (text, shortcut): (&str, &str), enabled: bool, check: Option<bool>) -> bool {
+        let (rect, response) =
+            ui.allocate_exact_size(egui::vec2(self.width, Self::ROW), if enabled { egui::Sense::click() } else { egui::Sense::hover() });
+        if enabled && response.hovered() {
+            ui.painter().rect_filled(rect, 0.0, p.select);
+        }
+        let color = if enabled { p.text } else { p.text_3 };
+        let font = egui::FontId::proportional(typeface::BASE);
+        if check == Some(true) {
+            crate::theme::Glyph::Check.paint(ui.painter(), egui::pos2(rect.left() + 10.0, rect.center().y), size::GLYPH, color);
+        }
+        ui.painter().text(egui::pos2(rect.left() + self.text_x, rect.center().y), egui::Align2::LEFT_CENTER, text, font.clone(), color);
+        if !shortcut.is_empty() {
+            ui.painter().text(egui::pos2(rect.left() + self.shortcut_x, rect.center().y), egui::Align2::LEFT_CENTER, shortcut, font, color);
+        }
+        let clicked = enabled && response.clicked();
+        if clicked {
+            ui.close();
+        }
+        clicked
+    }
+}
+
+/// A menu separator: a 1 px rule across the menu, 4 px above and below.
+fn menu_separator(ui: &mut Ui) {
+    ui.add(egui::Separator::default().spacing(9.0).grow(0.0));
 }
 
 impl eframe::App for App {

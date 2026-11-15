@@ -118,6 +118,7 @@ fn axis_ticks(
     labels: Option<&[(f64, String)]>,
     to_screen: impl Fn(f64) -> f32,
     measure: impl Fn(&str) -> f32,
+    fits: impl Fn(f32, f32) -> bool,
 ) -> AxisTicks {
     let levels: Vec<(Vec<f64>, Vec<String>)> = match labels {
         Some(given) => vec![(given.iter().map(|g| g.0).collect(), given.iter().map(|g| g.1.clone()).collect())],
@@ -145,8 +146,18 @@ fn axis_ticks(
                 .collect()
         })
         .collect();
-    let extents: Vec<Vec<f32>> =
-        positioned.iter().map(|l| l.iter().filter(|(_, s)| !s.is_empty()).map(|(_, s)| measure(s)).collect()).collect();
+    let extents: Vec<Vec<(f32, bool)>> = positioned
+        .iter()
+        .map(|l| {
+            l.iter()
+                .filter(|(_, s)| !s.is_empty())
+                .map(|(x, s)| {
+                    let e = measure(s);
+                    (e, fits(*x, e))
+                })
+                .collect()
+        })
+        .collect();
     let labelled = if labels.is_some() { positioned.len() } else { axes::labelled_levels(&extents, length) };
     AxisTicks {
         levels: positioned
@@ -189,7 +200,10 @@ pub fn show_plot(
         .allow_boxed_zoom(false)
         .allow_double_click_reset(false)
         .show_background(false)
-        .auto_bounds(false);
+        .auto_bounds(false)
+        // An empty plot shows 0 to 1 on both axes, as pyqtgraph's.
+        .default_x_bounds(0.0, 1.0)
+        .default_y_bounds(0.0, 1.0);
     if axes.equal_aspect {
         plot = plot.data_aspect(1.0);
     }
@@ -288,6 +302,8 @@ pub fn show_plot(
         axes.x_ticks,
         |v| transform.position_from_point_x(v),
         |s| measure(s).x,
+        // With a grid, a label shows only within the plot's extent.
+        |x, w| x - w / 2.0 >= frame.left() - 0.5 && x + w / 2.0 <= frame.right() + 0.5,
     );
     let y_ticks = axis_ticks(
         (bounds.min()[1], bounds.max()[1]),
@@ -296,6 +312,7 @@ pub fn show_plot(
         None,
         |v| transform.position_from_point_y(v),
         |s| measure(s).y * 0.8,
+        |y, h| y - h / 2.0 >= frame.top() - 0.5 && y + h / 2.0 <= frame.bottom() + 0.5,
     );
 
     // The grid: every tick level, fainter for lower levels.
@@ -328,11 +345,12 @@ pub fn show_plot(
     let mut widest: f32 = 0.0;
     for (y, text) in y_ticks.levels.iter().flatten() {
         let Some(text) = text else { continue };
-        if *y < frame.top() - 15.0 || *y > frame.bottom() + 15.0 {
-            continue;
-        }
         let galley = painter.layout_no_wrap(text.clone(), tick_font.clone(), p.text_2);
         let size = galley.size();
+        let half = (size.y * 0.8).ceil() / 2.0;
+        if y - half < frame.top() - 0.5 || y + half > frame.bottom() + 0.5 {
+            continue;
+        }
         widest = widest.max(size.x);
         painter.galley(egui::pos2(frame.left() - TICK_OFFSET[0] - size.x, y - size.y / 2.0), galley, p.text_2);
     }
@@ -341,7 +359,7 @@ pub fn show_plot(
         let Some(text) = text else { continue };
         let galley = painter.layout_no_wrap(text.clone(), tick_font.clone(), p.text_2);
         let size = galley.size();
-        if x - size.x / 2.0 < frame.left() - 1.0 || x + size.x / 2.0 > frame.right() + 1.0 {
+        if x - size.x / 2.0 < frame.left() - 0.5 || x + size.x / 2.0 > frame.right() + 0.5 {
             continue;
         }
         tallest = tallest.max(size.y * 0.8);

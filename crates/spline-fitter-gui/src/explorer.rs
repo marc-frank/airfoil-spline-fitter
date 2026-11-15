@@ -118,6 +118,12 @@ impl Default for ExplorerState {
 }
 
 impl ExplorerState {
+    /// Closes a column's drop-down.
+    #[cfg(test)]
+    pub fn close_popup(&mut self) {
+        self.popup = None;
+    }
+
     /// Forgets the plotted points, so the next update redraws the runs.
     pub fn forget_points(&mut self) {
         self.points = None;
@@ -130,6 +136,7 @@ const HEADER_HEIGHT: f32 = 28.0;
 const ROW_HEIGHT: f32 = 28.0;
 const HEADER_EXTRA: f32 = 48.0;
 const CELL_EXTRA: f32 = 18.0;
+const EMPTY_COLUMN: f32 = 100.0;
 
 /// The open column filter drop-down.
 struct ColumnPopup {
@@ -137,7 +144,16 @@ struct ColumnPopup {
     excluded: BTreeSet<String>,
     condition: String,
     position: egui::Pos2,
+    /// The condition field has had the focus it gets on opening.
+    focused: bool,
 }
+
+/// The column drop-down's content width: as wide as a Qt list box wants
+/// (the drop-down at least `POPUP_MIN_WIDTH`).
+const POPUP_CONTENT_WIDTH: f32 = 258.0;
+/// A value row of its list: a line of text and 2 px above and below, and
+/// the 1 px between rows.
+const POPUP_ROW: f32 = 21.0;
 
 impl App {
     /// The visible runs in table order, with their cells.
@@ -546,7 +562,12 @@ impl App {
                     .iter()
                     .map(|(_, cells)| measure(&cells[c].1, if cells[c].0.is_number() { &mono } else { &text }) + CELL_EXTRA)
                     .fold(0.0, f32::max);
-                header.max(cells).ceil()
+                // Without runs, Qt's default section width.
+                if rows.is_empty() {
+                    EMPTY_COLUMN
+                } else {
+                    header.max(cells).ceil()
+                }
             })
             .collect();
         let generation = {
@@ -721,9 +742,9 @@ impl App {
         values
     }
 
-    fn open_column_popup(&mut self, column: usize, position: egui::Pos2) {
+    pub fn open_column_popup(&mut self, column: usize, position: egui::Pos2) {
         let excluded = self.explorer.filters.excluded.get(&column).cloned().unwrap_or_default();
-        self.explorer.popup = Some(ColumnPopup { column, excluded, condition: String::new(), position });
+        self.explorer.popup = Some(ColumnPopup { column, excluded, condition: String::new(), position, focused: false });
     }
 
     /// Applies the popup's exclusions to the column filter.
@@ -745,22 +766,31 @@ impl App {
         let values = self.column_values(column);
         let mut close = false;
         let area = egui::Area::new(egui::Id::unique("column_popup")).order(egui::Order::Foreground).fixed_pos(position).show(ctx, |ui| {
-            egui::Frame::popup(ui.style()).fill(p.field).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
-                ui.set_min_width(size::POPUP_MIN_WIDTH);
+            let frame = egui::Frame::new()
+                .fill(p.field)
+                .stroke(egui::Stroke::new(1.0, p.rule_strong))
+                .corner_radius(egui::CornerRadius::same(size::RADIUS))
+                .inner_margin(egui::Margin::same(size::PAD as i8));
+            frame.show(ui, |ui| {
+                ui.set_width(POPUP_CONTENT_WIDTH.max(size::POPUP_MIN_WIDTH - 2.0 * size::PAD));
+                ui.spacing_mut().item_spacing.y = size::GAP;
+                let half = (POPUP_CONTENT_WIDTH - size::GAP) / 2.0;
                 caption(ui, &p, COLUMNS[column].name);
                 ui.horizontal(|ui| {
-                    if widgets::button(ui, "Sort ascending", "").clicked() {
-                        self.explorer.sort = (column, true);
-                        close = true;
-                    }
-                    if widgets::button(ui, "Sort descending", "").clicked() {
-                        self.explorer.sort = (column, false);
-                        close = true;
+                    for (text, ascending) in [("Sort ascending", true), ("Sort descending", false)] {
+                        if ui.add_sized([half, size::CONTROL_HEIGHT], egui::Button::new(text)).clicked() {
+                            self.explorer.sort = (column, ascending);
+                            close = true;
+                        }
                     }
                 });
                 let popup = self.explorer.popup.as_mut().unwrap();
                 let tip = "Unchecks the values it does not match. Enter keeps the result,\nShift+Enter checks the values it matches instead.\nEvery word must match.\nText matches a part of a cell, for example varpro or tolerance.\nA number with a comparison compares the value:\n>1e-5, <=12, =5 or !=3. =free matches the whole cell.";
-                let edit = ui.add(egui::TextEdit::singleline(&mut popup.condition).hint_text("Condition").desired_width(f32::INFINITY)).on_hover_text(tip);
+                let edit = widgets::text_field(ui, &p, "popup_condition", &mut popup.condition, POPUP_CONTENT_WIDTH, "Condition", 0).on_hover_text(tip);
+                if !popup.focused {
+                    edit.request_focus();
+                    popup.focused = true;
+                }
                 let terms: Vec<Term> = parse_filter(&popup.condition);
                 let matches = |v: &(Cell, String)| terms.iter().all(|t| term_matches(t, &v.0, &v.1));
                 let ruled_out: BTreeSet<String> = if terms.is_empty() { BTreeSet::new() } else { values.iter().filter(|v| !matches(v)).map(|v| v.1.clone()).collect() };
@@ -783,10 +813,12 @@ impl App {
                 }
                 ui.horizontal(|ui| {
                     ui.add_enabled_ui(!terms.is_empty(), |ui| {
-                        if widgets::button(ui, "Keep matching", "Uncheck the values the condition does not match (Enter)").clicked() {
+                        let keep_tip = "Uncheck the values the condition does not match (Enter)";
+                        if ui.add_sized([half, size::CONTROL_HEIGHT], egui::Button::new("Keep matching")).on_hover_text(keep_tip).clicked() {
                             keep(popup, false);
                         }
-                        if widgets::button(ui, "Add matching", "Check the values the condition matches (Shift+Enter)").clicked() {
+                        let add_tip = "Check the values the condition matches (Shift+Enter)";
+                        if ui.add_sized([half, size::CONTROL_HEIGHT], egui::Button::new("Add matching")).on_hover_text(add_tip).clicked() {
                             keep(popup, true);
                         }
                     });
@@ -804,12 +836,25 @@ impl App {
                         popup.excluded.clear();
                     }
                 }
-                egui::ScrollArea::vertical().max_height(10.0 * 24.0).show(ui, |ui| {
+                // The values in a framed list, at most ten rows tall.
+                let rows = values.len().clamp(1, 10) as f32;
+                let (list, _) = ui.allocate_exact_size(egui::vec2(POPUP_CONTENT_WIDTH, rows * POPUP_ROW + 4.0), egui::Sense::hover());
+                let radius = egui::CornerRadius::same(size::RADIUS);
+                ui.painter().rect(list, radius, p.panel, egui::Stroke::new(1.0, p.rule), egui::StrokeKind::Inside);
+                let mut inside = ui.new_child(egui::UiBuilder::new().max_rect(list.shrink(2.0)));
+                crate::theme::scroll_handles(&mut inside, &p);
+                egui::ScrollArea::vertical().auto_shrink([false, false]).show(&mut inside, |ui| {
+                    ui.spacing_mut().item_spacing.y = 0.0;
                     for v in &values {
                         let mut checked = !shown_excluded.contains(&v.1);
                         let text = if v.1.is_empty() { "Not used" } else { v.1.as_str() };
                         let color = if ruled_out.contains(&v.1) { p.text_3 } else { p.text };
-                        if widgets::checkbox(ui, &p, &mut checked, RichText::new(text).color(color)).clicked() {
+                        let (row, hover) = ui.allocate_exact_size(egui::vec2(ui.available_width(), POPUP_ROW), egui::Sense::hover());
+                        if hover.hovered() {
+                            ui.painter().rect_filled(row, 0.0, p.field_hover);
+                        }
+                        let mut cell = ui.new_child(egui::UiBuilder::new().max_rect(row.shrink2(egui::vec2(size::TIGHT, 0.0))).layout(Layout::left_to_right(Align::Center)));
+                        if widgets::checkbox(&mut cell, &p, &mut checked, RichText::new(text).color(color)).clicked() {
                             keep(popup, false);
                             if checked {
                                 popup.excluded.remove(&v.1);
@@ -819,7 +864,7 @@ impl App {
                         }
                     }
                 });
-                if widgets::button(ui, "Clear filter", "").clicked() {
+                if ui.add_sized([POPUP_CONTENT_WIDTH, size::CONTROL_HEIGHT], egui::Button::new("Clear filter")).clicked() {
                     popup.excluded.clear();
                     close = true;
                 }

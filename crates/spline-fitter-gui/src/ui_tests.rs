@@ -3,6 +3,7 @@
 
 use std::time::Duration;
 
+use eframe::egui;
 use egui_kittest::Harness;
 use spline_fitter::models::OptimizerType;
 
@@ -213,4 +214,47 @@ fn dialogs() {
     h.run_steps(4);
     shot(&mut h, "d_report");
     assert!(h.state().modal_open());
+}
+
+/// Clicks at a point of the window.
+fn click_at(h: &mut Harness<'static, App>, x: f32, y: f32) {
+    let pos = egui::pos2(x, y);
+    h.input_mut().events.push(egui::Event::PointerMoved(pos));
+    h.run_steps(1);
+    for pressed in [true, false] {
+        h.input_mut().events.push(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        });
+        h.run_steps(1);
+    }
+    h.run_steps(2);
+}
+
+/// The File menu, a column's filter drop-down and the comb settings.
+#[test]
+fn popups() {
+    let mut h = harness();
+    h.state_mut().new_naca_airfoil("2412", 81, true);
+    h.state_mut().on_fit();
+    finish(&mut h);
+    click_at(&mut h, 18.0, 12.0);
+    shot(&mut h, "p_file_menu");
+    h.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::Escape,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Default::default(),
+    });
+    h.run_steps(3);
+    h.state_mut().open_column_popup(5, egui::pos2(1300.0, 165.0));
+    h.run_steps(3);
+    shot(&mut h, "p_column_popup");
+    h.state_mut().explorer.close_popup();
+    h.run_steps(3);
+    click_at(&mut h, 615.0, 45.0);
+    shot(&mut h, "p_comb_panel");
 }

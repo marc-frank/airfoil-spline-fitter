@@ -141,23 +141,25 @@ pub fn grid_alpha(index: usize, count: usize, length: f64, grid_alpha: f64) -> f
 }
 
 /// Which levels get labels: each level after the first only while the
-/// labels so far (and its own) fill little of the axis. `extents` are the
-/// label extents along the axis, per level.
-pub fn labelled_levels(extents: &[Vec<f32>], length: f32) -> usize {
+/// labels so far (and its own) fill little of the axis. `labels` are, per
+/// level, each label's extent along the axis and whether it fits on the
+/// axis (labels that do not are measured but not drawn, and the limits
+/// count only drawn ones).
+pub fn labelled_levels(labels: &[Vec<(f32, bool)>], length: f32) -> usize {
     const FILL_LIMITS: [(usize, f32); 4] = [(0, 0.8), (2, 0.6), (4, 0.4), (6, 0.2)];
     let mut total = 0.0;
     let mut drawn = 0;
-    for (i, level) in extents.iter().enumerate().take(3) {
-        total += level.iter().sum::<f32>();
+    for (i, level) in labels.iter().enumerate().take(3) {
+        total += level.iter().map(|l| l.0).sum::<f32>();
         if i > 0 {
             let ratio = total / length;
             if FILL_LIMITS.iter().any(|&(n, limit)| drawn >= n && ratio >= limit) {
                 return i;
             }
         }
-        drawn += level.len();
+        drawn += level.iter().filter(|l| l.1).count();
     }
-    extents.len().min(3)
+    labels.len().min(3)
 }
 
 /// The space an axis keeps for its tick labels: it grows to the widest
@@ -226,6 +228,17 @@ mod tests {
         assert_eq!(levels.len(), 1);
         assert!(levels[0].values.iter().any(|v| (v + 5.0).abs() < 1e-12));
         assert!(decade_in_view(-6.1, -4.6) && !decade_in_view(-5.9, -5.1));
+    }
+
+    /// An empty plot's x axis (0 to 1): the labels at the ends do not fit,
+    /// so the 0.1 steps are labelled too, as in the Python window.
+    #[test]
+    fn labels_that_do_not_fit_do_not_crowd() {
+        let major: Vec<(f32, bool)> = (0..6).map(|i| (14.0, i > 0 && i < 5)).collect();
+        let minor = vec![(14.0, true); 5];
+        assert_eq!(labelled_levels(&[major.clone(), minor.clone(), vec![(20.0, true); 40]], 415.0), 2);
+        let all_fit: Vec<(f32, bool)> = major.iter().map(|m| (m.0, true)).collect();
+        assert_eq!(labelled_levels(&[all_fit, minor, vec![(20.0, true); 40]], 415.0), 1);
     }
 
     #[test]
