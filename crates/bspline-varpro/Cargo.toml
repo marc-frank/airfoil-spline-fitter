@@ -1,0 +1,13 @@
+[package]
+name = "bspline-varpro"
+version = "3.0.0"
+description = "CAD-grade B-spline curve fitting by Levenberg-Marquardt variable projection"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+nalgebra.workspace = true
+thiserror.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+unicode-normalization = "0.1"

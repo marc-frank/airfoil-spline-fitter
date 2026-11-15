@@ -81,3 +81,6 @@ prof.out
 
 # Large project files (over GitHub's 100 MB limit)
 *.asfproj
+
+# Rust build output
+/target/
