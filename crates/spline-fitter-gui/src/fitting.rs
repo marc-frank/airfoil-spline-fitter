@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use spline_fitter::batch::{airfoil_files, prepare, write_result, BatchItem};
+use spline_fitter::bspline_varpro::KnotPlacement;
 use spline_fitter::formatting::{format_count, format_duration, format_error, number};
 use spline_fitter::geometry::AirfoilData;
 use spline_fitter::models::{FitResult, IterationRecord, OptimizationConfig, SplineConfig};
@@ -356,23 +357,71 @@ impl App {
     }
 
     /// The sweep's series on the comparison plot, the best marked.
+    /// The sweep's series on the comparison plot: every project run of the
+    /// sweep's settings (all but the swept ones), so earlier sweeps over
+    /// other ranges show beside it; the best of this sweep marked.
     fn draw_sweep_comparison(&mut self, sweep: &Sweep) {
-        let value_of = |combo: &[(Axis, AxisValue)], fit: &FitResult| -> f64 {
-            combo.iter().find(|(a, _)| *a == sweep.x_axis).map_or(0.0, |(a, v)| match a {
-                Axis::ControlPoints if sweep.opt.tolerance.is_some() => fit.num_control_points() as f64,
-                _ => v.as_f64(),
-            })
-        };
-        let mut points: Vec<[f64; 2]> = sweep.results.iter().map(|(c, f)| [value_of(c, f), f.comparison_error()]).collect();
-        points.sort_by(|a, b| a[0].total_cmp(&b[0]).then(a[1].total_cmp(&b[1])));
+        let swept: Vec<Axis> = sweep.combos.first().map(|c| c.iter().map(|(a, _)| *a).collect()).unwrap_or_default();
+        let points = self.sweep_series(&sweep.base, &sweep.opt, &swept, sweep.x_axis);
         let unique = points.windows(2).all(|w| w[0][0] != w[1][0]);
         let best = sweep.results.iter().fold(None::<&(Vec<(Axis, AxisValue)>, FitResult)>, |b, r| match b {
             Some(b) if b.1.comparison_error() <= r.1.comparison_error() => Some(b),
             _ => Some(r),
         });
+        let x_of = |combo: &[(Axis, AxisValue)]| combo.iter().find(|(a, _)| *a == sweep.x_axis).map_or(0.0, |(_, v)| v.as_f64());
         self.comparison.log_y = points.iter().all(|p| p[1] > 0.0);
         self.comparison.set(points, unique);
-        self.comparison.marked = best.map(|(c, f)| vec![[value_of(c, f), f.comparison_error()]]).unwrap_or_default();
+        self.comparison.marked = best.map(|(c, f)| vec![[x_of(c), f.comparison_error()]]).unwrap_or_default();
+    }
+
+    /// `(axis value, comparison error)` of the project runs that match the
+    /// configuration in everything but the swept settings, sorted; of runs
+    /// at the same swept values the latest counts.
+    fn sweep_series(&self, base: &SplineConfig, opt: &OptimizationConfig, swept: &[Axis], axis: Axis) -> Vec<[f64; 2]> {
+        let fixed = |c: &SplineConfig, o: &OptimizationConfig, a: Axis| match a {
+            Axis::ControlPoints => c.num_control_points as f64,
+            Axis::Degree => c.degree as f64,
+            Axis::Sections => c.num_sections as f64,
+            Axis::Smoothing => o.smoothing_weight,
+        };
+        let value_of = |run: &spline_fitter::project::OptimizationRun, a: Axis| match a {
+            Axis::ControlPoints if run.optimization_config.tolerance.is_some() => run.result.num_control_points() as f64,
+            _ => fixed(&run.spline_config, &run.optimization_config, a),
+        };
+        let mut by_values: Vec<(Vec<f64>, [f64; 2])> = Vec::new();
+        for run in self.projects.runs() {
+            let (c, o) = (&run.spline_config, &run.optimization_config);
+            // Along the sections axis the junction count changes: compare the
+            // continuity setting instead of the junctions themselves.
+            let same_junctions = if swept.contains(&Axis::Sections) {
+                c.continuity == base.continuity && c.geometric_continuity == base.geometric_continuity
+            } else {
+                c.junction_specs() == base.junction_specs()
+            };
+            let others_equal = [Axis::ControlPoints, Axis::Degree, Axis::Sections, Axis::Smoothing]
+                .into_iter()
+                .filter(|a| !swept.contains(a))
+                .all(|a| fixed(c, o, a) == fixed(base, opt, a));
+            let belongs = o.optimizer == opt.optimizer
+                && same_junctions
+                && o.tolerance.is_some() == opt.tolerance.is_some()
+                && o.knot_placement == opt.knot_placement
+                && (o.knot_placement != KnotPlacement::Free || o.min_knot_gap == opt.min_knot_gap)
+                && o.parameterization == opt.parameterization
+                && others_equal;
+            if !belongs {
+                continue;
+            }
+            let key: Vec<f64> = swept.iter().map(|a| value_of(run, *a)).collect();
+            let point = [value_of(run, axis), run.result.comparison_error()];
+            match by_values.iter_mut().find(|(k, _)| *k == key) {
+                Some(entry) => entry.1 = point,
+                None => by_values.push((key, point)),
+            }
+        }
+        let mut points: Vec<[f64; 2]> = by_values.into_iter().map(|(_, p)| p).collect();
+        points.sort_by(|a, b| a[0].total_cmp(&b[0]).then(a[1].total_cmp(&b[1])));
+        points
     }
 
     fn finish_sweep(&mut self, sweep: Sweep) {
@@ -426,8 +475,13 @@ impl App {
         }
     }
 
-    /// Sets the swept settings to the best values; sweeps stop.
+    /// Sets the swept settings to the best values; sweeps stop. One undo
+    /// step returns to the sweep.
     fn apply_best(&mut self, combo: &[(Axis, AxisValue)]) {
+        self.as_one_step(|app| app.set_best(combo));
+    }
+
+    fn set_best(&mut self, combo: &[(Axis, AxisValue)]) {
         self.settings.stop_sweeps();
         for axis in [Axis::Sections, Axis::Degree, Axis::ControlPoints, Axis::Smoothing] {
             if let Some((_, v)) = combo.iter().find(|(a, _)| *a == axis) {

@@ -52,6 +52,11 @@ pub struct App {
     pub projects: Projects,
     pub explorer: ExplorerState,
     pub explorer_visible: bool,
+    /// Where the sidebar was on the last frame (its fields are settings).
+    pub sidebar_rect: egui::Rect,
+    /// Put the side panels back to their default widths on the next frame.
+    pub reset_sidebar: bool,
+    pub reset_explorer: bool,
     pub dialog: Option<Dialog>,
     pub report: Option<ReportWindow>,
     pub batch_source: String,
@@ -94,6 +99,9 @@ impl App {
             projects: Projects::default(),
             explorer: ExplorerState::default(),
             explorer_visible: true,
+            sidebar_rect: egui::Rect::NOTHING,
+            reset_sidebar: false,
+            reset_explorer: false,
             dialog: None,
             report: None,
             batch_source: String::new(),
@@ -167,6 +175,22 @@ impl App {
         self.before = self.settings.clone();
     }
 
+    /// Makes `change` one undo step of its own, however long it takes: a
+    /// pending change of the user settles first as its own step.
+    pub fn as_one_step(&mut self, change: impl FnOnce(&mut Self)) {
+        self.settle_settings();
+        self.history.commit(&self.settings.values());
+        change(self);
+        // The sidebar's rules run for what changed, as for any change.
+        let before = self.before.clone();
+        self.settings.settle(&before);
+        let values = self.settings.values();
+        let quiet = self.quiet || self.fitting();
+        self.history.on_change(values.clone(), quiet, Instant::now());
+        self.history.commit(&values);
+        self.before = self.settings.clone();
+    }
+
     /// Takes the settings as they are as settled, without rules or a step.
     pub fn accept_settings(&mut self) {
         self.before = self.settings.clone();
@@ -216,12 +240,19 @@ impl App {
         if pressed(ctrl(Key::R)) && self.fit.is_some() {
             self.on_report();
         }
-        if !typing && !self.fitting() {
-            if pressed(ctrl_shift(Key::Z)) || pressed(ctrl(Key::Y)) {
-                self.redo();
-            }
-            if pressed(ctrl(Key::Z)) {
-                self.undo();
+        // Undo and redo reach the settings also from a focused settings
+        // field (the field keeps its own text undo otherwise).
+        let in_settings =
+            ctx.memory(|m| m.focused()).and_then(|id| ctx.read_response(id)).is_some_and(|r| self.sidebar_rect.contains(r.rect.center()));
+        if (!typing || in_settings) && !self.fitting() {
+            let (redo, undo) = (pressed(ctrl_shift(Key::Z)) || pressed(ctrl(Key::Y)), pressed(ctrl(Key::Z)));
+            if redo || undo {
+                widgets::forget_edits(ctx);
+                if redo {
+                    self.redo();
+                } else {
+                    self.undo();
+                }
             }
         }
         if !typing && !self.fitting() {

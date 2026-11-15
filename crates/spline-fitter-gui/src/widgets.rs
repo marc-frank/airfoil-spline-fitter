@@ -126,8 +126,32 @@ pub fn tristate_checkbox(ui: &mut Ui, p: &Palette, checked: &mut bool, partly: b
 /// A one-line text field in the Loft frame (as a spin box's, without
 /// arrows); at most `limit` characters (0: any).
 pub fn text_field(ui: &mut Ui, p: &Palette, id_salt: &str, text: &mut String, width: f32, hint: &str, limit: usize) -> Response {
+    field_of(ui, p, id_salt, text, width, hint, limit, false).0
+}
+
+/// A text field with a clear button (a cross at the right while it holds
+/// text); true with the response when the button was clicked. The caller
+/// empties the field (it may first use what it held).
+pub fn clearable_field(ui: &mut Ui, p: &Palette, id_salt: &str, text: &mut String, width: f32, hint: &str) -> (Response, bool) {
+    field_of(ui, p, id_salt, text, width, hint, 0, true)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn field_of(
+    ui: &mut Ui,
+    p: &Palette,
+    id_salt: &str,
+    text: &mut String,
+    width: f32,
+    hint: &str,
+    limit: usize,
+    clearable: bool,
+) -> (Response, bool) {
+    const CLEAR: f32 = 20.0;
     let enabled = ui.is_enabled();
     let (outer, frame_response) = ui.allocate_exact_size(Vec2::new(width, size::CONTROL_HEIGHT), Sense::hover());
+    let show_clear = clearable && enabled && !text.is_empty();
+    let edit_rect = if clearable { egui::Rect::from_min_max(outer.min, egui::pos2(outer.right() - CLEAR, outer.bottom())) } else { outer };
     let background = ui.painter().add(egui::Shape::Noop);
     let mut edit = TextEdit::singleline(text)
         .id(ui.make_persistent_id(id_salt))
@@ -139,12 +163,21 @@ pub fn text_field(ui: &mut Ui, p: &Palette, id_salt: &str, text: &mut String, wi
         }))
         .hint_text(hint)
         .align(egui::Align2::LEFT_CENTER)
-        .desired_width(width - 2.0 * (size::GAP + 1.0))
-        .min_size(outer.size());
+        .desired_width(edit_rect.width() - 2.0 * (size::GAP + 1.0))
+        .min_size(edit_rect.size());
     if limit > 0 {
         edit = edit.char_limit(limit);
     }
-    let response = ui.new_child(egui::UiBuilder::new().max_rect(outer)).add(edit);
+    let response = ui.new_child(egui::UiBuilder::new().max_rect(edit_rect)).add(edit);
+    let mut cleared = false;
+    if show_clear {
+        let button = egui::Rect::from_min_max(egui::pos2(outer.right() - CLEAR, outer.top()), outer.max);
+        let clear =
+            ui.interact(button, ui.make_persistent_id((id_salt, "clear")), Sense::click()).on_hover_cursor(egui::CursorIcon::Default);
+        let color = if clear.hovered() { p.text } else { p.text_3 };
+        Glyph::Cross.paint(ui.painter(), button.center(), size::GLYPH, color);
+        cleared = clear.clicked();
+    }
     let border = if !enabled {
         p.rule
     } else if response.has_focus() {
@@ -164,7 +197,7 @@ pub fn text_field(ui: &mut Ui, p: &Palette, id_salt: &str, text: &mut String, wi
             egui::StrokeKind::Inside,
         )),
     );
-    response
+    (response, cleared)
 }
 
 /// The temperature slider: a 4 px groove from cool to warm and a 12 px
@@ -313,6 +346,26 @@ pub struct NumberFormat<'a> {
     pub step: &'a dyn Fn(f64, i32) -> f64,
 }
 
+/// Whether the edge at `x` of a resizable panel spanning `rect` was
+/// double-clicked this frame.
+pub fn edge_double_clicked(ctx: &egui::Context, rect: egui::Rect, x: f32) -> bool {
+    let grab = ctx.global_style().interaction.resize_grab_radius_side;
+    ctx.input(|i| {
+        i.pointer.button_double_clicked(egui::PointerButton::Primary)
+            && i.pointer.interact_pos().is_some_and(|p| (p.x - x).abs() <= grab && rect.y_range().contains(p.y))
+    })
+}
+
+/// The text being typed into a numeric field, until it is committed.
+#[derive(Clone, Default)]
+struct EditBuffer(String);
+
+/// Drops what is being typed into numeric fields, so they show their
+/// values again (after an undo or redo changed them).
+pub fn forget_edits(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.remove_by_type::<EditBuffer>());
+}
+
 /// A spin box: a text field holding a number, with step arrows inside its
 /// frame (hidden while disabled); edits apply on Enter or when the field
 /// loses focus. Returns true when the value changed.
@@ -333,7 +386,7 @@ pub fn number_field(
     let enabled = ui.is_enabled();
     let (outer, frame_response) = ui.allocate_exact_size(Vec2::new(width.max(40.0), size::CONTROL_HEIGHT), Sense::hover());
     let background = ui.painter().add(egui::Shape::Noop);
-    let editing: Option<String> = ui.data(|d| d.get_temp(buffer_id));
+    let editing: Option<String> = ui.data(|d| d.get_temp::<EditBuffer>(buffer_id)).map(|b| b.0);
     let mut text = editing.clone().unwrap_or_else(|| (fmt.format)(*value));
     let text_rect = egui::Rect::from_min_max(outer.min, egui::pos2(outer.right() - arrows, outer.bottom()));
     let edit = TextEdit::singleline(&mut text)
@@ -364,14 +417,14 @@ pub fn number_field(
             *value = v;
             text = (fmt.format)(*value);
         }
-        ui.data_mut(|d| d.insert_temp(buffer_id, text.clone()));
+        ui.data_mut(|d| d.insert_temp(buffer_id, EditBuffer(text.clone())));
     } else if editing.is_some() {
         changed |= commit(&text, value);
-        ui.data_mut(|d| d.remove::<String>(buffer_id));
+        ui.data_mut(|d| d.remove::<EditBuffer>(buffer_id));
     }
     if response.lost_focus() && editing.is_some() {
         changed |= commit(&text, value);
-        ui.data_mut(|d| d.remove::<String>(buffer_id));
+        ui.data_mut(|d| d.remove::<EditBuffer>(buffer_id));
     }
     // Step arrows inside the frame, gone while disabled.
     let arrow_rect = egui::Rect::from_min_max(egui::pos2(outer.right() - arrows, outer.top()), outer.max);
@@ -394,7 +447,7 @@ pub fn number_field(
                 let v = (fmt.step)(*value, k).clamp(range.0, range.1);
                 changed |= v != *value;
                 *value = v;
-                ui.data_mut(|d| d.remove::<String>(buffer_id));
+                ui.data_mut(|d| d.remove::<EditBuffer>(buffer_id));
             }
         }
     }

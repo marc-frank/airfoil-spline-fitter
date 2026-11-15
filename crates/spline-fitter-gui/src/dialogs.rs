@@ -625,18 +625,27 @@ fn split_toggle(
         }
         let right = egui::CornerRadius { nw: 0, sw: 0, ne: size::RADIUS, se: size::RADIUS };
         ui.spacing_mut().button_padding.x = 0.0;
+        // The drop-down stays open while the rest of the window is used; its
+        // arrow (checked while it is open) or Escape closes it.
+        let popup_id = egui::Id::unique(id);
+        let open = egui::Popup::is_id_open(ui.ctx(), popup_id);
         let arrow = ui
-            .add(egui::Button::new("").corner_radius(right).min_size(egui::vec2(size::ARROW_BUTTON_WIDTH, size::CONTROL_HEIGHT)))
+            .add(
+                egui::Button::new("")
+                    .selected(open)
+                    .corner_radius(right)
+                    .min_size(egui::vec2(size::ARROW_BUTTON_WIDTH, size::CONTROL_HEIGHT)),
+            )
             .on_hover_text(arrow_tip);
-        Glyph::ChevronDown.paint(ui.painter(), arrow.rect.center(), size::GLYPH, p.text_2);
-        egui::Popup::from_toggle_button_response(&arrow)
-            .id(egui::Id::unique(id))
-            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-            .show(|ui| {
-                egui::Frame::new().inner_margin(egui::Margin::same(12)).show(ui, |ui| {
-                    changed = content(ui);
-                });
+        if open {
+            widgets::outline_checked(ui, p, &arrow, right);
+        }
+        Glyph::ChevronDown.paint(ui.painter(), arrow.rect.center(), size::GLYPH, if open { p.text } else { p.text_2 });
+        egui::Popup::from_toggle_button_response(&arrow).id(popup_id).close_behavior(egui::PopupCloseBehavior::IgnoreClicks).show(|ui| {
+            egui::Frame::new().inner_margin(egui::Margin::same(12)).show(ui, |ui| {
+                changed = content(ui);
             });
+        });
     });
     (toggled, changed)
 }

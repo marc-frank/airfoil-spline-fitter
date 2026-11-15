@@ -123,6 +123,9 @@ fn reference_session() {
     h.state_mut().advanced_open = true;
     h.run_steps(3);
     shot(&mut h, "9_advanced");
+    h.state_mut().explorer.pivot = true;
+    h.run_steps(3);
+    shot(&mut h, "10_pivot");
 }
 
 #[test]
@@ -250,11 +253,127 @@ fn popups() {
         modifiers: Default::default(),
     });
     h.run_steps(3);
-    h.state_mut().open_column_popup(5, egui::pos2(1300.0, 165.0));
+    h.state_mut().open_column_popup(5, egui::Rect::from_min_max(egui::pos2(1290.0, 140.0), egui::pos2(1406.0, 165.0)));
     h.run_steps(3);
     shot(&mut h, "p_column_popup");
     h.state_mut().explorer.close_popup();
     h.run_steps(3);
     click_at(&mut h, 615.0, 45.0);
     shot(&mut h, "p_comb_panel");
+}
+
+/// Presses a key with modifiers.
+fn key(h: &mut Harness<'static, App>, key: egui::Key, modifiers: egui::Modifiers) {
+    for pressed in [true, false] {
+        h.input_mut().events.push(egui::Event::Key { key, physical_key: None, pressed, repeat: false, modifiers });
+    }
+    h.run_steps(2);
+}
+
+/// Double-clicks at a point (both clicks in one frame: the harness renders
+/// each frame, slower than a double-click allows).
+fn double_click_at(h: &mut Harness<'static, App>, x: f32, y: f32) {
+    let pos = egui::pos2(x, y);
+    h.input_mut().events.push(egui::Event::PointerMoved(pos));
+    h.run_steps(1);
+    for pressed in [true, false, true, false] {
+        h.input_mut().events.push(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        });
+    }
+    h.run_steps(1);
+}
+
+/// Drags the pointer from one point to another.
+fn drag(h: &mut Harness<'static, App>, from: egui::Pos2, to: egui::Pos2) {
+    let button =
+        |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+    h.input_mut().events.push(egui::Event::PointerMoved(from));
+    h.run_steps(1);
+    h.input_mut().events.push(button(from, true));
+    h.run_steps(1);
+    for k in 1..=5 {
+        h.input_mut().events.push(egui::Event::PointerMoved(from + (to - from) * (k as f32 / 5.0)));
+        h.run_steps(1);
+    }
+    h.input_mut().events.push(button(to, false));
+    h.run_steps(2);
+}
+
+/// Undo groups, Ctrl+Z in a settings field, and double-clicking a panel's
+/// edge (specification 19.2, 19.8).
+#[test]
+fn settings_and_panels_behave_as_in_python() {
+    let mut h = harness();
+    h.run_steps(3);
+    // Applying a run right after an edit: the edit is a step of its own.
+    h.state_mut().new_naca_airfoil("2412", 41, true);
+    h.state_mut().on_fit();
+    finish(&mut h);
+    let run = h.state().projects.runs()[0].clone();
+    h.state_mut().settings.degree.value.set(4);
+    h.run_steps(1);
+    h.state_mut().apply_run_settings(&run);
+    h.run_steps(2);
+    assert_eq!(h.state().settings.degree.value.value, 5);
+    h.state_mut().undo();
+    h.run_steps(1);
+    assert_eq!(h.state().settings.degree.value.value, 4, "the run's settings are one step");
+    h.state_mut().undo();
+    h.run_steps(1);
+    assert_eq!(h.state().settings.degree.value.value, 5, "the edit is another");
+
+    // Ctrl+Z with a settings field focused undoes the setting.
+    h.state_mut().settings.control_points.value.set(30);
+    h.run_steps(2);
+    let current = h.state().settings.values();
+    h.state_mut().history.commit(&current);
+    click_at(&mut h, 200.0, 397.0);
+    assert!(h.ctx.memory(|m| m.focused()).is_some(), "the control points field has the focus");
+    key(&mut h, egui::Key::Z, egui::Modifiers::COMMAND);
+    h.run_steps(2);
+    assert_eq!(h.state().settings.control_points.value.value, 25);
+
+    // Dragging the sidebar wider, then double-clicking its edge.
+    let edge = h.state().sidebar_rect.right();
+    drag(&mut h, egui::pos2(edge, 600.0), egui::pos2(edge + 80.0, 600.0));
+    let wide = h.state().sidebar_rect.width();
+    assert!(wide > crate::theme::size::SIDEBAR_WIDTH + 40.0, "{wide}");
+    let edge = h.state().sidebar_rect.right();
+    double_click_at(&mut h, edge, 600.0);
+    h.run_steps(4);
+    assert!((h.state().sidebar_rect.width() - crate::theme::size::SIDEBAR_WIDTH).abs() < 1.5, "{}", h.state().sidebar_rect.width());
+
+    // The comb settings stay open while the plot is used.
+    click_at(&mut h, 615.0, 45.0);
+    let open = |h: &Harness<'static, App>| egui::Popup::is_id_open(&h.ctx, egui::Id::unique("comb_settings"));
+    assert!(open(&h));
+    click_at(&mut h, 650.0, 300.0);
+    assert!(open(&h), "a click in the plot leaves the comb settings open");
+    key(&mut h, egui::Key::Escape, egui::Modifiers::NONE);
+    assert!(!open(&h));
+}
+
+/// A second sweep shows the runs of the first beside its own (19.13).
+#[test]
+fn sweeps_show_the_whole_project_range() {
+    let mut h = harness();
+    h.state_mut().new_naca_airfoil("2412", 41, true);
+    h.run_steps(2);
+    let sweep = |h: &mut Harness<'static, App>, from: usize, to: usize| {
+        let app = h.state_mut();
+        app.settings.control_points.value.set(from);
+        app.settings.control_points.toggle(true);
+        app.settings.control_points.end.set(to);
+        h.run_steps(2);
+        h.state_mut().on_fit();
+        finish(h);
+    };
+    sweep(&mut h, 20, 21);
+    sweep(&mut h, 24, 25);
+    let xs: Vec<f64> = h.state().comparison.points.iter().map(|p| p[0]).collect();
+    assert_eq!(xs, [20.0, 21.0, 24.0, 25.0]);
 }

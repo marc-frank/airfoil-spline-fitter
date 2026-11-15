@@ -99,6 +99,10 @@ pub struct ExplorerState {
     popup: Option<ColumnPopup>,
     /// Height of the run details on the last frame (the table takes the rest).
     details_height: f32,
+    /// The columns in the order shown (header sections can be dragged).
+    order: Vec<usize>,
+    /// Where each header section was on the last frame, in shown order.
+    sections: Vec<(usize, egui::Rect)>,
 }
 
 impl Default for ExplorerState {
@@ -113,6 +117,8 @@ impl Default for ExplorerState {
             anchor: None,
             popup: None,
             details_height: 15.0,
+            order: (0..COLUMNS.len()).collect(),
+            sections: Vec::new(),
         }
     }
 }
@@ -137,13 +143,16 @@ const ROW_HEIGHT: f32 = 28.0;
 const HEADER_EXTRA: f32 = 48.0;
 const CELL_EXTRA: f32 = 18.0;
 const EMPTY_COLUMN: f32 = 100.0;
+/// A run's column when pivoted, at least.
+const PIVOT_COLUMN: f32 = 106.0;
 
 /// The open column filter drop-down.
 struct ColumnPopup {
     column: usize,
     excluded: BTreeSet<String>,
     condition: String,
-    position: egui::Pos2,
+    /// The header section it drops down from (a point: right of a row name).
+    anchor: egui::Rect,
     /// The condition field has had the focus it gets on opening.
     focused: bool,
 }
@@ -230,7 +239,7 @@ impl App {
 
     /// Sets the sidebar to a run's settings (one undo step).
     pub fn apply_run_settings(&mut self, run: &OptimizationRun) {
-        self.settings.apply_run(run);
+        self.as_one_step(|app| app.settings.apply_run(run));
     }
 
     /// Shows a run's fit and history.
@@ -367,66 +376,73 @@ impl App {
 
     pub fn explorer_panel(&mut self, ui: &mut Ui) {
         let p = self.palette.clone();
-        egui::Panel::right("explorer")
+        let mut panel = egui::Panel::right("explorer")
             .resizable(true)
             .default_size(size::EXPLORER_WIDTH)
             .size_range(size::EXPLORER_MIN_WIDTH..=ui.available_width() * 0.6)
-            .frame(egui::Frame::new().fill(p.panel).inner_margin(egui::Margin { left: 12, right: 12, top: 10, bottom: 12 }))
-            .show(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = size::GROUP;
-                ui.horizontal(|ui| {
-                    caption(ui, &p, "Project");
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if widgets::flat_icon_button(ui, &p, Glyph::ChevronRight, "Hide the project explorer (Ctrl+Shift+E)").clicked() {
-                            self.explorer_visible = false;
-                        }
-                    });
-                });
-                muted(ui, &p, self.projects.label());
-                self.filter_bar(ui);
-                ui.add_space(size::GAP - size::GROUP);
-                // The table takes the height the details and buttons leave.
-                let below = self.explorer.details_height + size::CONTROL_HEIGHT + 3.0 * size::GROUP;
-                let table_height = (ui.available_height() - below).max(80.0);
-                let width = ui.available_width();
-                let (rect, _) = ui.allocate_exact_size(egui::vec2(width, table_height), Sense::hover());
-                let radius = egui::CornerRadius::same(size::RADIUS);
-                ui.painter().rect_filled(rect, radius, p.panel);
-                let mut inside = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(1.0)));
-                inside.set_clip_rect(rect.shrink(1.0));
-                crate::theme::scroll_handles(&mut inside, &p);
-                if self.explorer.pivot {
-                    self.pivot_table(&mut inside);
-                } else {
-                    egui::ScrollArea::horizontal().id_salt("runs_h").auto_shrink([false, false]).show(&mut inside, |ui| self.run_table(ui));
-                }
-                ui.painter().rect_stroke(rect, radius, egui::Stroke::new(1.0, p.rule), egui::StrokeKind::Inside);
-                let top = ui.cursor().top();
-                self.details(ui);
-                self.explorer.details_height = (ui.cursor().top() - top - size::GROUP).max(0.0);
-                let fitting = self.fitting();
-                let k = self.projects.selected.len();
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = size::GROUP;
-                    if ui
-                        .add_enabled(!fitting && k == 1, egui::Button::new("Load settings").min_size(egui::vec2(0.0, size::CONTROL_HEIGHT)))
-                        .on_hover_text("Set the sidebar to the selected run's settings (or double-click the run)")
-                        .clicked()
-                    {
-                        let id = self.projects.selected.iter().next().unwrap().clone();
-                        self.load_settings(&id);
-                    }
-                    if ui
-                        .add_enabled(!fitting && k > 0, egui::Button::new("Delete").min_size(egui::vec2(0.0, size::CONTROL_HEIGHT)))
-                        .on_hover_text(
-                            "Delete the selected runs from the project (Delete key).\nEdit > Restore deleted runs brings them back.",
-                        )
-                        .clicked()
-                    {
-                        self.confirm_delete_runs();
+            .frame(egui::Frame::new().fill(p.panel).inner_margin(egui::Margin { left: 12, right: 12, top: 10, bottom: 12 }));
+        if std::mem::take(&mut self.reset_explorer) {
+            panel = panel.exact_size(size::EXPLORER_WIDTH);
+        }
+        let shown = panel.show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = size::GROUP;
+            ui.horizontal(|ui| {
+                caption(ui, &p, "Project");
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if widgets::flat_icon_button(ui, &p, Glyph::ChevronRight, "Hide the project explorer (Ctrl+Shift+E)").clicked() {
+                        self.explorer_visible = false;
                     }
                 });
             });
+            muted(ui, &p, self.projects.label());
+            self.filter_bar(ui);
+            ui.add_space(size::GAP - size::GROUP);
+            // The table takes the height the details and buttons leave.
+            let below = self.explorer.details_height + size::CONTROL_HEIGHT + 3.0 * size::GROUP;
+            let table_height = (ui.available_height() - below).max(80.0);
+            let width = ui.available_width();
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(width, table_height), Sense::hover());
+            let radius = egui::CornerRadius::same(size::RADIUS);
+            ui.painter().rect_filled(rect, radius, p.panel);
+            let mut inside = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(1.0)));
+            inside.set_clip_rect(rect.shrink(1.0));
+            crate::theme::scroll_handles(&mut inside, &p);
+            if self.explorer.pivot {
+                self.pivot_table(&mut inside);
+            } else {
+                egui::ScrollArea::horizontal().id_salt("runs_h").auto_shrink([false, false]).show(&mut inside, |ui| self.run_table(ui));
+            }
+            ui.painter().rect_stroke(rect, radius, egui::Stroke::new(1.0, p.rule), egui::StrokeKind::Inside);
+            let top = ui.cursor().top();
+            self.details(ui);
+            self.explorer.details_height = (ui.cursor().top() - top - size::GROUP).max(0.0);
+            let fitting = self.fitting();
+            let k = self.projects.selected.len();
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = size::GROUP;
+                if ui
+                    .add_enabled(!fitting && k == 1, egui::Button::new("Load settings").min_size(egui::vec2(0.0, size::CONTROL_HEIGHT)))
+                    .on_hover_text("Set the sidebar to the selected run's settings (or double-click the run)")
+                    .clicked()
+                {
+                    let id = self.projects.selected.iter().next().unwrap().clone();
+                    self.load_settings(&id);
+                }
+                if ui
+                    .add_enabled(!fitting && k > 0, egui::Button::new("Delete").min_size(egui::vec2(0.0, size::CONTROL_HEIGHT)))
+                    .on_hover_text("Delete the selected runs from the project (Delete key).\nEdit > Restore deleted runs brings them back.")
+                    .clicked()
+                {
+                    self.confirm_delete_runs();
+                }
+            });
+        });
+        // Double-clicking the edge puts the default width back.
+        let rect = shown.response.rect;
+        if widgets::edge_double_clicked(ui.ctx(), rect, rect.left()) {
+            self.reset_explorer = true;
+            ui.ctx().request_repaint();
+        }
         self.column_popup(ui.ctx());
     }
 
@@ -446,8 +462,13 @@ impl App {
                 changed = true;
             }
             let tip = "Show the runs that match in any column, and pass the filter of every\ncolumn (the drop-down at the right of a column header).\nEvery word must match.\nText matches a part of a cell, for example varpro or tolerance.\nA number with a comparison compares the error:\n>1e-5 or <=3e-4. =free matches a whole cell.";
-            let filter = egui::TextEdit::singleline(&mut self.explorer.filters.text).hint_text("Filter all columns").align(egui::Align2::LEFT_CENTER);
-            changed |= ui.add_sized([ui.available_width(), size::CONTROL_HEIGHT], filter).on_hover_text(tip).changed();
+            let width = ui.available_width();
+            let (edit, cleared) = widgets::clearable_field(ui, &p, "run_filter", &mut self.explorer.filters.text, width, "Filter all columns");
+            changed |= edit.on_hover_text(tip).changed();
+            if cleared {
+                self.explorer.filters.text.clear();
+                changed = true;
+            }
         });
         if changed {
             self.explorer.forget_points();
@@ -488,10 +509,26 @@ impl App {
     }
 
     /// A column header: name (click sorts), sort arrow and filter glyph.
-    fn header_cell(&mut self, ui: &mut Ui, p: &Palette, column: usize) {
+    fn header_cell(&mut self, ui: &mut Ui, p: &Palette, column: usize, vertical: bool) {
         let col = &COLUMNS[column];
         let filtered = self.explorer.filters.excluded.contains_key(&column);
-        let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click());
+        let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
+        self.explorer.sections.push((column, rect));
+        // A section dragged onto another takes its place.
+        if response.drag_stopped() {
+            if let Some(pos) = response.interact_pointer_pos() {
+                let across = |r: &egui::Rect| if vertical { r.y_range().contains(pos.y) } else { r.x_range().contains(pos.x) };
+                if let Some(&(target, _)) = self.explorer.sections.iter().find(|(c, r)| *c != column && across(r)) {
+                    let order = &mut self.explorer.order;
+                    let to = order.iter().position(|&c| c == target).unwrap_or(0);
+                    order.retain(|&c| c != column);
+                    order.insert(to.min(order.len()), column);
+                }
+            }
+        }
+        if response.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        }
         let glyph_x = rect.right() - 6.0 - 5.0;
         ui.painter().text(
             rect.left_center() + egui::vec2(size::GAP, 0.0),
@@ -510,7 +547,9 @@ impl App {
         if response.clicked() {
             let x = response.interact_pointer_pos().map_or(0.0, |q| q.x);
             if x >= glyph_x - 9.0 {
-                self.open_column_popup(column, rect.left_bottom());
+                // Pivoted, the drop-down opens right of the row name.
+                let anchor = if vertical { egui::Rect::from_min_size(rect.right_top(), egui::Vec2::ZERO) } else { rect };
+                self.open_column_popup(column, anchor);
             } else {
                 let (c, asc) = self.explorer.sort;
                 self.explorer.sort = (column, if c == column { !asc } else { true });
@@ -531,7 +570,7 @@ impl App {
             }
             ui.separator();
             if ui.button("Filter this column...").clicked() {
-                self.open_column_popup(column, rect.left_bottom());
+                self.open_column_popup(column, rect);
             }
             if ui.button("Clear all filters").clicked() {
                 self.explorer.filters = Filters { invert: self.explorer.filters.invert, ..Filters::default() };
@@ -548,7 +587,8 @@ impl App {
         let mut clicked: Option<(String, egui::Modifiers)> = None;
         let mut double: Option<String> = None;
         let delete = ui.input(|i| i.key_pressed(egui::Key::Delete));
-        let columns: Vec<usize> = (0..COLUMNS.len()).collect();
+        let columns: Vec<usize> = self.explorer.order.clone();
+        self.explorer.sections.clear();
         // Columns fit their contents when the runs change: the header with
         // room for its glyphs, or the widest cell.
         let text = egui::FontId::proportional(crate::theme::typeface::BASE);
@@ -584,7 +624,7 @@ impl App {
         // Columns resize by dragging, without lines between them.
         ui.visuals_mut().widgets.noninteractive.bg_stroke.color = egui::Color32::TRANSPARENT;
         let mut builder = TableBuilder::new(ui)
-            .id_salt(("runs", generation))
+            .id_salt(("runs", generation, columns.clone()))
             .striped(false)
             .resizable(true)
             .sense(Sense::click())
@@ -596,7 +636,7 @@ impl App {
             .header(HEADER_HEIGHT, |mut header| {
                 for &c in &columns {
                     header.col(|ui| {
-                        self.header_cell(ui, &p, c);
+                        self.header_cell(ui, &p, c, false);
                         let r = ui.max_rect();
                         ui.painter().hline(r.x_range(), r.bottom() - 0.5, egui::Stroke::new(1.0, p.rule));
                     });
@@ -638,46 +678,75 @@ impl App {
         }
     }
 
-    /// The table with one column per run and one row per setting.
+    /// The table pivoted: one row per setting (the header sections, in the
+    /// shown order, as row names that stay in view), one column per run.
     fn pivot_table(&mut self, ui: &mut Ui) {
         let p = self.palette.clone();
         let rows = self.visible_rows();
         let order: Vec<String> = rows.iter().map(|(id, _)| id.clone()).collect();
+        let columns: Vec<usize> = self.explorer.order.clone();
+        self.explorer.sections.clear();
+        let text = egui::FontId::proportional(crate::theme::typeface::BASE);
+        let mono = egui::FontId::monospace(crate::theme::typeface::BASE);
+        let measure = |s: &str, font: &egui::FontId| ui.painter().layout_no_wrap(s.to_string(), font.clone(), p.text).size().x;
+        let name_width = columns.iter().map(|&c| measure(COLUMNS[c].name, &text) + HEADER_EXTRA).fold(0.0, f32::max).ceil();
+        let widths: Vec<f32> = rows
+            .iter()
+            .map(|(_, cells)| {
+                let widest = columns
+                    .iter()
+                    .map(|&c| measure(&cells[c].1, if cells[c].0.is_number() { &mono } else { &text }) + CELL_EXTRA)
+                    .fold(0.0, f32::max);
+                widest.max(PIVOT_COLUMN).ceil()
+            })
+            .collect();
+        let height = columns.len() as f32 * ROW_HEIGHT;
         let mut clicked: Option<(String, egui::Modifiers)> = None;
-        egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
-            egui::Grid::new("pivot").striped(false).spacing([14.0, 4.0]).show(ui, |ui| {
-                ui.label(RichText::new(COLUMNS[0].name).color(p.text_2));
-                for (id, cells) in &rows {
-                    let selected = self.projects.selected.contains(id);
-                    let r = ui.add(egui::Button::new(RichText::new(&cells[0].1).monospace()).selected(selected).frame(selected));
-                    if r.clicked() {
-                        clicked = Some((id.clone(), ui.input(|i| i.modifiers)));
-                    }
+        let mut double: Option<String> = None;
+        egui::ScrollArea::vertical().id_salt("pivot_v").auto_shrink([false, false]).show(ui, |ui| {
+            ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
+            ui.horizontal_top(|ui| {
+                // The row names, ruled off on the right.
+                let (names, _) = ui.allocate_exact_size(egui::vec2(name_width, height), Sense::hover());
+                for (i, &c) in columns.iter().enumerate() {
+                    let row =
+                        egui::Rect::from_min_size(names.min + egui::vec2(0.0, i as f32 * ROW_HEIGHT), egui::vec2(name_width, ROW_HEIGHT));
+                    let mut cell = ui.new_child(egui::UiBuilder::new().max_rect(row));
+                    self.header_cell(&mut cell, &p, c, true);
                 }
-                ui.end_row();
-                for c in 1..COLUMNS.len() {
-                    self.header_label(ui, &p, c);
-                    for (_, cells) in &rows {
-                        ui.with_layout(Layout::top_down(Align::Center), |ui| ui.label(RichText::new(&cells[c].1).color(p.text)));
-                    }
-                    ui.end_row();
-                }
+                ui.painter().vline(names.right() - 0.5, names.y_range(), egui::Stroke::new(1.0, p.rule));
+                // The runs, one column each, scrolling sideways.
+                egui::ScrollArea::horizontal().id_salt("pivot_h").auto_shrink([false, true]).show(ui, |ui| {
+                    ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
+                    ui.horizontal_top(|ui| {
+                        for ((id, cells), &width) in rows.iter().zip(&widths) {
+                            let (rect, response) = ui.allocate_exact_size(egui::vec2(width, height), Sense::click());
+                            if self.projects.selected.contains(id) {
+                                ui.painter().rect_filled(rect, 0.0, p.select);
+                            }
+                            for (i, &c) in columns.iter().enumerate() {
+                                let (cell, value) = &cells[c];
+                                let font = if cell.is_number() { mono.clone() } else { text.clone() };
+                                let at = egui::pos2(rect.center().x, rect.top() + (i as f32 + 0.5) * ROW_HEIGHT);
+                                ui.painter().text(at, egui::Align2::CENTER_CENTER, value, font, p.text);
+                            }
+                            if response.clicked() {
+                                clicked = Some((id.clone(), ui.input(|i| i.modifiers)));
+                            }
+                            if response.double_clicked() {
+                                double = Some(id.clone());
+                            }
+                        }
+                    });
+                });
             });
         });
         if let Some((id, modifiers)) = clicked {
             self.click_run(&id, &order, modifiers);
         }
-    }
-
-    fn header_label(&mut self, ui: &mut Ui, p: &Palette, column: usize) {
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(COLUMNS[column].name).color(p.text_2));
-            let filtered = self.explorer.filters.excluded.contains_key(&column);
-            let r = widgets::icon_button(ui, p, if filtered { Glyph::Filter } else { Glyph::ChevronDown }, false, "");
-            if r.clicked() {
-                self.open_column_popup(column, r.rect.right_top());
-            }
-        });
+        if let Some(id) = double {
+            self.load_settings(&id);
+        }
     }
 
     fn details(&mut self, ui: &mut Ui) {
@@ -742,9 +811,9 @@ impl App {
         values
     }
 
-    pub fn open_column_popup(&mut self, column: usize, position: egui::Pos2) {
+    pub fn open_column_popup(&mut self, column: usize, anchor: egui::Rect) {
         let excluded = self.explorer.filters.excluded.get(&column).cloned().unwrap_or_default();
-        self.explorer.popup = Some(ColumnPopup { column, excluded, condition: String::new(), position, focused: false });
+        self.explorer.popup = Some(ColumnPopup { column, excluded, condition: String::new(), anchor, focused: false });
     }
 
     /// Applies the popup's exclusions to the column filter.
@@ -762,7 +831,14 @@ impl App {
     fn column_popup(&mut self, ctx: &egui::Context) {
         let Some(popup) = &self.explorer.popup else { return };
         let p = self.palette.clone();
-        let (column, position) = (popup.column, popup.position);
+        let column = popup.column;
+        // Under the section's left edge, or right-aligned to its right edge
+        // (as far as it shows) where it would pass the window's edge.
+        let width = POPUP_CONTENT_WIDTH.max(size::POPUP_MIN_WIDTH - 2.0 * size::PAD) + 2.0 * size::PAD;
+        let screen = ctx.content_rect();
+        let anchor = popup.anchor;
+        let x = if anchor.left() + width > screen.right() { anchor.right().min(screen.right()) - width } else { anchor.left() };
+        let position = egui::pos2(x.max(screen.left()), anchor.bottom());
         let values = self.column_values(column);
         let mut close = false;
         let area = egui::Area::new(egui::Id::unique("column_popup")).order(egui::Order::Foreground).fixed_pos(position).show(ctx, |ui| {
@@ -786,7 +862,8 @@ impl App {
                 });
                 let popup = self.explorer.popup.as_mut().unwrap();
                 let tip = "Unchecks the values it does not match. Enter keeps the result,\nShift+Enter checks the values it matches instead.\nEvery word must match.\nText matches a part of a cell, for example varpro or tolerance.\nA number with a comparison compares the value:\n>1e-5, <=12, =5 or !=3. =free matches the whole cell.";
-                let edit = widgets::text_field(ui, &p, "popup_condition", &mut popup.condition, POPUP_CONTENT_WIDTH, "Condition", 0).on_hover_text(tip);
+                let (edit, cleared) = widgets::clearable_field(ui, &p, "popup_condition", &mut popup.condition, POPUP_CONTENT_WIDTH, "Condition");
+                let edit = edit.on_hover_text(tip);
                 if !popup.focused {
                     edit.request_focus();
                     popup.focused = true;
@@ -806,7 +883,16 @@ impl App {
                         popup.condition.clear();
                     }
                 };
+                // The clear button keeps what the condition showed, then empties it.
+                if cleared {
+                    keep(popup, false);
+                    popup.condition.clear();
+                }
                 let enter = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                // Enter elsewhere in the drop-down closes it.
+                if ui.input(|i| i.key_pressed(egui::Key::Enter)) && !edit.has_focus() && !edit.lost_focus() {
+                    close = true;
+                }
                 if enter {
                     let shift = ui.input(|i| i.modifiers.shift);
                     keep(popup, shift);

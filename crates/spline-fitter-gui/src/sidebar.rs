@@ -50,27 +50,36 @@ impl App {
     pub fn sidebar(&mut self, ui: &mut Ui) {
         let p = self.palette.clone();
         let frame = egui::Frame::new().fill(p.panel);
-        egui::Panel::left("sidebar").resizable(true).default_size(size::SIDEBAR_WIDTH).min_size(size::SIDEBAR_MIN_WIDTH).frame(frame).show(
-            ui,
-            |ui| {
-                let bar = egui::Panel::bottom("run_bar")
-                    .frame(egui::Frame::new().fill(p.window).inner_margin(egui::Margin::same(12)))
-                    .show(ui, |ui| self.run_bar(ui));
-                let top = bar.response.rect;
-                ui.painter().hline(top.x_range(), top.top(), egui::Stroke::new(1.0, p.rule));
-                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                    // Sections and their rules follow without gaps.
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    self.data_card(ui);
-                    let fitting = self.fitting();
-                    ui.add_enabled_ui(!fitting, |ui| {
-                        self.method_section(ui);
-                        self.curve_section(ui);
-                    });
-                    self.advanced_section(ui);
+        let mut panel =
+            egui::Panel::left("sidebar").resizable(true).default_size(size::SIDEBAR_WIDTH).min_size(size::SIDEBAR_MIN_WIDTH).frame(frame);
+        if std::mem::take(&mut self.reset_sidebar) {
+            panel = panel.exact_size(size::SIDEBAR_WIDTH);
+        }
+        let shown = panel.show(ui, |ui| {
+            let bar = egui::Panel::bottom("run_bar")
+                .frame(egui::Frame::new().fill(p.window).inner_margin(egui::Margin::same(12)))
+                .show(ui, |ui| self.run_bar(ui));
+            let top = bar.response.rect;
+            ui.painter().hline(top.x_range(), top.top(), egui::Stroke::new(1.0, p.rule));
+            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                // Sections and their rules follow without gaps.
+                ui.spacing_mut().item_spacing.y = 0.0;
+                self.data_card(ui);
+                let fitting = self.fitting();
+                ui.add_enabled_ui(!fitting, |ui| {
+                    self.method_section(ui);
+                    self.curve_section(ui);
                 });
-            },
-        );
+                self.advanced_section(ui);
+            });
+        });
+        let rect = shown.response.rect;
+        self.sidebar_rect = rect;
+        // Double-clicking the edge puts the default width back.
+        if widgets::edge_double_clicked(ui.ctx(), rect, rect.right()) {
+            self.reset_sidebar = true;
+            ui.ctx().request_repaint();
+        }
     }
 
     fn data_card(&mut self, ui: &mut Ui) {
