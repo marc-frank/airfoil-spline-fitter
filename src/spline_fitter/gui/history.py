@@ -23,8 +23,8 @@ from PyQt6.QtWidgets import (
 
 from .widgets import SegmentedControl, SweepableDoubleSpinBox, SweepableSpinBox
 
-# Changes closer together than this are one step: typing a number, holding
-# a spin box arrow, or the settings of a run applied at once
+# Changes closer together than this are one step: typing a number or holding
+# a spin box arrow (what the application sets as one action is a group)
 MERGE_MS = 500
 # Steps kept
 LIMIT = 200
@@ -83,7 +83,8 @@ class SettingsHistory(QObject):
     while ``is_quiet()`` holds, or inside ``quiet()``, are not steps of their
     own: they become part of the current state (the automatic tolerance of a
     new airfoil). Quiet and user changes close together stay apart: the user
-    change is a step either way.
+    change is a step either way. Everything changed inside ``group()`` is one
+    step, however long it takes (the settings of a run applied at once).
     """
 
     changed = pyqtSignal()
@@ -96,6 +97,7 @@ class SettingsHistory(QObject):
         self._after_restore = after_restore
         self._restoring = False
         self._quiet_depth = 0
+        self._group_depth = 0
         self._pending_quiet = False
         # The state after the latest change, while a step is pending
         self._latest_state: tuple | None = None
@@ -116,6 +118,10 @@ class SettingsHistory(QObject):
     def _on_change(self, *_):
         if self._restoring:
             return
+        if self._group_depth:
+            # One step when the group ends
+            self.changed.emit()
+            return
         quiet = bool(self._quiet_depth or self._is_quiet())
         pending = self._timer.isActive()
         if pending and quiet != self._pending_quiet and self._latest_state is not None:
@@ -135,6 +141,26 @@ class SettingsHistory(QObject):
             yield
         finally:
             self._quiet_depth -= 1
+
+    @contextmanager
+    def group(self):
+        """Everything changed inside is one step, made when the group ends.
+        Groups do not nest: an inner group is part of the outer one."""
+        if self._group_depth:
+            self._group_depth += 1
+            try:
+                yield
+            finally:
+                self._group_depth -= 1
+            return
+        self.commit()
+        self._group_depth = 1
+        try:
+            yield
+        finally:
+            self._group_depth = 0
+            self._settle(self._capture(), quiet=False)
+            self.changed.emit()
 
     def commit(self) -> None:
         """Make the changes since the last step a step now."""

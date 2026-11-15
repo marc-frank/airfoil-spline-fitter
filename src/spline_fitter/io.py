@@ -141,8 +141,9 @@ def _is_point_counts(x, y):
     """Whether a coordinate pair is a Lednicer header: two whole point counts.
 
     A Selig file's first point is the trailing edge, near (1, 0) or (100, 0).
+    Rows are finite, so nothing here can raise.
     """
-    return x >= 2 and y >= 2 and x == int(x) and y == int(y)
+    return x >= 2 and y >= 2 and x == math.floor(x) and y == math.floor(y)
 
 
 def _is_lednicer(rows):
@@ -285,7 +286,11 @@ def parse_airfoil_text(text, filename_name=None):
         parts = _number_fields(line)
         try:
             x_str, y_str = parts[0], parts[1]
-            rows.append((float(x_str), float(y_str), x_str, y_str))
+            x, y = float(x_str), float(y_str)
+            # "inf", "nan" and "1e400" read as floats but are not coordinates
+            if not (math.isfinite(x) and math.isfinite(y)):
+                raise ValueError("not a finite coordinate pair")
+            rows.append((x, y, x_str, y_str))
             first_is_row = first_is_row or i == 0
         except (ValueError, IndexError):
             if i == 0:
@@ -338,7 +343,8 @@ def export_airfoil_data(filepath, coords, name=None, precision=None):
     if out_dir and not os.path.exists(out_dir):
         os.makedirs(out_dir, exist_ok=True)
 
-    with open(filepath, "w", encoding="utf-8") as f:
+    # "\n" line ends on every platform
+    with open(filepath, "w", encoding="utf-8", newline="\n") as f:
         if name:
             f.write(_name_line(name) + "\n")
         for x, y in coords:
@@ -378,8 +384,8 @@ def export_spline_data(filepath, degree, section_control_points, name=None, prec
     fmt = f"{{:.{precision}f}} {{:.{precision}f}}"
 
     if section_knots is None:
-        from .spline.spline import create_open_uniform_knots
-        section_knots = [create_open_uniform_knots(degree, len(c)) for c in section_control_points]
+        from bspline_varpro import open_uniform_knots
+        section_knots = [open_uniform_knots(degree, len(c)) for c in section_control_points]
     if len(section_knots) != len(section_control_points):
         raise ValueError("Need one knot vector per section.")
     for knots, ctrl in zip(section_knots, section_control_points, strict=False):
@@ -391,7 +397,8 @@ def export_spline_data(filepath, degree, section_control_points, name=None, prec
     if out_dir and not os.path.exists(out_dir):
         os.makedirs(out_dir, exist_ok=True)
 
-    with open(filepath, "w", encoding="utf-8") as f:
+    # "\n" line ends on every platform
+    with open(filepath, "w", encoding="utf-8", newline="\n") as f:
         if name:
             f.write(_name_line(name) + "\n")
         f.write(f"# {SPLINE_FORMAT_TAG}\n")

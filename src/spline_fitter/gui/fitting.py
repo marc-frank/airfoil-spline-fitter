@@ -32,7 +32,6 @@ from ..optimization.models import (
     FitResult,
     IterationRecord,
     OptimizationConfig,
-    OptimizerType,
     SplineConfig,
 )
 from .background import run_in_background
@@ -57,11 +56,9 @@ def _count(value: int, noun: str) -> str:
 
 def fit_effort(result, opt_config: OptimizationConfig, evaluations: int) -> str:
     """What a fit took: its residual evaluations, and the refits of a
-    tolerance search; Direct LSQ counts its linear solves instead."""
+    tolerance search (Direct LSQ, a single solve, is one evaluation)."""
     if opt_config.tolerance is not None:
         return f"{_count(result.nit, 'refit')}, {_count(evaluations, 'evaluation')}"
-    if opt_config.optimizer == OptimizerType.DIRECT_LSQ:
-        return _count(evaluations or result.nit, "solve")
     return _count(evaluations, "evaluation")
 
 
@@ -98,6 +95,20 @@ class FittingController:
         if active_sweeps:
             self._run_sweep_fit(config, opt_config, active_sweeps)
             return
+
+        # The split belongs to the fit: a changed section count re-splits
+        # the airfoil now, not when the Sections value changes
+        if w._airfoil.num_sections != config.num_sections:
+            airfoil = w._airfoil
+            try:
+                w._airfoil = create_airfoil_data(
+                    list(airfoil.coordinates), filename=airfoil.filename,
+                    name=airfoil.name, precision=airfoil.precision,
+                    num_sections=config.num_sections,
+                )
+            except ValueError as e:
+                w.statusBar().showMessage(str(e))
+                return
 
         # Clear sweep state when doing single fit
         self._sweep_results = []
@@ -150,15 +161,18 @@ class FittingController:
             elapsed = time.perf_counter() - start_time
             fit_result = self._fit_result(result, config, opt_config, airfoil, elapsed,
                                           cancelled)
-            return result, fit_result, elapsed, cancelled
+            earlier = self._earlier_fits(result, config, opt_config, airfoil)
+            return result, fit_result, earlier, elapsed, cancelled
 
         try:
             # Run optimization off the GUI thread
-            result, fit_result, elapsed, cancelled = run_in_background(work, live.on_tick)
+            result, fit_result, earlier, elapsed, cancelled = run_in_background(
+                work, live.on_tick)
 
             kept = False
             if fit_result is not None:
                 w._fit_result = fit_result
+                self._add_earlier_fits(earlier, config, opt_config, error_logger)
 
                 # Add optimization run to project
                 kept = not w._project_manager.add_optimization_run(
@@ -259,6 +273,45 @@ class FittingController:
         )
         self._attach_report(fit_result, opt_config, airfoil)
         return fit_result
+
+    def _earlier_fits(self, result, config: SplineConfig, opt_config: OptimizationConfig,
+                      airfoil: AirfoilData) -> list[FitResult]:
+        """The measured fits a tolerance search went through before its
+        last (worker thread). Each is a finished fit of its own, like the
+        fits of a sweep; it counts as converged if it met the tolerance."""
+        fits = []
+        for raw in getattr(result, "fits", None) or []:
+            fit = FitResult(
+                section_control_points=raw.section_control_points,
+                degree=config.degree,
+                final_error=raw.fun,
+                num_iterations=raw.nit,
+                num_evaluations=raw.evaluations or 0,
+                elapsed_seconds=raw.seconds or 0.0,
+                converged=raw.success,
+                cancelled=False,
+                section_knots=raw.section_knots,
+                rms_error=raw.rms_error,
+            )
+            self._attach_report(fit, opt_config, airfoil)
+            fits.append(fit)
+        return fits
+
+    def _add_earlier_fits(self, fits: list[FitResult], config: SplineConfig,
+                          opt_config: OptimizationConfig,
+                          error_logger: OptimizerErrorLogger) -> None:
+        """Store each earlier fit of a tolerance search as a run of its own,
+        with the loss history up to it."""
+        history = self._loss_history(error_logger)
+        for fit in fits:
+            self._window._project_manager.add_optimization_run(
+                spline_config=config,
+                opt_config=opt_config,
+                result=fit,
+                loss_history=[r for r in history
+                              if r.elapsed_seconds <= fit.elapsed_seconds],
+                replot=False,
+            )
 
     @staticmethod
     def _loss_history(error_logger: OptimizerErrorLogger) -> list[IterationRecord]:
@@ -483,14 +536,19 @@ class FittingController:
                         should_stop=lambda: w._cancel_requested,
                     )
                     cancelled = w._cancel_requested
-                    return self._fit_result(result, sweep_config, sweep_opt_config, airfoil,
-                                            time.perf_counter() - fit_start_time,
-                                            cancelled), cancelled
+                    return (self._fit_result(result, sweep_config, sweep_opt_config, airfoil,
+                                             time.perf_counter() - fit_start_time,
+                                             cancelled),
+                            self._earlier_fits(result, sweep_config, sweep_opt_config, airfoil),
+                            cancelled)
 
-                fit_result, fit_cancelled = run_in_background(sweep_work, live.on_tick)
+                fit_result, earlier, fit_cancelled = run_in_background(
+                    sweep_work, live.on_tick)
                 live.show_loss()
 
                 if fit_result is not None:
+                    self._add_earlier_fits(earlier, sweep_config, sweep_opt_config,
+                                           error_logger)
                     # Add to project (which keeps a finished run of the same
                     # settings over a cancelled one)
                     w._project_manager.add_optimization_run(
@@ -542,10 +600,12 @@ class FittingController:
         order = {self._window._sweep_sections: 0, self._window._sweep_degree: 1}
         boxes = sorted(zip((box for box, _ in axes), values, strict=True),
                        key=lambda bv: order.get(bv[0], 2))
-        for box, _ in boxes:
-            box.stop_sweep()
-        for box, v in boxes:
-            box.spinbox.setValue(v)
+        # One undo step back to the sweep settings, however long it takes
+        with self._window._settings_history.group():
+            for box, _ in boxes:
+                box.stop_sweep()
+            for box, v in boxes:
+                box.spinbox.setValue(v)
 
     def _show_sweep_comparison(self) -> tuple[tuple, FitResult]:
         """Plot the errors of all project runs along the sweep's x axis and

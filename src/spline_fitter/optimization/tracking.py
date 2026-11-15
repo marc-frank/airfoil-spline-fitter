@@ -22,9 +22,6 @@ def reset_iteration_tracking() -> None:
     _evaluation_count = 0
     _iteration_count = 0
 
-# Backwards compatibility alias
-reset_evaluation_tracking = reset_iteration_tracking
-
 
 def get_evaluation_count() -> int:
     """Return the current evaluation count."""

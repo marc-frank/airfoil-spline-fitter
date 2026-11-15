@@ -49,16 +49,46 @@ def test_unreachable_tolerance_is_reported():
     assert max(result.num_control_points) <= 12
 
 
-def test_polish_does_not_increase_the_objective():
+def test_free_knots_do_not_increase_the_error():
     sections = naca_sections(41, 5)
     knots = [bv.clamped_knots(5, [0.5, 0.8]), bv.clamped_knots(5, [0.2, 0.5])]
-    options = bv.ChainOptions(continuity="G2", smoothing=1e-5)
-    start = bv.fit(sections, degree=5, knots=knots, continuity="G2", smoothing=1e-5, max_nfev=300)
-    polished = bv.polish_knots(sections, start, options)
-    assert polished.rms_error <= start.rms_error * (1 + 1e-9)
-    for k in polished.knots:
+    start = bv.fit(sections, degree=5, knots=knots, continuity="G2", smoothing=1e-5)
+    free = bv.fit(sections, degree=5, knots=knots, continuity="G2", smoothing=1e-5,
+                  knot_placement="free")
+    assert free.rms_error <= start.rms_error * (1 + 1e-9)
+    for k in free.knots:
         bv.validate_knots(k, 5)
         assert len(k) == len(knots[0])
+
+
+@pytest.mark.parametrize("placement", ["free", "uniform"])
+def test_every_fit_of_a_tolerance_search_is_one_optimization(monkeypatch, placement):
+    import bspline_varpro.fitting as fitting
+    import bspline_varpro.tolerance as tolerance
+
+    runs = []
+    solve = fitting.levenberg_marquardt
+
+    def counted(residual, jacobian, x0, **kwargs):
+        runs.append(len(x0))
+        return solve(residual, jacobian, x0, **kwargs)
+
+    monkeypatch.setattr(fitting, "levenberg_marquardt", counted)
+    monkeypatch.setattr(tolerance, "levenberg_marquardt", counted)
+    sections = naca_sections(61)
+    kept, tried = [], []
+    result = bv.fit_to_tolerance(sections, 1e-6, 5, knot_placement=placement,
+                                 callback=lambda r, d: kept.append(d),
+                                 step_callback=lambda cp, rms: tried.append(rms))
+    assert result.success
+    # Recorded refits are the accepted ones; rejected removal trials are fits too,
+    # and no fit is followed by another run on the same knots
+    assert len(kept) <= len(runs) <= len(kept) + sum(len(k) for k in result.knots)
+    assert {h["stage"] for h in result.history} <= {"insert", "remove"}
+    if placement == "free":
+        # The unknowns of a fit include a gap per knot span of every section with a knot
+        points = sum(len(s) for s in sections) - 1
+        assert max(runs) > points - 1 + len(result.theta)
 
 
 def test_callback_can_stop_tolerance_fit():
@@ -125,7 +155,7 @@ def test_collapsed_gap_reopens_in_later_refits(placement):
 
 def test_no_remaining_knot_can_be_removed():
     # NACA 2412 at 5 decimals used to keep removable knots: removal gave up after
-    # two failures in a row and only polished the knots afterwards.
+    # two failures in a row.
     pts = np.round(NACA4("2412").points(81), 5)
     sections = [pts[:81], pts[80:]]
     tolerance = 1e-5
@@ -215,25 +245,26 @@ def test_rejects_no_iterations():
         bv.fit_to_tolerance(naca_sections(21), 1e-4, 5, max_iterations=0)
 
 
-def test_polish_starts_from_the_given_knots_and_keeps_repeats():
+def test_free_knots_start_from_the_given_knots_and_keep_repeats():
     sections = naca_sections(41, 5)
     seen = []
 
     def step(control_points, rms, knots):
         seen.append([np.array(k) for k in knots])
 
-    # Knots closer than the default minimum gap of the polish
+    # Knots closer than the default minimum gap
     close = [bv.clamped_knots(5, [0.5, 0.5005]), bv.clamped_knots(5, [0.3, 0.6])]
-    start = bv.fit(sections, degree=5, knots=close, continuity="G2", smoothing=1e-5, max_nfev=300)
-    bv.polish_knots(sections, start, bv.ChainOptions(continuity="G2", smoothing=1e-5), callback=step)
-    for got, given in zip(seen[0], start.knots):
+    bv.fit(sections, degree=5, knots=close, continuity="G2", smoothing=1e-5, max_nfev=20,
+           knot_placement="free", callback=step)
+    for got, given in zip(seen[0], close):
         assert np.allclose(got, given, rtol=0, atol=1e-12)
 
     # A double interior knot stays double
     repeated = [bv.clamped_knots(5, [0.4, 0.4, 0.7]), bv.clamped_knots(5, [0.3, 0.6])]
-    start = bv.fit(sections, degree=5, knots=repeated, continuity="G2", smoothing=1e-5, max_nfev=300)
-    polished = bv.polish_knots(sections, start, bv.ChainOptions(continuity="G2", smoothing=1e-5))
-    assert np.array_equal(polished.knots[0], start.knots[0])
+    free = bv.fit(sections, degree=5, knots=repeated, continuity="G2", smoothing=1e-5, max_nfev=60,
+                  knot_placement="free")
+    assert np.array_equal(free.knots[0], repeated[0])
+    assert not np.allclose(free.knots[1], repeated[1])
 
 
 def _between_points(result, exact):
@@ -257,7 +288,8 @@ def _between_points(result, exact):
 def test_converged_fit_does_not_bulge_between_data_points(monkeypatch, speed_pull, bulge):
     # Run to convergence, a fit could open one parameter gap and spend it on a
     # bulge between two neighbouring points (the error is only seen at the
-    # points). Started from such a gap, it settled into a bulge of 8e-3 chord.
+    # points). Started from such a gap and without smoothing, it settles into a
+    # bulge of 0.2 chord; with the speed limit the curve stays within 1e-4.
     import bspline_varpro.problem as problem_module
 
     if speed_pull is not None:
@@ -268,25 +300,60 @@ def test_converged_fit_does_not_bulge_between_data_points(monkeypatch, speed_pul
     gaps = np.diff(start[1])
     gaps[len(gaps) // 2] *= 40
     start[1] = np.concatenate([[0.0], np.cumsum(gaps)]) / np.sum(gaps)
-    result = bv.fit([upper, lower], 14, 5, continuity="G2", smoothing=1e-7,
+    result = bv.fit([upper, lower], 14, 5, continuity="G2", smoothing=0.0,
                     initial_parameters=start)
     deviation = _between_points(result, NACA4(code).points(20001))
     assert (deviation > 1e-3) if bulge else (deviation < 1e-4)
 
 
-def test_knot_polish_does_not_pack_knots_closer_than_the_data():
-    # The floor of every knot span holds over repeated polishes (one per
-    # knot-removal trial in fit_to_tolerance, where knots used to end up packed
-    # to gaps of 0.0002 against a closest data spacing of 0.0012)
+def test_free_knots_are_not_packed_closer_than_the_data():
+    # The floor of every knot span holds over repeated fits (one per refit of
+    # fit_to_tolerance, where knots used to end up packed to gaps of 0.0002
+    # against a closest data spacing of 0.0012)
     sections = naca_sections(61, code="2412")
     start = bv.fit(sections, degree=5, continuity="G2", smoothing=1e-7,
                    knots=[bv.clamped_knots(5, [0.3, 0.45, 0.46, 0.6]),
                           bv.clamped_knots(5, [0.3, 0.5, 0.7])])
-    spacing = [np.min(np.diff(np.unique(np.concatenate([[0.0], local, [1.0]]))))
-               for _, local in bv.chain.groups(start.parameters, 2)]
-    polished = start
+    before_parameters = start.parameters
+    fitted = start
     for _ in range(3):
-        before = [np.min(np.diff(np.unique(k))) for k in polished.knots]
-        polished = bv.polish_knots(sections, polished)
-        for knots, gap, closest in zip(polished.knots, before, spacing):
+        before = [np.min(np.diff(np.unique(k))) for k in fitted.knots]
+        fitted = bv.fit(sections, degree=5, continuity="G2", smoothing=1e-7, knots=fitted.knots,
+                        initial_parameters=fitted.parameters, initial_theta=fitted.theta,
+                        knot_placement="free", max_nfev=60)
+        spacing = [np.min(np.diff(np.unique(np.concatenate([[0.0], local, [1.0]]))))
+                   for _, local in bv.chain.groups(before_parameters, 2)]
+        before_parameters = fitted.parameters
+        for knots, gap, closest in zip(fitted.knots, before, spacing):
             assert np.min(np.diff(np.unique(knots))) >= min(gap, closest) * (1 - 1e-6)
+
+
+def test_free_knots_keep_the_minimum_spacing():
+    # The spacing holds in the knots themselves: gaps were once normalized after
+    # the floor was added, so one growing gap shrank the others below it without
+    # limit and a fit could creep along that direction for hours
+    sections = naca_sections(61, code="2412")
+    for gap in (0.05, 0.02):
+        result = bv.fit(sections, 9, degree=5, continuity="G2", smoothing=1e-7,
+                        knot_placement="free", min_knot_gap=gap)
+        assert result.success
+        for knots in result.knots:
+            assert np.min(np.diff(np.unique(knots))) >= gap * (1 - 1e-9)
+    assert bv.tolerance.MIN_KNOT_GAP == 0.05
+
+
+def test_a_tolerance_search_inserts_no_knot_closer_than_the_minimum_spacing():
+    sections = naca_sections(61, code="2412")
+    for gap in (0.05, 0.1):
+        result = bv.fit_to_tolerance(sections, 1e-5, continuity="G2", min_knot_gap=gap)
+        for knots in result.knots:
+            assert np.min(np.diff(np.unique(knots))) >= gap * (1 - 1e-9)
+
+
+@pytest.mark.parametrize("gap", [-0.01, 0.6, np.nan])
+def test_minimum_knot_spacing_is_validated(gap):
+    sections = naca_sections(41)
+    with pytest.raises(ValueError, match="min_knot_gap"):
+        bv.fit(sections, 9, min_knot_gap=gap)
+    with pytest.raises(ValueError, match="min_knot_gap"):
+        bv.fit_to_tolerance(sections, 1e-4, min_knot_gap=gap)

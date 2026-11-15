@@ -161,6 +161,9 @@ COLUMNS: tuple[Column, ...] = (
     Column("Tolerance", lambda run: _opt(run).tolerance, ".3g", log=True,
            applies=_tolerance_goal, tip="Max deviation the tolerance goal had to meet"),
     Column("Knots", lambda run: _opt(run).knot_placement.capitalize(), applies=_varpro),
+    Column("Knot spacing", lambda run: _opt(run).min_knot_gap, ".3g",
+           applies=lambda run: _varpro(run) and _opt(run).knot_placement == "free",
+           tip="Smallest spacing of the free knots, as a fraction of a section"),
     Column("Parameterization",
            lambda run: _opt(run).parameterization.replace("_", " ").capitalize(),
            applies=lambda run: _opt(run).optimizer == OptimizerType.DIRECT_LSQ),
@@ -176,8 +179,6 @@ COLUMNS: tuple[Column, ...] = (
     # Advanced
     Column("Per junction", lambda run: ", ".join(_cfg(run).junction_continuity),
            applies=_varpro),
-    Column("Subsample", lambda run: _opt(run).max_points_per_section, applies=_varpro,
-           tip="Points per section of the subsample; blank when every point is used"),
     Column("Smoothing", lambda run: _opt(run).smoothing_weight, ".3g", log=True,
            applies=lambda run: _varpro(run) and not _tolerance_goal(run)),
     Column("Optimize junctions", lambda run: _opt(run).optimize_le_position,
@@ -319,6 +320,20 @@ def term_matches(term: tuple[str, object], value, text: str) -> bool:
     return is_number(value) and _OPERATORS[op](value, operand)
 
 
+def _global_term_matches(term: tuple[str, object], cells: list[tuple[object, str]]) -> bool:
+    """Whether one word of the global filter matches a run's cells (raw
+    value, text). A comparison with a number compares the error (in any
+    column some setting, the run number or the degree, would pass nearly
+    every run); ``!=text`` matches when no cell is ``text``, the opposite of
+    ``=text``; other words match in some column."""
+    op, operand = term
+    if is_number(operand):
+        return term_matches(term, *cells[_ERROR])
+    if op == "!=":
+        return all(term_matches(term, v, s) for v, s in cells)
+    return any(term_matches(term, v, s) for v, s in cells)
+
+
 class RunFilterModel(QSortFilterProxyModel):
     """Filters the run table, optionally inverted, and sorts by the raw values.
 
@@ -346,11 +361,7 @@ class RunFilterModel(QSortFilterProxyModel):
         model = self.sourceModel()
         values = [model.value(source_row, c) for c in range(len(COLUMNS))]
         cells = [(v, c.text(v)) for v, c in zip(values, COLUMNS, strict=True)]
-        # A comparison with a number compares the error (in any column some
-        # setting, the run number or the degree, would pass nearly every
-        # run); other words match in any column
-        if not all(term_matches(t, *cells[_ERROR]) if is_number(t[1])
-                   else any(term_matches(t, v, s) for v, s in cells) for t in self._terms):
+        if not all(_global_term_matches(t, cells) for t in self._terms):
             return False
         return all(cells[c][1] not in texts
                    for c, texts in self._excluded.items() if c != skip)

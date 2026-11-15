@@ -54,7 +54,7 @@ result = bv.fit_to_tolerance(
 )
 result.success, result.max_deviation, result.num_control_points
 result.knots                 # non-uniform clamped knot vector per section
-result.history               # every insertion, removal, and polish stage
+result.history               # every insertion and removal
 ```
 
 The procedure:
@@ -62,16 +62,21 @@ The procedure:
 1. Start with the fewest control points the end and junction conditions allow.
 2. Fit, measure the exact orthogonal deviation of every point, and insert knots
    in the spans that exceed the tolerance. Repeat until every point is within it.
-3. Optimize the interior knot positions together with the fit.
-4. Try removing every knot, least useful first, refitting after each attempt
-   and re-optimizing the knots when the refit alone misses the tolerance.
+3. Try removing every knot, least useful first, refitting after each attempt.
    Keep removals that stay within the tolerance and start over after each
-   one, then optimize the knots again.
+   one.
 
-Dense data (more than `max_points_per_section`, default 200 per section) is
-fitted on an evenly spaced subsample and then refined jointly on all points. A
-6000-point NACA 2412 fits to 1e-5 in about 15 s
-(`benchmarks/results/speed_0.7.txt`).
+Every one of these fits is the same single optimization. With
+`knot_placement="free"` (the default here) the interior knot positions are
+unknowns of each fit, together with the data parameters; with `"uniform"` only
+the count per section is chosen. Every fit uses every point.
+
+Free knots stay at least `min_knot_gap` apart (default 0.05 of a section's
+parameter range) and are not inserted closer. Smaller values let knots gather
+where the shape needs them, but knots stacked closely nearly break the
+smoothness there, and the curve can bend sharply between the data points:
+at 0.001 a NACA 0012 fitted to 1e-6 came out with a leading-edge radius of
+0.0097 against the exact 0.0159, at 0.05 with 0.0158.
 
 The bending-energy weight `smoothing` defaults to 1e-7. On the benchmark set
 it gave the fewest control points and curvature extrema of 0, 1e-7, 1e-6, and
@@ -79,7 +84,7 @@ it gave the fewest control points and curvature extrema of 0, 1e-7, 1e-6, and
 
 Useful options: `knot_placement="uniform"` (keep evenly spaced knots and only choose
 the count per section), `initial_control_points` (start from this count instead of
-the minimum), `max_control_points` (per section), `optimize_knots`, `remove_knots`,
+the minimum), `max_control_points` (per section), `min_knot_gap`, `remove_knots`,
 `start_tangent` / `end_tangent`, `fix_junctions=False` (fit the junction
 position instead of interpolating it), and `callback(result, deviation)`, which
 can return True to stop.
@@ -126,8 +131,8 @@ result = bv.fit(points, knots=[my_knots], degree=5)
 | `start_tangent`, `end_tangent` | None | Prescribed directions of travel at the chain ends |
 | `smoothing` | 1e-3 | Bending-energy weight (normalized to trace = control-point count) |
 | `initial_parameters`, `initial_theta` | centripetal | Warm starts from a previous fit (chain parameters, or 0 to 1 per section) |
-| `max_points_per_section` | None | Subsample dense sections, then refine on all points |
-| `knot_placement` | `"uniform"` | `"free"`: afterwards move the interior knots to where they reduce the error most |
+| `knot_placement` | `"uniform"` | `"free"`: the interior knot positions are unknowns of the fit |
+| `min_knot_gap` | 0.05 | Smallest spacing of free knots, as a fraction of a section's parameter range (0 to 0.5); knots that start closer keep their spacing |
 | `grow` | False | Start from the fewest control points and add knots where the fit is worst until the counts are reached |
 | `max_nfev` | None | Residual evaluation budget; None (no limit) runs until the fit converges |
 | `callback` | None | `callback(control_points, rms_error)` after every evaluation; True stops |
@@ -136,17 +141,10 @@ result = bv.fit(points, knots=[my_knots], degree=5)
 
 `control_points`, `knots`, `parameters` (fitted chain parameter of every point),
 `degree`, `rms_error`, `max_residual`, `max_deviation` (exact orthogonal, for
-tolerance fits and refinement), `continuity` labels, `shape_parameters` per
+tolerance fits), `continuity` labels, `shape_parameters` per
 junction, `theta` (for warm starts), `history`, `success`, and `message`.
 `curves()` returns one `scipy.interpolate.BSpline` per section and
 `deviations(sections)` the orthogonal distance of every point.
-
-## Refinement
-
-```python
-refined = bv.refine(dense_points, result)          # joint LM on all points
-polished = bv.polish_knots(points, result)         # optimize interior knot positions
-```
 
 ## Diagnostics
 
@@ -239,7 +237,7 @@ deviation from the true airfoil is 1.2e-4, the same as splprep's
 43-control-point least-squares curve. For scans, a tolerance below the default
 brings the curve closer to the true shape at the cost of more control points.
 
-`benchmarks/speed.py` times dense data. `benchmarks/verify_cad.py` re-imports
+`benchmarks/speed.py` times the tolerance search against the point count. `benchmarks/verify_cad.py` re-imports
 exported files with OpenCASCADE and ezdxf.
 
 ## Method
@@ -265,9 +263,8 @@ derivatives, and `C P = d` encodes the end, junction, and continuity conditions.
   `C_a' = alpha C_b'`, `C_a'' = alpha² C_b'' + beta C_b'`,
   `C_a''' = alpha³ C_b''' + 3 alpha beta C_b'' + gamma C_b'`.
   These shape parameters enter `C` linearly per coordinate, so the problem stays
-  separable, and they join `t` as outer variables. Geometric fits start from the
-  converged parametric solution, because the shape parameters and the data
-  parameterization can trade off along nearly flat directions.
+  separable, and they join `t` as outer variables, in the same single
+  optimization.
 - **Whole chain.** The chain is fitted to all points as one ordered sequence;
   the sections only give the starting split (and the junction positions when
   they are fixed). Every point has a chain parameter `u` in `[0, S]` for `S`
@@ -280,29 +277,32 @@ derivatives, and `C P = d` encodes the end, junction, and continuity conditions.
 - **Solver.** Levenberg-Marquardt on the normal equations (Cholesky), with
   Marquardt scaling, Nielsen damping updates, MINPACK stopping tests, and
   restarts when the damping stalls in curved valleys.
-- **Dense refinement.** A joint Levenberg-Marquardt problem over parameters
-  and control points, with the per-point parameters eliminated by a Schur
-  complement, so one step costs O(n k²) for n points and k control coordinates.
 
 ## Limitations
 
 - The objective is nonconvex in the parameters. Fits converge to a local
-  minimum near the starting parameterization. Centripetal starts, parametric
-  continuation, and knot insertion make this reliable for airfoils and similar
+  minimum near the starting parameterization. Centripetal starts and knot
+  insertion make this reliable for airfoils and similar
   smooth curves, but self-intersecting or strongly looping data may need
   `initial_parameters`.
 - The error is measured at the data points only. So that a fit run to
   convergence cannot spend a long stretch of parameter on a bulge between two
   neighbouring points, the curve's speed between consecutive points may not
   jump by more than a factor of e beyond its change in the centripetal start,
-  and knot polishing never packs knots closer than the closest two data
-  points of the section (or than they started). Started
+  and free knots are never packed closer than `min_knot_gap` or the closest
+  two data points of the section, whichever is more (or than they started). Started
   from parameters with one gap opened far wider than that, a fit can still
   keep a smaller bulge.
 - Curves are open and non-rational. Closed or periodic curves are not
   supported. A blunt trailing edge is closed with a separate line segment.
-- Knot polishing uses finite differences for the knot columns and is skipped
-  for subsampled dense data.
+- Free knots (`fit(..., knot_placement="free")`) are unknowns of the one
+  optimization loop, not a stage after it. Their Jacobian columns are finite
+  differences, so such a fit takes seconds where uniform knots take tenths of
+  a second, and it does not keep a symmetric data set's fit mirror-symmetric.
+  Growth and the tolerance search repeat such fits, so with free knots they
+  take longer, and much longer with a small `min_knot_gap`.
+- Every fit uses every point, and variable projection costs O(n³) per step in
+  the number of points: thin data of thousands of points before fitting.
 
 ## References
 

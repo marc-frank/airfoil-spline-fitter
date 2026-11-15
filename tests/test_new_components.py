@@ -3,8 +3,8 @@ Tests for newly refactored spline fitter components.
 
 This module tests:
 1. varpro_lsq.py - Variable Projection Gauss-Newton optimizer
-2. centripetal_parametrize - New parametrization function in geometry.py
-3. constraints.py - Consolidated constraint coefficient computation
+2. centripetal_parameters - the library parametrization the application uses
+3. end_derivative_coefficients - the library coefficients Direct LSQ uses
 """
 
 import numpy as np
@@ -36,7 +36,7 @@ def airfoil_like_points():
 
 
 # =============================================================================
-# Tests for centripetal_parametrize
+# Tests for centripetal_parameters (bspline_varpro)
 # =============================================================================
 
 class TestCentripetalParametrize:
@@ -44,11 +44,11 @@ class TestCentripetalParametrize:
 
     def test_basic_parametrization(self):
         """Test basic output properties."""
-        from spline_fitter.geometry import centripetal_parametrize
+        from bspline_varpro import centripetal_parameters
 
         points = [(0.0, 0.0), (1.0, 0.0), (2.0, 0.0), (3.0, 0.0)]
 
-        params = centripetal_parametrize(points)
+        params = centripetal_parameters(points)
 
         # Check length matches
         assert len(params) == len(points)
@@ -63,24 +63,24 @@ class TestCentripetalParametrize:
 
     def test_alpha_variations(self):
         """Test different alpha values produce expected behavior."""
-        from spline_fitter.geometry import centripetal_parametrize
+        from bspline_varpro import centripetal_parameters
 
         # Non-uniform spacing
         points = [(0.0, 0.0), (0.1, 0.0), (0.5, 0.0), (1.0, 0.0)]
 
         # alpha=0: uniform
-        uniform = centripetal_parametrize(points, alpha=0.0)
+        uniform = centripetal_parameters(points, alpha=0.0)
         expected_uniform = [0.0, 1/3, 2/3, 1.0]
         np.testing.assert_allclose(uniform, expected_uniform, atol=1e-10)
 
         # alpha=1: chord-length
-        chord = centripetal_parametrize(points, alpha=1.0)
+        chord = centripetal_parameters(points, alpha=1.0)
         # Distances: 0.1, 0.4, 0.5 -> cumulative: 0, 0.1, 0.5, 1.0
         expected_chord = [0.0, 0.1, 0.5, 1.0]
         np.testing.assert_allclose(chord, expected_chord, atol=1e-10)
 
         # alpha=0.5: centripetal (default)
-        centripetal = centripetal_parametrize(points, alpha=0.5)
+        centripetal = centripetal_parameters(points, alpha=0.5)
         # Centripetal uses sqrt of distances, so spacing is compressed for longer segments
         # sqrt(0.1) ≈ 0.316, sqrt(0.4) ≈ 0.632, sqrt(0.5) ≈ 0.707
         # Total ≈ 1.655, so param[1] ≈ 0.316/1.655 ≈ 0.191
@@ -91,18 +91,18 @@ class TestCentripetalParametrize:
 
     def test_empty_and_single_point(self):
         """Test edge cases with empty or single point."""
-        from spline_fitter.geometry import centripetal_parametrize
+        from bspline_varpro import centripetal_parameters
 
-        assert centripetal_parametrize([]) == []
-        assert centripetal_parametrize([(1.0, 2.0)]) == [0.0]
+        assert centripetal_parameters(np.empty((0, 2))).tolist() == []
+        assert centripetal_parameters([(1.0, 2.0)]).tolist() == [0.0]
 
     def test_coincident_points(self):
         """Test handling of coincident points."""
-        from spline_fitter.geometry import centripetal_parametrize
+        from bspline_varpro import centripetal_parameters
 
         # All points at same location
         points = [(0.5, 0.5), (0.5, 0.5), (0.5, 0.5)]
-        params = centripetal_parametrize(points)
+        params = centripetal_parameters(points)
 
         # Should handle gracefully (uniform fallback)
         assert len(params) == 3
@@ -111,7 +111,7 @@ class TestCentripetalParametrize:
 
 
 # =============================================================================
-# Tests for constraints.py
+# Tests for end_derivative_coefficients (bspline_varpro), used by Direct LSQ
 # =============================================================================
 
 class TestConstraints:
@@ -119,15 +119,14 @@ class TestConstraints:
 
     def test_first_derivative_coefficients(self):
         """Test G1 constraint coefficients are computed correctly."""
-        from spline_fitter.optimization.constraints import compute_derivative_constraint_coeffs
-        from spline_fitter.spline.spline import create_open_uniform_knots
+        from bspline_varpro import end_derivative_coefficients, open_uniform_knots
 
         degree = 5
         n_ctrl = 15
-        knots = create_open_uniform_knots(degree, n_ctrl)
+        knots = open_uniform_knots(degree, n_ctrl)
 
-        coef_end, coef_start = compute_derivative_constraint_coeffs(
-            knots, n_ctrl, degree, order=1
+        coef_end, coef_start = end_derivative_coefficients(
+            knots, degree, 1
         )
 
         # First derivative coefficients should have length 2
@@ -142,15 +141,14 @@ class TestConstraints:
 
     def test_second_derivative_coefficients(self):
         """Test G2 constraint coefficients."""
-        from spline_fitter.optimization.constraints import compute_derivative_constraint_coeffs
-        from spline_fitter.spline.spline import create_open_uniform_knots
+        from bspline_varpro import end_derivative_coefficients, open_uniform_knots
 
         degree = 5
         n_ctrl = 15
-        knots = create_open_uniform_knots(degree, n_ctrl)
+        knots = open_uniform_knots(degree, n_ctrl)
 
-        coef_end, coef_start = compute_derivative_constraint_coeffs(
-            knots, n_ctrl, degree, order=2
+        coef_end, coef_start = end_derivative_coefficients(
+            knots, degree, 2
         )
 
         # Second derivative coefficients should have length 3
@@ -163,15 +161,14 @@ class TestConstraints:
 
     def test_third_derivative_coefficients(self):
         """Test G3 constraint coefficients."""
-        from spline_fitter.optimization.constraints import compute_derivative_constraint_coeffs
-        from spline_fitter.spline.spline import create_open_uniform_knots
+        from bspline_varpro import end_derivative_coefficients, open_uniform_knots
 
         degree = 5
         n_ctrl = 15
-        knots = create_open_uniform_knots(degree, n_ctrl)
+        knots = open_uniform_knots(degree, n_ctrl)
 
-        coef_end, coef_start = compute_derivative_constraint_coeffs(
-            knots, n_ctrl, degree, order=3
+        coef_end, coef_start = end_derivative_coefficients(
+            knots, degree, 3
         )
 
         # Third derivative coefficients should have length 4
@@ -184,16 +181,15 @@ class TestConstraints:
 
     def test_constraint_symmetry_for_uniform_knots(self):
         """Verify that end/start coefficients have expected symmetry."""
-        from spline_fitter.optimization.constraints import compute_derivative_constraint_coeffs
-        from spline_fitter.spline.spline import create_open_uniform_knots
+        from bspline_varpro import end_derivative_coefficients, open_uniform_knots
 
         degree = 5
         n_ctrl = 15
-        knots = create_open_uniform_knots(degree, n_ctrl)
+        knots = open_uniform_knots(degree, n_ctrl)
 
         for order in [1, 2, 3]:
-            coef_end, coef_start = compute_derivative_constraint_coeffs(
-                knots, n_ctrl, degree, order=order
+            coef_end, coef_start = end_derivative_coefficients(
+                knots, degree, order
             )
 
             # For uniform interior knots, end and start coefficients should

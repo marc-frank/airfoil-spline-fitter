@@ -312,8 +312,9 @@ _GLYPHS = {
 
 
 def _glyph(name: str, color: str | None = None, pad: int = 0) -> str:
-    """Path of an SVG file of a glyph in a token color (written on first use),
-    for the stylesheet.
+    """Path of an SVG file of a glyph in a token color, for the stylesheet;
+    written when it is missing or its content is not this glyph's (a
+    damaged or outdated file is repaired, not used).
 
     ``pad`` adds empty margin on the 12-unit grid, for places that stretch the
     image to fill a box (tree branches), so the glyph keeps its size.
@@ -321,13 +322,18 @@ def _glyph(name: str, color: str | None = None, pad: int = 0) -> str:
     color = color or Palette.TEXT_2
     folder = os.path.join(tempfile.gettempdir(), "spline_fitter_glyphs")
     path = os.path.join(folder, f"{name}_{color.lstrip('#').lower()}_{pad}.svg")
-    if not os.path.exists(path):
+    box = f"{-pad} {-pad} {12 + 2 * pad} {12 + 2 * pad}"
+    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{box}">'
+           f'<path d="{_GLYPHS[name]}" fill="none" stroke="{color}" stroke-width="1.4" '
+           'stroke-linecap="round" stroke-linejoin="round"/></svg>').encode()
+    try:
+        with open(path, "rb") as f:
+            current = f.read()
+    except OSError:
+        current = None
+    if current != svg:
         os.makedirs(folder, exist_ok=True)
-        box = f"{-pad} {-pad} {12 + 2 * pad} {12 + 2 * pad}"
-        svg = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{box}">'
-               f'<path d="{_GLYPHS[name]}" fill="none" stroke="{color}" stroke-width="1.4" '
-               'stroke-linecap="round" stroke-linejoin="round"/></svg>')
-        with open(path, "w", encoding="utf-8") as f:
+        with open(path, "wb") as f:
             f.write(svg)
     return path.replace("\\", "/")
 

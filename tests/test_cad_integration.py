@@ -16,7 +16,7 @@ from spline_fitter.optimization.models import (
     OptimizerType,
     SplineConfig,
 )
-from spline_fitter.optimization.optimizers.gn_varpro import GNVarProOptimizer, accepts_preview
+from spline_fitter.optimization.optimizers.gn_varpro import GNVarProOptimizer
 
 
 def naca_airfoil(code="2412", n=61, decimals=6, sections=2):
@@ -90,7 +90,9 @@ def test_fixed_mode_geometric_continuity_uses_labels(monkeypatch):
 
 def test_spline_config_validation():
     assert SplineConfig(num_sections=3, junction_continuity=(" g1", "c2 ")).junction_specs() == ["G1", "C2"]
-    assert SplineConfig(num_sections=3, continuity=ContinuityMode.G2).junction_specs() == ["C2", "C2"]
+    assert SplineConfig(num_sections=3, continuity=ContinuityMode.G2,
+                        geometric_continuity=False).junction_specs() == ["C2", "C2"]
+    assert SplineConfig(num_sections=3, continuity=ContinuityMode.G2).junction_specs() == ["G2", "G2"]
     assert SplineConfig(geometric_continuity=True, continuity=ContinuityMode.G3).junction_specs() == ["G3"]
     with pytest.raises(ValueError, match="junction"):
         SplineConfig(num_sections=3, junction_continuity=("G2",))
@@ -114,14 +116,15 @@ def test_engine_dispatches_tolerance_mode():
 def test_preview_callbacks_get_curves_and_can_stop():
     seen = []
 
-    def callback(x, error, preview=None):
+    def callback(x, error, preview, step):
         ctrl, knots, degree = preview
         assert degree == 5 and len(ctrl) == len(knots) == 2
         assert x.shape == (2 * sum(len(c) for c in ctrl),)
+        if step:
+            return False
         seen.append(error)
         return len(seen) == 2
 
-    assert accepts_preview(callback) and not accepts_preview(lambda x, e: False)
     result = GNVarProOptimizer().fit(
         SplineConfig(degree=5, geometric_continuity=True, continuity=ContinuityMode.G2),
         OptimizationConfig(tolerance=1e-7), naca_airfoil(), callback=callback)
@@ -321,37 +324,6 @@ def test_gui_dialogs_save_export_and_report(monkeypatch, tmp_path):
     assert shown[-1] == "Fit report" and window._fit_result.report is not None
     window.deleteLater()
     app.processEvents()
-
-
-def test_gui_subsampling_is_off_by_default_and_reaches_both_modes(monkeypatch):
-    from spline_fitter.optimization.optimizers import gn_varpro
-    app, window = _window(monkeypatch)
-    window._combo_opt.setCurrentIndex(window._combo_opt.findData(OptimizerType.GN_VARPRO))
-    assert not window._check_subsample.isChecked() and not window._spin_subsample.isEnabled()
-    assert window._get_optimization_config().max_points_per_section is None
-    window._check_subsample.setChecked(True)
-    assert window._spin_subsample.isEnabled()
-    window._spin_subsample.setValue(150)
-    assert window._get_optimization_config().max_points_per_section == 150
-    window._seg_goal.setCurrentIndex(window._seg_goal.findData(True))
-    assert window._get_optimization_config().max_points_per_section == 150
-    window.deleteLater()
-    app.processEvents()
-
-    captured = []
-    for name in ("fit", "fit_to_tolerance"):
-        original = getattr(bspline_varpro, name)
-
-        def capture(*args, _original=original, **kwargs):
-            captured.append(kwargs["max_points_per_section"])
-            return _original(*args, **kwargs)
-
-        monkeypatch.setattr(gn_varpro.bspline_varpro, name, capture)
-    airfoil = naca_airfoil(n=41, decimals=5)
-    config = SplineConfig(degree=5, num_control_points=9)
-    GNVarProOptimizer().fit(config, OptimizationConfig(max_points_per_section=30), airfoil)
-    GNVarProOptimizer().fit(config, OptimizationConfig(tolerance=1e-4), airfoil)
-    assert captured == [30, None]
 
 
 def test_knot_placement_and_growth_reach_both_modes(monkeypatch):

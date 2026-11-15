@@ -307,51 +307,6 @@ def compute_arc_length_parameters(points: Sequence[Point2D]) -> list[float]:
     return [c / total for c in cumulative]
 
 
-def centripetal_parametrize(points: Sequence[Point2D], alpha: float = 0.5) -> list[float]:
-    """
-    Compute parametrization using centripetal or chord-length method.
-    
-    This is an alternative to arc-length parametrization that can provide
-    better results for curves with sharp corners or high curvature regions.
-    
-    Args:
-        points: Sequence of (x, y) coordinates forming a polyline
-        alpha: Exponent controlling the parametrization:
-               - alpha=0.0: Uniform parametrization
-               - alpha=0.5: Centripetal parametrization (recommended for most cases)
-               - alpha=1.0: Chord-length parametrization (same as arc-length)
-               
-    Returns:
-        List of parameter values with same length as points,
-        ranging from 0.0 (first point) to 1.0 (last point)
-    """
-    if not points:
-        return []
-
-    if len(points) == 1:
-        return [0.0]
-
-    # Convert to numpy for efficient computation
-    pts = np.array(points, dtype=np.float64)
-
-    # Compute segment lengths
-    diffs = np.diff(pts, axis=0)
-    dists = np.linalg.norm(diffs, axis=1)
-
-    # Apply alpha exponent
-    dt = np.power(dists, alpha)
-
-    # Cumulative sum with leading zero
-    t = np.concatenate([[0.0], np.cumsum(dt)])
-
-    # Normalize to [0, 1]
-    if t[-1] <= 0:
-        # Degenerate case: all points coincident
-        return [i / (len(points) - 1) for i in range(len(points))]
-
-    return (t / t[-1]).tolist()
-
-
 def interpolate_along_polyline(
     points: Sequence[Point2D],
     t_params: Sequence[float],

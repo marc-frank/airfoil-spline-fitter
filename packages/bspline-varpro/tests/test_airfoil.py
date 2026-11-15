@@ -97,7 +97,7 @@ def test_fit_airfoil_meets_the_default_tolerance():
 def test_fit_airfoil_warns_below_rounding():
     pts = np.round(NACA4("0012").points(41), 3)
     with pytest.warns(UserWarning, match="rounding"):
-        airfoil.fit_airfoil(pts, 1e-4, max_iterations=1, optimize_knots=False)
+        airfoil.fit_airfoil(pts, 1e-4, max_iterations=1)
 
 
 def test_leading_edge_radius(naca0012_fit):

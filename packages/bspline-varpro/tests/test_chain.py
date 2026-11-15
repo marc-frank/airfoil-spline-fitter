@@ -6,7 +6,7 @@ import pytest
 import bspline_varpro as bv
 from bspline_varpro.airfoil import NACA4
 from bspline_varpro.chain import (
-    chain_data, chain_parameters, locate, project_to_chain, section_ranges, shared_junctions,
+    chain_data, chain_parameters, locate, shared_junctions,
 )
 
 
@@ -19,7 +19,6 @@ def test_a_shared_junction_point_is_one_data_point():
     sections = naca_sections()
     assert shared_junctions(sections) == [True]
     assert len(chain_data(sections)) == 121
-    assert section_ranges(sections) == [(0, 60), (60, 120)]
     u = chain_parameters([np.linspace(0, 1, 61)] * 2, sections)
     assert len(u) == 121 and u[60] == 1.0 and u[-1] == 2.0
 
@@ -54,15 +53,3 @@ def test_both_parameter_forms_are_accepted():
     assert np.isfinite(b.rms_error)
     with pytest.raises(ValueError, match="Chain parameters"):
         bv.fit(sections, 8, 3, initial_parameters=np.linspace(0, 1, 61))
-
-
-def test_projection_stays_between_its_neighbours():
-    # The two trailing-edge ends coincide: a point near one must not jump to the other
-    sections = naca_sections(201, code="0012")
-    data = chain_data(sections)
-    fit = bv.fit([s[::10] for s in sections], 10, 5, continuity="G2")
-    chosen = np.concatenate([np.arange(0, 201, 10), np.arange(200, 401, 10)])
-    chosen = np.unique(chosen)
-    u = project_to_chain(data, fit.curves(), chosen, fit.parameters)
-    assert np.all(np.diff(u) >= 0)
-    assert np.all(u[:200] <= 1.0 + 1e-9) and np.all(u[201:] >= 1.0 - 1e-9)

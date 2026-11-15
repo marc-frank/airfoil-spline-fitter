@@ -5,24 +5,26 @@ inserted in every knot span that holds a point farther than the tolerance from
 the chain, and the chain is refitted warm-started from the previous parameters.
 A point counts toward the section its chain parameter currently lies on
 (:mod:`~bspline_varpro.chain`).
-Once the tolerance is met, interior knot positions are optimized ("free-knot
-polish") and knots whose removal keeps the fit within tolerance are removed.
+Once the tolerance is met, knots whose removal keeps the fit within tolerance
+are removed. With free knot placement the interior knot positions are unknowns
+of every one of these fits (:func:`solve_free_knots`); with uniform placement
+only the count per section is chosen.
 """
 
 from __future__ import annotations
 
-from dataclasses import replace
 from typing import Callable, List, Optional, Sequence, Union
 
 import numpy as np
 
 from .basis import clamped_knots, interior_knots, open_uniform_knots
-from .chain import chain_data, chain_deviations, groups, project_to_chain, section_ranges
+from .chain import chain_data, chain_deviations, groups
 from .constraints import ContinuitySpec, End, minimum_control_points, parse_junctions
 from .fitting import (
     STOPPED, ChainOptions, FitResult, _Stop, _validate_sections, as_sections,
     initial_chain_parameters, levenberg_marquardt, reduced_jacobian, report, result_from_problem,
-    solve_problem, solve_with_continuation,
+    solve_problem,
+    MIN_KNOT_GAP, validate_min_knot_gap,
 )
 from .reparam import eta_to_t, inverse_softplus, softplus, t_to_eta
 
@@ -30,51 +32,15 @@ ProgressCallback = Callable[[FitResult, float], Optional[bool]]
 
 
 def _refit(sections, knots, degree, options: ChainOptions, params, theta, max_nfev,
-           max_points: Optional[int] = None, callback=None) -> FitResult:
-    if max_points is not None and any(len(s) > max_points for s in sections):
-        return fit_subsampled(sections, knots, degree, options, params, theta, max_nfev, max_points,
-                              callback)
+           callback=None, free: bool = False, min_knot_gap: float = MIN_KNOT_GAP) -> FitResult:
+    """One fit at the given knots: with ``free`` they are its starting knots and unknowns."""
     problem = options.problem(sections, knots, degree)
     if theta is None or len(theta) != problem.num_params:
-        return solve_with_continuation(problem, options, params, max_nfev=max_nfev, callback=callback)
+        theta = problem.theta
+    if free:
+        return solve_free_knots(sections, knots, degree, options, params, theta,
+                                max_nfev=max_nfev, callback=callback, min_knot_gap=min_knot_gap)
     return solve_problem(problem, params, theta, max_nfev=max_nfev, callback=callback)
-
-
-def subsample_indices(n: int, max_points: int) -> np.ndarray:
-    """Evenly spaced indices including both ends."""
-    if n <= max_points:
-        return np.arange(n)
-    return np.unique(np.round(np.linspace(0, n - 1, max_points)).astype(int))
-
-
-def fit_subsampled(sections, knots, degree, options: ChainOptions, params, theta, max_nfev,
-                   max_points: int, callback=None) -> FitResult:
-    """Variable projection on a subsample, then joint refinement on all points.
-
-    Variable projection costs O(n^3) per iteration in the number of points,
-    the joint solver O(n k^2) in the number of control coordinates k.
-    ``callback`` (as for :func:`~bspline_varpro.fitting.fit`) sees the
-    subsample fit and the refinement; if it stops the subsample fit, the
-    refinement is skipped.
-    """
-    from .refinement import refine
-
-    # Each section's subsample keeps its end points, so shared junction points
-    # stay shared and the subsets chain the same way
-    data = chain_data(sections)
-    indices = [first + subsample_indices(last - first + 1, max_points)
-               for first, last in section_ranges(sections)]
-    subsets = [data[i] for i in indices]
-    chosen = np.unique(np.concatenate(indices))
-    coarse = _refit(subsets, knots, degree, options, np.asarray(params)[chosen], theta, max_nfev,
-                    callback=callback)
-    coarse.parameters = project_to_chain(data, coarse.curves(), chosen, coarse.parameters)
-    coarse.options = options
-    if coarse.message == STOPPED:
-        return coarse
-    refined = refine(sections, coarse, options, callback=callback)
-    refined.nfev += coarse.nfev
-    return refined
 
 
 def _spans(knots: np.ndarray, t: np.ndarray):
@@ -118,95 +84,128 @@ def _max_deviation(sections, result: FitResult) -> float:
     return float(np.max(chain_deviations(chain_data(sections), result.curves())))
 
 
-def polish_knots(
-    points: Union[np.ndarray, Sequence[np.ndarray]],
-    result: FitResult,
-    options: Optional[ChainOptions] = None,
-    max_nfev: Optional[int] = 60,
-    min_gap: float = 1e-3,
-    should_stop: Optional[Callable[[], bool]] = None,
-    callback=None,
-) -> FitResult:
-    """Optimize interior knot positions (at fixed counts) together with the fit.
+class _KnotGaps:
+    """Interior knots of a chain as unconstrained unknowns.
 
-    Knots stay ordered with a minimum spacing through a normalized softplus gap
-    parameterization. The minimum of each knot span is the section's closest
-    spacing of the data parameters (or ``min_gap``, if larger), or just under
-    the span's starting length if that is shorter: knots packed closer than any
-    two points would leave spans without data, where the curve can wobble
-    unseen, since the tolerance is only checked at the points.
-    Knot columns of the Jacobian are finite differences; the data-parameter
-    and shape columns are exact. ``callback`` (as for
-    :func:`~bspline_varpro.fitting.fit`, with the moving knots) is called on
-    every residual evaluation. If it or ``should_stop()`` returns True, the
-    unpolished ``result`` is returned with the message ``STOPPED``.
+    Knots stay ordered with a minimum spacing through a normalized softplus
+    gap parameterization. The minimum of each knot span is the section's
+    closest spacing of the data parameters (or ``min_knot_gap``, if larger), or
+    just under the span's starting length if that is shorter: knots packed
+    closer than any two points would leave spans without data, where the curve
+    can wobble unseen. Sections with a repeated interior knot keep their
+    knots: the gap parameterization would spread the repeat and change the
+    continuity there.
 
-    ``max_nfev`` stays capped by default (None polishes until converged): the
-    error is so flat in the knot positions that a converged polish takes
-    thousands of evaluations, and it drifts off a symmetric fit's mirror
-    symmetry for well under a percent of the error.
+    ``count`` is the number of unknowns, ``start`` their values for the given
+    knots and ``knots(xi)`` the knot vectors for values ``xi``.
     """
-    sections = as_sections(points)
-    options = options or result.options or ChainOptions(continuity=result.continuity or "G1")
-    degree = result.degree
-    # Sections with a repeated interior knot keep their knots: the gap
-    # parameterization would spread the repeat and change the continuity there
-    inner_knots = [interior_knots(k, degree) for k in result.knots]
-    counts = [len(inner) if np.all(np.diff(inner) > 0) else 0 for inner in inner_knots]
-    if sum(counts) == 0:
-        return result
-    span = len(sections)
-    # Smallest length of every knot span: the section's closest data spacing (a
-    # span may move to where the data are densest), or just under its starting
-    # length if that is shorter, so the polish starts from the given knots and
-    # repeated polishes cannot pack them ever closer
-    floors = []
-    for (_, local), inner, r in zip(groups(result.parameters, span), inner_knots, counts):
-        if r == 0:
-            floors.append(None)
-            continue
-        # The ends count as points: a junction point lies on the next section only
-        ts = np.unique(np.concatenate([[0.0], local, [1.0]]))
-        floor = np.minimum(max(float(np.min(np.diff(ts))), min_gap),
-                           0.999 * np.diff(np.concatenate([[0.0], inner, [1.0]])))
-        # The floors must leave room to move: at most half the section
-        floors.append(floor * min(1.0, 0.5 / np.sum(floor)))
-    n_eta = len(chain_data(sections)) - 1
-    n_theta = len(result.theta)
 
-    def to_xi(knots, floor):
-        gaps = np.diff(np.concatenate([[0.0], interior_knots(knots, degree), [1.0]]))
+    def __init__(self, sections, knots, degree: int, parameters, min_knot_gap: float):
+        self.degree = degree
+        self.fixed = list(knots)
+        inner_knots = [interior_knots(k, degree) for k in knots]
+        self.counts = [len(inner) if np.all(np.diff(inner) > 0) else 0 for inner in inner_knots]
+        # Smallest length of every knot span: the section's closest data spacing (a
+        # span may move to where the data are densest), or just under its starting
+        # length if that is shorter, so the solve starts from the given knots and
+        # repeated solves cannot pack them ever closer
+        self.floors = []
+        for (_, local), inner, r in zip(groups(parameters, len(sections)), inner_knots, self.counts):
+            if r == 0:
+                self.floors.append(None)
+                continue
+            # The ends count as points: a junction point lies on the next section only
+            ts = np.unique(np.concatenate([[0.0], local, [1.0]]))
+            floor = np.minimum(max(float(np.min(np.diff(ts))), min_knot_gap),
+                               0.999 * np.diff(np.concatenate([[0.0], inner, [1.0]])))
+            # The floors must leave room to move: at most half the section
+            self.floors.append(floor * min(1.0, 0.5 / np.sum(floor)))
+        self.count = sum(r + 1 for r in self.counts if r > 0)
+        self.start = (np.concatenate([self._xi(k, floor)
+                                      for k, r, floor in zip(knots, self.counts, self.floors) if r > 0])
+                      if self.count else np.zeros(0))
+
+    def _xi(self, knots, floor):
+        gaps = np.diff(np.concatenate([[0.0], interior_knots(knots, self.degree), [1.0]]))
         return inverse_softplus(np.maximum(gaps - floor, 1e-12))
 
-    def to_knots(xi):
+    def knots(self, xi):
         knots, offset = [], 0
-        for s, r in enumerate(counts):
+        for s, r in enumerate(self.counts):
             if r == 0:
-                knots.append(result.knots[s])
+                knots.append(self.fixed[s])
                 continue
-            gaps = softplus(xi[offset:offset + r + 1]) + floors[s]
+            # The floors hold after normalizing: only the room above them is shared out
+            free = softplus(xi[offset:offset + r + 1])
+            floor = self.floors[s]
+            gaps = floor + (1.0 - np.sum(floor)) * free / np.sum(free)
             offset += r + 1
-            knots.append(clamped_knots(degree, np.cumsum(gaps)[:-1] / np.sum(gaps)))
+            knots.append(clamped_knots(self.degree, np.cumsum(gaps)[:-1]))
         return knots
 
+
+def solve_free_knots(
+    sections: Sequence[np.ndarray],
+    knots: Sequence[np.ndarray],
+    degree: int,
+    options: ChainOptions,
+    params: np.ndarray,
+    theta0: np.ndarray,
+    *,
+    max_nfev: Optional[int] = None,
+    tolerance: float = 1e-8,
+    exact_jacobian: bool = True,
+    verbose: int = 0,
+    callback=None,
+    min_knot_gap: float = MIN_KNOT_GAP,
+) -> FitResult:
+    """Levenberg-Marquardt with the interior knots among the unknowns.
+
+    The same solve as :func:`~bspline_varpro.fitting.solve_problem`, from the
+    same start, with the knot positions (at fixed counts, see
+    :class:`_KnotGaps`) optimized together with the data parameters and the
+    junction shape parameters: one loop from the first step to convergence.
+    ``knots`` are the starting knots. Knot columns of the Jacobian are
+    forward differences; the other columns are exact (or forward differences
+    too, with ``exact_jacobian`` False). ``callback`` is called with the
+    moving knots on every residual evaluation of the loop (not on the extra
+    ones of the differences); if it returns True the lowest-cost state seen
+    is returned with the message ``STOPPED``. A chain without a movable knot
+    is solved by ``solve_problem``.
+    """
+    theta0 = np.asarray(theta0, dtype=np.float64)
+    gaps = _KnotGaps(sections, knots, degree, params, min_knot_gap)
+    if gaps.count == 0:
+        return solve_problem(options.problem(sections, list(knots), degree), params, theta0,
+                             max_nfev=max_nfev, tolerance=tolerance, exact_jacobian=exact_jacobian,
+                             verbose=verbose, callback=callback)
+    span = len(sections)
+    n_eta = len(chain_data(sections)) - 1
+    n_theta = len(theta0)
+    nfev = 0
+    best_x: Optional[np.ndarray] = None
+    best_cost = np.inf
     cache = {}
 
     def problem_for(xi):
         key = xi.tobytes()
         if key not in cache:
             cache.clear()
-            cache[key] = options.problem(sections, to_knots(xi), degree)
+            cache[key] = options.problem(sections, gaps.knots(xi), degree)
         return cache[key]
 
     def split(x):
         return x[:n_eta], x[n_eta:n_eta + n_theta], x[n_eta + n_theta:]
 
-    def residual_at(x):
-        if should_stop is not None and should_stop():
-            raise _Stop
+    def residual(x):
+        nonlocal nfev, best_x, best_cost
         eta, theta, xi = split(x)
         problem = problem_for(xi)
         r = problem.residual(eta_to_t(eta, span), theta)
+        nfev += 1
+        cost = float(r @ r)
+        if best_x is None or cost < best_cost:
+            best_x, best_cost = x.copy(), cost
         if report(callback, problem.split_control_points(problem.last_control_points),
                   problem.last_rms_error, problem.knots):
             raise _Stop
@@ -214,31 +213,32 @@ def polish_knots(
 
     def jacobian(x):
         eta, theta, xi = split(x)
-        J = np.empty((len(residual_at(x)), len(x)))
-        J[:, :n_eta + n_theta] = reduced_jacobian(problem_for(xi), eta, theta)
         t_flat = eta_to_t(eta, span)
         base = problem_for(xi).residual(t_flat, theta)
+        J = np.empty((len(base), len(x)))
+        J[:, :n_eta + n_theta] = reduced_jacobian(problem_for(xi), eta, theta)
         for i in range(len(xi)):
             h = 1e-7 * (1.0 + abs(xi[i]))
             shifted = xi.copy()
             shifted[i] += h
-            other = options.problem(sections, to_knots(shifted), degree)
+            other = options.problem(sections, gaps.knots(shifted), degree)
             J[:, n_eta + n_theta + i] = (other.residual(t_flat, theta) - base) / h
         return J
 
-    xi0 = np.concatenate([to_xi(k, floor)
-                          for k, r, floor in zip(result.knots, counts, floors) if r > 0])
-    x0 = np.concatenate([t_to_eta(result.parameters), result.theta, xi0])
+    x0 = np.concatenate([t_to_eta(params), theta0, gaps.start])
     try:
-        solution = levenberg_marquardt(residual_at, jacobian, x0, max_nfev=max_nfev)
+        solution = levenberg_marquardt(residual, jacobian if exact_jacobian else "2-point", x0,
+                                       max_nfev=max_nfev, tolerance=tolerance, verbose=verbose)
+        x_final = solution.x
+        success, message = bool(solution.success), str(solution.message)
     except _Stop:
-        return replace(result, success=False, message=STOPPED)
-    except (ValueError, np.linalg.LinAlgError):
-        return result
-    eta, theta, xi = split(solution.x)
-    problem = options.problem(sections, to_knots(xi), degree)
-    return result_from_problem(problem, eta_to_t(eta, span), theta, solution.nfev,
-                               bool(solution.success), str(solution.message))
+        x_final = best_x
+        success, message = False, STOPPED
+    except (ValueError, np.linalg.LinAlgError) as exc:
+        raise ValueError(f"VarPro fit failed: {exc}") from exc
+    eta, theta, xi = split(x_final)
+    problem = options.problem(sections, gaps.knots(xi), degree)
+    return result_from_problem(problem, eta_to_t(eta, span), theta, nfev, success, message)
 
 
 def fit_to_tolerance(
@@ -257,15 +257,14 @@ def fit_to_tolerance(
     initial_control_points: Union[int, Sequence[int], None] = None,
     initial_parameters: Optional[Sequence[np.ndarray]] = None,
     max_control_points: Optional[int] = None,
-    optimize_knots: bool = True,
     remove_knots: bool = True,
-    max_points_per_section: Optional[int] = 200,
     max_nfev: Optional[int] = None,
     max_iterations: int = 40,
     callback: Optional[ProgressCallback] = None,
     knot_placement: str = "free",
     should_stop: Optional[Callable[[], bool]] = None,
     step_callback=None,
+    min_knot_gap: float = MIN_KNOT_GAP,
 ) -> FitResult:
     """Fit a chain with few control points so every point lies within ``tolerance``.
 
@@ -283,29 +282,30 @@ def fit_to_tolerance(
             uniform knots, raised to the fewest the end conditions allow.
         initial_parameters: Starting data parameters (as for :func:`fit`).
         max_control_points: Upper limit per section.
-        optimize_knots: Polish interior knot positions once the tolerance is met.
         remove_knots: Try to remove knots once the tolerance is met.
-        max_points_per_section: Larger sections are fitted by variable
-            projection on an evenly spaced subsample, then refined jointly on
-            all points (knot polishing is skipped). None uses all points.
         max_nfev: Residual evaluations per refit; None (the default) runs each
             refit until converged.
         max_iterations: Maximum insertion rounds.
         callback: ``callback(result, max_deviation)`` after every refit; return
             True to stop early (the last result is returned).
         knot_placement: ``"free"`` inserts knots in the spans that miss the
-            tolerance, then moves them to where they reduce the error most and
-            removes the ones that are not needed. ``"uniform"`` keeps uniformly
-            spaced knots and only chooses the count per section
-            (``optimize_knots`` and ``remove_knots`` do not apply).
-        should_stop: Checked at every residual evaluation, also inside refits
-            and knot polishing; returning True stops the search with the best
+            tolerance and removes the ones that are not needed; the knot
+            positions are unknowns of every refit, like the data parameters.
+            ``"uniform"`` keeps uniformly spaced knots and only chooses the
+            count per section (``remove_knots`` does not apply).
+        should_stop: Checked at every residual evaluation, also inside
+            refits; returning True stops the search with the best
             result so far (``callback`` is only reached between refits).
         step_callback: ``step_callback(control_points, rms_error)`` on every
-            residual evaluation of every refit and knot polish, as the
+            residual evaluation of every refit, as the
             callback of :func:`~bspline_varpro.fitting.fit` (with a ``knots``
             keyword it also gets the knot vectors); return True to stop like
             ``should_stop``.
+
+        min_knot_gap: Smallest spacing of free knots, as a fraction of a
+            section's parameter range (0 to 0.5): knots are neither
+            inserted nor moved closer together. Without effect on
+            uniform knots.
 
     Returns:
         :class:`FitResult` with ``max_deviation`` and a ``history`` of stages.
@@ -315,6 +315,7 @@ def fit_to_tolerance(
         raise ValueError("Tolerance must be positive.")
     if knot_placement not in ("free", "uniform"):
         raise ValueError("knot_placement must be 'free' or 'uniform'.")
+    validate_min_knot_gap(min_knot_gap)
     if max_iterations < 1:
         raise ValueError("max_iterations must be at least 1.")
     uniform = knot_placement == "uniform"
@@ -344,14 +345,15 @@ def fit_to_tolerance(
 
     history: List[dict] = []
     theta = None
-    min_span = 1e-4
+    # Free knots are not inserted closer than they may move
+    min_span = 1e-4 if uniform else max(1e-4, min_knot_gap)
 
     def record(stage, result, deviation):
         history.append({"stage": stage, "control_points": result.num_control_points,
                         "max_deviation": deviation, "rms_error": result.rms_error})
         return callback is not None and bool(callback(result, deviation))
 
-    # Per-evaluation progress and stop for the refits and knot polishing
+    # Per-evaluation progress and stop for the refits
     stopped = []
     step = None
     if should_stop is not None or step_callback is not None:
@@ -365,10 +367,6 @@ def fit_to_tolerance(
     def halted(trial):
         return trial.message == STOPPED
 
-    def stop_requested():
-        """True once a step asked to stop (a rejected polish hides that)."""
-        return bool(stopped) or (should_stop is not None and should_stop())
-
     def finish(result, deviation, success, message):
         result.max_deviation = deviation
         result.history = history
@@ -379,9 +377,11 @@ def fit_to_tolerance(
 
     result = None
     for _ in range(max_iterations):
-        result = _refit(sections, knots, degree, options, params, theta, max_nfev,
-                        max_points_per_section, step)
+        result = _refit(sections, knots, degree, options, params, theta, max_nfev, step, not uniform,
+                        min_knot_gap)
         params, theta = result.parameters, result.theta
+        # Free knots have moved: the next round starts from where they are
+        knots = list(result.knots)
         devs = chain_deviations(data, result.curves())
         deviation = float(np.max(devs))
         if halted(result) or record("insert", result, deviation):
@@ -415,7 +415,7 @@ def fit_to_tolerance(
                 trial_knots = list(result.knots)
                 trial_knots[s] = open_uniform_knots(degree, len(result.knots[s]) - degree - 2)
                 trial = _refit(sections, trial_knots, degree, options, result.parameters, result.theta,
-                               max_nfev, max_points_per_section, step)
+                               max_nfev, step)
                 if halted(trial):
                     return finish(result, deviation, False, STOPPED)
                 trial_dev = _max_deviation(sections, trial)
@@ -426,27 +426,7 @@ def fit_to_tolerance(
                     return finish(result, deviation, False, STOPPED)
         return finish(result, deviation, True, f"Within tolerance {tolerance:g}.")
 
-    dense = max_points_per_section is not None and any(len(s) > max_points_per_section for s in sections)
-    polish = optimize_knots and not dense
-
-    def polished(result, deviation):
-        """Knot-polished result if it stays within tolerance without raising the RMS error."""
-        candidate = polish_knots(sections, result, options, callback=step)
-        if halted(candidate):
-            return result, deviation, False
-        candidate_dev = _max_deviation(sections, candidate)
-        if candidate_dev <= tolerance and candidate.rms_error <= result.rms_error:
-            return candidate, candidate_dev, True
-        return result, deviation, False
-
-    # Polish before removing: better-placed knots make more of them redundant.
-    if polish:
-        result, deviation, improved = polished(result, deviation)
-        if (improved and record("polish", result, deviation)) or stop_requested():
-            return finish(result, deviation, False, STOPPED)
-
     if remove_knots:
-        removed_any = False
         for s in range(len(sections)):
             # Try every knot, least useful first; after a removal start over, since the
             # refitted curve can make knots removable that failed before.
@@ -460,51 +440,50 @@ def fit_to_tolerance(
                     inner = interior_knots(result.knots[s], degree)
                     trial_knots[s] = clamped_knots(degree, np.delete(inner, np.argmin(np.abs(inner - k))))
                     trial = _refit(sections, trial_knots, degree, options, result.parameters, result.theta,
-                                   max_nfev, max_points_per_section, step)
+                                   max_nfev, step, True, min_knot_gap)
                     if halted(trial):
                         return finish(result, deviation, False, STOPPED)
                     trial_dev = _max_deviation(sections, trial)
-                    if trial_dev > tolerance and polish:
-                        trial = polish_knots(sections, trial, options, callback=step)
-                        if halted(trial):
-                            return finish(result, deviation, False, STOPPED)
-                        trial_dev = _max_deviation(sections, trial)
                     if trial_dev <= tolerance:
-                        result, deviation, removed, removed_any = trial, trial_dev, True, True
+                        result, deviation, removed = trial, trial_dev, True
                         if record("remove", result, deviation):
                             return finish(result, deviation, False, STOPPED)
                         break
-        if polish and removed_any and not stop_requested():
-            result, deviation, improved = polished(result, deviation)
-            if improved:
-                record("polish", result, deviation)
 
     return finish(result, deviation, True, f"Within tolerance {tolerance:g}.")
 
 
 def grow_to_counts(sections, counts, degree, options: ChainOptions, params, theta, max_nfev,
-                   max_points: Optional[int] = None, callback=None,
-                   knot_placement: str = "free") -> FitResult:
+                   callback=None, knot_placement: str = "free",
+                   min_knot_gap: float = MIN_KNOT_GAP) -> FitResult:
     """Grow from the fewest control points to the given counts, refitting each step.
 
     Each round adds one knot to every span whose largest deviation is at least
     half the section's largest, worst span first, until each section has its
     count; when none of those spans can be split, any span holding two points
     is. With ``"free"`` placement the knots go into those spans and are
-    finally moved to where they reduce the error most (unless subsampled);
-    with ``"uniform"`` the section is respaced evenly with the new count.
+    unknowns of every refit, not closer than ``min_knot_gap`` (or than half
+    the uniform spacing of the largest count, if that is less); with
+    ``"uniform"`` the section is respaced evenly with the new count.
     """
     junctions = parse_junctions(options.continuity, len(sections) - 1, options.fix_junctions)
     start = End(options.fix_ends, None if options.start_tangent is None else tuple(options.start_tangent))
     end = End(options.fix_ends, None if options.end_tangent is None else tuple(options.end_tangent))
     need = minimum_control_points(junctions, degree, start, end)
     knots = [open_uniform_knots(degree, min(n, c)) for n, c in zip(need, counts)]
+    # Free knots are not inserted closer than they may move, unless the counts
+    # asked for need it: then half their uniform spacing is the limit
+    min_span = 1e-4
+    if knot_placement == "free":
+        min_span = max(min_span, min(min_knot_gap, 0.5 / max(max(counts) - degree, 1)))
     data = chain_data(sections)
     while True:
-        result = _refit(sections, knots, degree, options, params, theta, max_nfev, max_points, callback)
+        result = _refit(sections, knots, degree, options, params, theta, max_nfev, callback,
+                        knot_placement == "free", min_knot_gap)
         if result.message == STOPPED:
             return result
         params, theta = result.parameters, result.theta
+        knots = list(result.knots)
         missing = [c - (len(k) - degree - 1) for c, k in zip(counts, knots)]
         if max(missing) <= 0:
             break
@@ -514,11 +493,11 @@ def grow_to_counts(sections, counts, degree, options: ChainOptions, params, thet
             if room <= 0:
                 continue
             dev = devs[rows]
-            new = _new_knots(knots[s], local, dev, 0.5 * float(np.max(dev, initial=0.0)), 1e-4)[:room]
+            new = _new_knots(knots[s], local, dev, 0.5 * float(np.max(dev, initial=0.0)), min_span)[:room]
             if not new:
                 # The worst points can sit alone in their spans, which cannot be
                 # split; any span holding two points can, worst first
-                new = _new_knots(knots[s], local, dev, -1.0, 1e-4)[:room]
+                new = _new_knots(knots[s], local, dev, -1.0, min_span)[:room]
             if knot_placement == "uniform":
                 knots[s] = open_uniform_knots(degree, len(knots[s]) - degree - 1 + max(len(new), 1))
                 inserted = True
@@ -527,12 +506,4 @@ def grow_to_counts(sections, counts, degree, options: ChainOptions, params, thet
                 inserted = True
         if not inserted:
             break
-    if knot_placement == "free" and (max_points is None or all(len(s) <= max_points for s in sections)):
-        polished = polish_knots(sections, result, options, callback=callback)
-        if polished.message == STOPPED:
-            return polished
-        if polished.rms_error <= result.rms_error:
-            polished.nfev += result.nfev
-            polished.success, polished.message = result.success, result.message
-            result = polished
     return result

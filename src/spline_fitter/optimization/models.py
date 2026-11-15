@@ -95,21 +95,11 @@ class OptimizerType(Enum):
         DIRECT_LSQ: One constrained least-squares solve at fixed parameters
         GN_VARPRO: Levenberg-Marquardt variable projection (bspline-varpro)
     """
-    # Direct LSQ (single-step, no iteration)
+    # Direct LSQ (a single solve, no iteration)
     DIRECT_LSQ = "direct-lsq"
 
     # Levenberg-Marquardt variable projection (bspline-varpro library)
     GN_VARPRO = "gn-varpro"
-
-    @property
-    def is_algebraic(self) -> bool:
-        """Return True if this is an algebraic (non-iterative) method."""
-        return self == OptimizerType.DIRECT_LSQ
-
-    @property
-    def is_iterative_algebraic(self) -> bool:
-        """Return True if this uses iterative algebraic (LSQ) steps."""
-        return self == OptimizerType.GN_VARPRO
 
     @property
     def display_name(self) -> str:
@@ -125,11 +115,11 @@ class OptimizerType(Enum):
         """Return a tooltip description of the method."""
         tooltips = {
             OptimizerType.DIRECT_LSQ: (
-                "Direct LSQ (single-step, no iteration).\n"
-                "One constrained least-squares solve, with fixed trailing-edge\n"
-                "end points and junctions fixed or free (Advanced).\n"
-                "Fastest option (~1ms), moderate accuracy (~1e-4).\n"
-                "Ideal for dense data or real-time preview."
+                "Direct LSQ: a single solve, no iteration.\n"
+                "One constrained least-squares solve on uniform knots, with the\n"
+                "data parameters taken from the point spacing (Parameterization).\n"
+                "Parametric continuity; junctions fixed or free (Advanced).\n"
+                "Fastest, but less accurate than VarPro LM."
             ),
             OptimizerType.GN_VARPRO: (
                 "Levenberg-Marquardt Variable Projection (bspline-varpro).\n"
@@ -201,8 +191,8 @@ class SplineConfig:
     degree: int = 5
     num_control_points: int = 25
     num_sections: int = 2
-    continuity: ContinuityMode = ContinuityMode.G1
-    geometric_continuity: bool = False
+    continuity: ContinuityMode = ContinuityMode.G3
+    geometric_continuity: bool = True
     junction_continuity: tuple[str, ...] = ()
 
     def __post_init__(self):
@@ -254,11 +244,8 @@ class OptimizationConfig:
 
     Attributes:
         optimizer: Which optimization algorithm to use
-        early_stop_patience: Iterations without improvement before stopping
-        relative_tolerance: Relative improvement threshold for early stopping
         optimize_le_position: If True, every junction's (x, y) is fitted too,
             anywhere (the split points are only where they start)
-        smoothing_factor: Smoothing parameter for algebraic methods (0 = interpolation)
         smoothing_weight: Bending energy smoothing weight for VarPro LM (0 = disabled).
             Weight of the integrated squared parameter second derivative.
             The same penalty is included in the inner solve and outer objective.
@@ -267,43 +254,38 @@ class OptimizationConfig:
             section count, a shared junction point once; see
             bspline_varpro.chain) or one array from 0 to 1 per section. If
             None, `parameterization` is used.
-        parameterization: Direct LSQ only. Where the data points' curve
-            parameters start, within each section: "centripetal" (default) or
-            "arc_length". They then move to the closest chain points.
+        parameterization: Direct LSQ only. The data points' curve parameters
+            within each section: "centripetal" (default) or "arc_length".
         tolerance: Maximum orthogonal deviation for VarPro LM tolerance mode,
             which picks the number of control points and the knots itself.
             None fits the configured number of control points.
-        max_points_per_section: VarPro LM only. Sections with more points are
-            fitted on an evenly spaced subsample of this many points, then
-            refined jointly on all points. None (default) uses every point.
-        knot_placement: VarPro LM only. "uniform" keeps knots evenly spaced;
-            "free" (default) moves them to where they reduce the error most.
+        knot_placement: VarPro LM only. "uniform" (default) keeps knots evenly
+            spaced; "free" makes their positions unknowns of the fit.
+        min_knot_gap: VarPro LM with free knots only. The smallest spacing
+            of the knots, as a fraction of a section's parameter range
+            (0 to 0.5).
         grow_control_points: VarPro LM only. Start from the fewest control
-            points and add them where the fit is worst (default). If False,
+            points and add them where the fit is worst. If False (default),
             start from the configured control-point count (in tolerance mode
             it can still grow or shrink from there).
     """
     optimizer: OptimizerType = OptimizerType.GN_VARPRO
-    smoothing_factor: float | None = None
-    early_stop_patience: int = 50
-    relative_tolerance: float = 1e-6
     optimize_le_position: bool = False
     smoothing_weight: float = 1e-3
     custom_parameters: list[np.ndarray] | None = None
     parameterization: str = "centripetal"
     tolerance: float | None = None
-    max_points_per_section: int | None = None
-    knot_placement: str = "free"
-    grow_control_points: bool = True
+    knot_placement: str = "uniform"
+    grow_control_points: bool = False
+    min_knot_gap: float = 0.05
 
     def __post_init__(self):
         if self.tolerance is not None and not self.tolerance > 0:
             raise ValueError(f"tolerance must be positive, got {self.tolerance}")
-        if self.max_points_per_section is not None and self.max_points_per_section < 2:
-            raise ValueError(
-                f"max_points_per_section must be at least 2, got {self.max_points_per_section}")
         if self.knot_placement not in ("uniform", "free"):
             raise ValueError(f"knot_placement must be 'uniform' or 'free', got {self.knot_placement!r}")
+        if not 0.0 <= self.min_knot_gap <= 0.5:
+            raise ValueError(f"min_knot_gap must be between 0 and 0.5, got {self.min_knot_gap}")
         if self.parameterization not in ("centripetal", "arc_length"):
             raise ValueError(
                 "parameterization must be 'centripetal' or 'arc_length', "
@@ -363,10 +345,10 @@ class FitResult:
 
     def knots(self, section: int) -> np.ndarray:
         """Knot vector of one section (open uniform when none was stored)."""
-        from ..spline.spline import create_open_uniform_knots
+        from bspline_varpro import open_uniform_knots
         if self.section_knots is not None:
             return np.asarray(self.section_knots[section], dtype=np.float64)
-        return create_open_uniform_knots(self.degree, len(self.section_control_points[section]))
+        return open_uniform_knots(self.degree, len(self.section_control_points[section]))
 
     def curves(self) -> list:
         """One :class:`~spline_fitter.spline.BSplineCurve2D` per section."""
@@ -475,10 +457,6 @@ class IterationRecord:
     iteration_number: int
     error_value: float
     elapsed_seconds: float = 0.0
-
-
-# Backwards compatibility alias
-EvaluationRecord = IterationRecord
 
 
 @dataclass(frozen=True)

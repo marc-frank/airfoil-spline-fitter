@@ -93,13 +93,12 @@ names = [
     output_name("naca0012", REF_SPLINE, OptimizationConfig(tolerance=1e-5), True),
     output_name("x", SplineConfig(degree=3, continuity=ContinuityMode.G2),
                 OptimizationConfig(optimizer=OptimizerType.DIRECT_LSQ, parameterization="arc_length", knot_placement="uniform",
-                                   grow_control_points=False, smoothing_weight=0.01, optimize_le_position=True,
-                                   max_points_per_section=150)),
+                                   grow_control_points=False, smoothing_weight=0.01, optimize_le_position=True)),
     output_name("x", SplineConfig(num_sections=1, continuity=ContinuityMode.G3, geometric_continuity=True), REF_OPT),
 ]
 check(8, names == ["naca0012.deg5.n30.s3.G2-C1.tol1e-4.spline.dat", "naca0012.deg5.spline.dat",
                    "naca0012.deg5.tol-auto.knots-free.grow.spline.dat",
-                   "x.deg3.C2.lsq.arc-length.smooth0.01.sub150.free-le.spline.dat", "x.deg5.s1.spline.dat"], names)
+                   "x.deg3.C2.lsq.arc-length.smooth0.01.free-le.spline.dat", "x.deg5.s1.spline.dat"], names)
 check(9, [_num(v) for v in (1e-4, 2.5e-5, 0.001, 0.0123, 0.5, 1e-6, 3.33333e-7)]
       == ["1e-4", "2.5e-5", "1e-3", "0.0123", "0.5", "1e-6", "3.33e-7"])
 # 10
@@ -109,7 +108,7 @@ check(10, sanitize_filename("a b/c") == "a_b_c" and file_stem("NACA 2412 t/c 12%
 check("11 deftol", default_tolerance(pts, 6) == 1e-6)
 r, fr = fit(REF_SPLINE, REF_OPT)
 rep = fit_report(af.sections, fr, 6)
-check("11 varpro", close(r.fun, 8.978e-7) and r.fun == r.rms_error and r.nit == 40 and r.success
+check("11 varpro", close(r.fun, 8.978e-7) and r.fun == r.rms_error and r.nit == 33 and r.success
       and r.message == "`ftol` termination condition is satisfied." and [len(s) for s in r.section_control_points] == [25, 25]
       and close(rep["max_deviation"], 4.587e-6) and close(rep["rms_deviation"], 8.978e-7)
       and close(rep["max_thickness"], 0.12004) and close(rep["max_thickness_x"], 0.2988)
@@ -123,8 +122,8 @@ check("11 lsq", close(r2.fun, 2.942e-7) and r2.nit == 1 and [len(s) for s in r2.
       and rep2["curvature_extrema"] == 12, (r2.fun, rep2))
 t0 = time.time()
 r3, _ = fit(SplineConfig(continuity=ContinuityMode.G2, geometric_continuity=True), OptimizationConfig(tolerance=1e-6))
-check("11 tolerance", r3.success and r3.fun <= 1e-6 and r3.nit == 17 and close(r3.fun, 9.1121e-7)
-      and [len(s) for s in r3.section_control_points] == [10, 11], (r3.fun, r3.nit, [len(s) for s in r3.section_control_points],
+check("11 tolerance", r3.success and r3.fun <= 1e-6 and r3.nit == 9 and close(r3.fun, 7.9338e-7)
+      and [len(s) for s in r3.section_control_points] == [11, 11], (r3.fun, r3.nit, [len(s) for s in r3.section_control_points],
                                                      round(time.time() - t0)))
 print("   tolerance search:", r3.nit, "refits,", [len(s) for s in r3.section_control_points], "control points,",
       f"max deviation {r3.fun:.4e},", round(time.time() - t0), "s")
@@ -188,7 +187,7 @@ w.new_naca_airfoil("2412", 81, True)
 ok &= msg() == "Created: NACA 2412 (161 points, 2 sections: [81, 81])" and w._spin_tolerance.value() == 1e-6
 w._fitting_controller.on_fit()
 s1 = msg()
-ok &= bool(re.fullmatch(r"Completed \(VarPro LM\): 40 evaluations in .+ \| Error 8\.978e-07 \| max deviation 4\.59e-06, "
+ok &= bool(re.fullmatch(r"Completed \(VarPro LM\): 33 evaluations in .+ \| Error 8\.978e-07 \| max deviation 4\.59e-06, "
                         r"RMS 8\.98e-07, 49 control points", s1))
 ok &= w._lbl_project.text() == "Unsaved project*\n1 optimization run" and w.windowTitle() == "Unsaved project[*] - Airfoil Spline Fitter"
 logs = os.listdir(os.environ["SPLINE_FITTER_LOG_DIR"])

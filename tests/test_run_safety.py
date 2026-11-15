@@ -370,6 +370,12 @@ def test_batch_output_names_tell_settings_apart():
     config, opt = fresh._get_spline_config(), fresh._get_optimization_config()
     fresh.deleteLater()
     assert output_name("naca0012", config, opt) == "naca0012.deg5.spline.dat"
+    # The reference settings are the model defaults, which a new window shows
+    from spline_fitter.optimization.models import OptimizationConfig, SplineConfig
+    assert output_name("naca0012", SplineConfig(), OptimizationConfig()) == (
+        "naca0012.deg5.spline.dat")
+    assert output_name("naca0012", config, replace(opt, grow_control_points=True)) == (
+        "naca0012.deg5.grow.spline.dat")
 
     variants = {
         "degree": (replace(config, degree=4), opt),
@@ -381,7 +387,6 @@ def test_batch_output_names_tell_settings_apart():
         "auto tolerance": (config, replace(opt, tolerance=2e-4)),
         "free knots": (config, replace(opt, knot_placement="free")),
         "smoothing": (config, replace(opt, smoothing_weight=0.01)),
-        "subsample": (config, replace(opt, max_points_per_section=200)),
         "leading edge": (config, replace(opt, optimize_le_position=True)),
         "direct lsq": (config, replace(opt, optimizer=OptimizerType.DIRECT_LSQ)),
     }
@@ -394,6 +399,57 @@ def test_batch_output_names_tell_settings_apart():
     assert names["parametric"] == "naca0012.deg5.C3.spline.dat"
     # Numbers are written the same in every locale
     assert names["smoothing"] == "naca0012.deg5.smooth0.01.spline.dat"
+
+
+def test_a_new_window_starts_at_the_model_defaults(monkeypatch):
+    """The sidebar holds no start values of its own: it shows the model
+    defaults, and follows them when they change."""
+    from spline_fitter.gui import layout
+    from spline_fitter.gui.ui import SplineFitterWindow
+    from spline_fitter.optimization.models import (
+        OptimizationConfig,
+        OptimizerType,
+        SplineConfig,
+    )
+
+    fresh = SplineFitterWindow()
+    assert fresh._get_spline_config() == SplineConfig()
+    assert fresh._get_optimization_config() == OptimizationConfig()
+    # What the user sees: VarPro LM, fixed count, 5, 25, 2, G3 geometric,
+    # uniform knots, no growth, Auto on
+    assert fresh._combo_opt.currentData() == OptimizerType.GN_VARPRO
+    assert fresh._seg_goal.currentData() is False
+    assert (fresh._spin_degree.value(), fresh._spin_ctrl.value(),
+            fresh._spin_sections.value()) == (5, 25, 2)
+    assert fresh._combo_cont.itemText(fresh._combo_cont.currentIndex()) == "G3"
+    assert fresh._combo_cont_kind.currentData() is True
+    assert fresh._combo_knot_placement.currentData() == "uniform"
+    assert fresh._seg_parameterization.currentData() == "centripetal"
+    assert not fresh._check_grow.isChecked() and fresh._check_auto_tolerance.isChecked()
+    fresh.deleteLater()
+
+    monkeypatch.setattr(layout, "SplineConfig", lambda: SplineConfig(
+        degree=3, num_control_points=12, num_sections=3, junction_continuity=("G2", "C1")))
+    monkeypatch.setattr(layout, "OptimizationConfig", lambda: OptimizationConfig(
+        knot_placement="free", grow_control_points=True, tolerance=2e-4,
+        smoothing_weight=0.01))
+    other = SplineFitterWindow()
+    assert (other._spin_degree.value(), other._spin_ctrl.value(),
+            other._spin_sections.value()) == (3, 12, 3)
+    assert other._edit_junctions.text() == "G2, C1"
+    assert other._seg_goal.currentData() is True
+    assert other._spin_tolerance.value() == 2e-4
+    assert other._combo_knot_placement.currentData() == "free"
+    assert other._check_grow.isChecked()
+    assert other._spin_smoothing_weight.value() == 0.01
+    other.deleteLater()
+
+
+def test_about_shows_the_package_version(window):
+    from spline_fitter import __version__
+    help_menu = next(a.menu() for a in window.menuBar().actions() if a.text() == "&Help")
+    next(a for a in help_menu.actions() if a.text() == "&About").trigger()
+    assert window.statusBar().currentMessage() == f"Airfoil Spline Fitter {__version__}"
 
 
 def test_batch_unlocks_the_window_after_an_error(window, tmp_path, monkeypatch):
@@ -514,6 +570,47 @@ def test_status_counts_refits_of_a_tolerance_search(window):
     assert " refits, " in window.statusBar().currentMessage()
 
 
+def test_every_fit_of_a_tolerance_search_is_a_run(window):
+    """A tolerance search is a sequence of fits, like a sweep of the control
+    point count: each is kept as a run of its own."""
+    window._seg_goal.setCurrentIndex(window._seg_goal.findData(True))
+    window._check_auto_tolerance.setChecked(False)
+    window._spin_tolerance.setValue(1e-5)
+    window._check_grow.setChecked(True)
+    window._fitting_controller.on_fit()
+    runs = window._project_manager.project.optimization_runs
+    counts = [tuple(len(s) for s in run.result.section_control_points) for run in runs]
+    assert len(runs) > 1 and len(set(counts)) == len(runs)
+    assert len({run.optimization_config for run in runs}) == 1
+    # The last is the search's result; each is measured against the tolerance
+    assert runs[-1].result is window._fit_result and window._fit_result.converged
+    for run in runs:
+        assert run.result.report is not None
+        assert run.result.converged == (run.result.final_error <= 1e-5)
+    assert any(not run.result.converged for run in runs[:-1])
+    times = [run.result.elapsed_seconds for run in runs]
+    assert times == sorted(times)
+    assert all(run.loss_history for run in runs)
+    # The same search again replaces its fits
+    numbers = [run.number for run in runs]
+    window._fitting_controller.on_fit()
+    again = window._project_manager.project.optimization_runs
+    assert [run.number for run in again] == numbers
+
+
+def test_knot_spacing_applies_to_free_knots_only(window):
+    assert window._spin_knot_gap.value() == 0.05 and not window._spin_knot_gap.isEnabled()
+    window._combo_knot_placement.setCurrentIndex(window._combo_knot_placement.findData("free"))
+    assert window._spin_knot_gap.isEnabled()
+    window._spin_knot_gap.setValue(0.02)
+    assert window._get_optimization_config().min_knot_gap == 0.02
+    from spline_fitter.gui.batch import output_name
+    name = output_name("x", window._get_spline_config(), window._get_optimization_config())
+    assert name == "x.deg5.n10.knots-free.gap0.02.spline.dat"
+    window._combo_opt.setCurrentIndex(1)
+    assert not window._spin_knot_gap.isVisible()
+
+
 def test_run_log_names_the_continuity_as_fitted(window, monkeypatch):
     from spline_fitter.gui import fitting
     from spline_fitter.optimization.models import ContinuityMode, SplineConfig
@@ -525,17 +622,16 @@ def test_run_log_names_the_continuity_as_fitted(window, monkeypatch):
 
     text = fitting.continuity_text
     assert text(SplineConfig(continuity=ContinuityMode.G2, geometric_continuity=True)) == "G2"
-    assert text(SplineConfig(continuity=ContinuityMode.G2)) == "C2"
+    assert text(SplineConfig(continuity=ContinuityMode.G2, geometric_continuity=False)) == "C2"
     assert text(SplineConfig(num_sections=3, junction_continuity=("G2", "C1"))) == "G2/C1"
     assert text(SplineConfig(num_sections=1)) == "none"
 
 
-def test_status_counts_the_solves_of_direct_lsq(window):
+def test_status_counts_the_single_solve_of_direct_lsq(window):
+    """Direct LSQ is one solve, one evaluation, said like any other fit's effort."""
     from spline_fitter.optimization import get_evaluation_count
     from spline_fitter.optimization.models import OptimizerType
     window._combo_opt.setCurrentIndex(window._combo_opt.findData(OptimizerType.DIRECT_LSQ))
     window._fitting_controller.on_fit()
-    solves = get_evaluation_count()
-    assert solves >= 1
-    noun = "solve" if solves == 1 else "solves"
-    assert f": {solves} {noun} in " in window.statusBar().currentMessage()
+    assert get_evaluation_count() == 1
+    assert ": 1 evaluation in " in window.statusBar().currentMessage()

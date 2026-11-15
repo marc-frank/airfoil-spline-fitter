@@ -52,10 +52,10 @@ dev = [
 ]
 
 [project.scripts]
-spline-fitter = "spline_fitter.__main__:main"
+spline-fitter = "spline_fitter.__main__:cli_entry"
 
 [project.gui-scripts]
-spline-fitter-gui = "spline_fitter.__main__:main"
+spline-fitter-gui = "spline_fitter.__main__:cli_entry"
 
 [project.urls]
 Homepage = "https://github.com/airfoil-library/spline-fitter"

@@ -9,6 +9,29 @@ def test_log_dir_follows_the_environment_set_after_import(tmp_path, monkeypatch)
     assert OptimizerErrorLogger("NACA 0012").log_dir == str(tmp_path)
 
 
+def test_logs_are_written_only_when_a_folder_is_set(monkeypatch):
+    """Log files are opt-in: without SPLINE_FITTER_LOG_DIR there is no
+    fallback folder, and save() writes nothing, while the records stay."""
+    from spline_fitter.optimization import run_log
+    monkeypatch.delenv("SPLINE_FITTER_LOG_DIR", raising=False)
+    assert run_log.default_log_dir() is None
+    monkeypatch.setenv("SPLINE_FITTER_LOG_DIR", "")
+    assert run_log.default_log_dir() is None
+    assert not hasattr(OptimizerErrorLogger, "DEFAULT_LOG_DIR")
+    logger = OptimizerErrorLogger("NACA 0012")
+    logger.log(1, 1, 0.5)
+    assert logger.log_dir is None
+    assert logger.save("gn-varpro") is None and logger.file_path is None
+    assert logger.errors == [0.5]
+
+
+def test_log_lines_end_with_a_line_feed_on_every_platform(tmp_path):
+    logger = OptimizerErrorLogger("NACA 0012", log_dir=str(tmp_path))
+    logger.log(1, 1, 0.5)
+    content = Path(logger.save("gn-varpro")).read_bytes()
+    assert b"\r" not in content and content.endswith(b"0.000\n")
+
+
 def test_runs_started_in_the_same_second_keep_their_own_logs(tmp_path):
     first = OptimizerErrorLogger("NACA 0012", log_dir=str(tmp_path))
     second = OptimizerErrorLogger("NACA 0012", log_dir=str(tmp_path))

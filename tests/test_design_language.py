@@ -915,3 +915,16 @@ def test_scientific_spin_box_keeps_tiny_values():
     for value in (3e-16, 1e-30, 2.5e-300):
         spin.setValue(value)
         assert spin.value() == value
+
+
+def test_a_damaged_glyph_file_is_written_again():
+    """A glyph file whose bytes are not the glyph's (truncated, or left by
+    another version) is repaired, not used for ever."""
+    from spline_fitter.gui import theme
+    path = theme._glyph("check", "#123456", 0)
+    wanted = open(path, "rb").read()
+    with open(path, "wb") as f:
+        f.write(wanted[:20])
+    assert theme._glyph("check", "#123456", 0) == path
+    assert open(path, "rb").read() == wanted
+    assert wanted.startswith(b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12">')

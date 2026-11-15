@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import inspect
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Callable, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -13,7 +13,7 @@ from scipy.optimize import OptimizeResult
 
 from .basis import centripetal_parameters, open_uniform_knots
 from .chain import chain_data, chain_deviations, chain_parameters, validate_chain_parameters
-from .constraints import ContinuitySpec, End, Junction
+from .constraints import ContinuitySpec, End
 from .problem import VarProProblem
 from .reparam import eta_jacobian, eta_to_t, t_to_eta
 
@@ -21,6 +21,8 @@ Callback = Callable[[List[np.ndarray], float], Optional[bool]]
 
 # Message of a result whose fit a callback stopped
 STOPPED = "Stopped by callback."
+# Smallest spacing of free knots, as a fraction of a section's parameter range
+MIN_KNOT_GAP = 0.05
 
 
 def _takes_knots(callback: Callable) -> bool:
@@ -72,10 +74,9 @@ class FitResult:
         theta: Raw constraint parameters (shape and tangent magnitudes), usable
             as ``initial_theta`` to warm start another fit.
         max_deviation: Largest orthogonal distance of a data point to the
-            chain, when computed (tolerance fits and refinement).
-        history: Progress records of multi-stage procedures.
-        options: Constraint settings the fit was made with (reused by
-            :func:`~bspline_varpro.refinement.refine` and knot polishing).
+            chain, when computed (tolerance fits).
+        history: One record per refit of a tolerance search.
+        options: Constraint settings the fit was made with.
     """
 
     control_points: List[np.ndarray]
@@ -176,14 +177,14 @@ def fit(
     regularization: float = 1e-12,
     initial_parameters: Optional[Sequence[np.ndarray]] = None,
     initial_theta: Optional[np.ndarray] = None,
-    max_points_per_section: Optional[int] = None,
     max_nfev: Optional[int] = None,
-    tolerance: float = 1e-10,
+    tolerance: float = 1e-8,
     exact_jacobian: bool = True,
     verbose: int = 0,
     callback: Optional[Callback] = None,
     knot_placement: str = "uniform",
     grow: bool = False,
+    min_knot_gap: float = MIN_KNOT_GAP,
 ) -> FitResult:
     """Least-squares fit of a chain of clamped B-spline curves to ordered points.
 
@@ -220,11 +221,7 @@ def fit(
             (``FitResult.parameters``), or one increasing array from 0 to 1 per
             section. Defaults to centripetal parameterization per section.
         initial_theta: Starting raw constraint parameters (``FitResult.theta``).
-        max_points_per_section: For dense data: sections with more points are
-            fitted on an evenly spaced subsample, then refined jointly on all
-            points (:func:`~bspline_varpro.refinement.refine`).
-        max_nfev: Maximum number of residual evaluations of each solve (the
-            parametric warm-up of geometric junctions shares it, and a
+        max_nfev: Maximum number of residual evaluations of each solve (a
             finite-difference Jacobian counts against it). None, the default,
             runs until a convergence tolerance is met; the callback can still
             stop it.
@@ -233,20 +230,25 @@ def fit(
         verbose: Verbosity passed to :func:`scipy.optimize.least_squares`.
         callback: Called after every residual evaluation as
             ``callback(control_points, rms_error)`` with one control-point array
-            per section, also while knots are grown or moved and during dense
-            refinement. A callback with a ``knots`` keyword also gets the knot
-            vectors (as does one taking ``**kwargs``). Return True to stop; the
-            result then holds the best state evaluated so far (or, while knots
-            are moved, the fit before) and ``success`` is False.
+            per section, also while knots are grown or moved. A callback
+            with a ``knots`` keyword also gets the knot vectors (as does one
+            taking ``**kwargs``). Return True to stop; the result then holds
+            the best state evaluated so far and ``success`` is False.
         knot_placement: ``"uniform"`` keeps the knots where they start
-            (evenly spaced with ``num_control_points``). ``"free"`` then moves
-            the interior knots to where they reduce the error most
-            (:func:`~bspline_varpro.tolerance.polish_knots`; skipped for
-            subsampled dense data).
+            (evenly spaced with ``num_control_points``). ``"free"`` makes the
+            interior knot positions unknowns of the same optimization, from
+            its first step to convergence
+            (:func:`~bspline_varpro.tolerance.solve_free_knots`). Either way
+            the fit is one loop, also with geometric junctions.
+        min_knot_gap: Smallest spacing of free knots, as a fraction of a
+            section's parameter range (0 to 0.5). Knots that start closer
+            keep the spacing they start with. Without effect on uniform
+            knots.
         grow: Start from the fewest control points the end conditions allow
             and add knots where the fit is worst until each section has its
-            count (:func:`~bspline_varpro.tolerance.grow_to_counts`). With
-            uniform placement the knots are respaced evenly after each step.
+            count (:func:`~bspline_varpro.tolerance.grow_to_counts`). Every
+            step is a fit like any other: with free placement the knots are
+            its unknowns, with uniform placement they are respaced evenly.
             Needs ``num_control_points``.
 
     Returns:
@@ -277,6 +279,7 @@ def fit(
         raise ValueError("tolerance must be finite and positive.")
     if knot_placement not in ("uniform", "free"):
         raise ValueError("knot_placement must be 'uniform' or 'free'.")
+    validate_min_knot_gap(min_knot_gap)
     if grow and knots is not None:
         raise ValueError("Growing the control-point count needs num_control_points, not knots.")
 
@@ -284,84 +287,44 @@ def fit(
 
     options = ChainOptions(continuity, fix_junctions, fix_ends, start_tangent, end_tangent,
                            smoothing, regularization)
-    if max_points_per_section is not None and max_points_per_section < 2:
-        raise ValueError("max_points_per_section must be at least 2.")
-    dense = max_points_per_section is not None and any(len(s) > max_points_per_section for s in sections)
     if grow:
         from .tolerance import grow_to_counts
         result = grow_to_counts(sections, counts, degree, options, params, initial_theta,
-                                max_nfev, max_points_per_section, callback, knot_placement)
-    elif dense:
-        from .tolerance import fit_subsampled
-        result = fit_subsampled(sections, knot_vectors, degree, options, params, initial_theta,
-                                max_nfev, max_points_per_section, callback)
+                                max_nfev, callback, knot_placement, min_knot_gap)
     else:
+        # One loop: with free knots the knot positions are unknowns of it from
+        # the first step, with uniform knots they are not
         result = _fit_once(sections, knot_vectors, degree, options, params, initial_theta,
-                           max_nfev, tolerance, exact_jacobian, verbose, callback)
+                           max_nfev, tolerance, exact_jacobian, verbose, callback,
+                           free_knots=knot_placement == "free", min_knot_gap=min_knot_gap)
     result.options = options
-    if knot_placement == "free" and not grow and not dense and result.message != STOPPED:
-        from .tolerance import polish_knots
-        polished = polish_knots(sections, result, options, callback=callback)
-        if polished.message == STOPPED:
-            result = polished
-        elif polished.rms_error <= result.rms_error:
-            # Moving the knots only refines a converged fit: keep its status.
-            polished.nfev += result.nfev
-            polished.success, polished.message = result.success, result.message
-            polished.options = options
-            result = polished
     return result
 
 
+def validate_min_knot_gap(min_knot_gap: float) -> None:
+    if not (np.isfinite(min_knot_gap) and 0.0 <= min_knot_gap <= 0.5):
+        raise ValueError("min_knot_gap must be between 0 and 0.5.")
+
+
 def _fit_once(sections, knot_vectors, degree, options: ChainOptions, params, initial_theta,
-              max_nfev, tolerance, exact_jacobian, verbose, callback) -> FitResult:
+              max_nfev, tolerance, exact_jacobian, verbose, callback,
+              free_knots: bool = False, min_knot_gap: float = MIN_KNOT_GAP) -> FitResult:
     problem = options.problem(sections, knot_vectors, degree)
-    theta0 = problem.theta
+    kwargs = dict(max_nfev=max_nfev, tolerance=tolerance, exact_jacobian=exact_jacobian,
+                  verbose=verbose, callback=callback)
     if initial_theta is not None:
         theta0 = np.asarray(initial_theta, dtype=np.float64)
         if theta0.shape != (problem.num_params,):
             raise ValueError(f"initial_theta must have {problem.num_params} entries.")
-        result = solve_problem(problem, params, theta0, max_nfev=max_nfev, tolerance=tolerance,
-                               exact_jacobian=exact_jacobian, verbose=verbose, callback=callback)
     else:
-        result = solve_with_continuation(problem, options, params, max_nfev=max_nfev,
-                                         tolerance=tolerance, exact_jacobian=exact_jacobian,
-                                         verbose=verbose, callback=callback)
-    return result
-
-
-def parametric_options(options: ChainOptions, problem: VarProProblem) -> ChainOptions:
-    """The same chain with every geometric junction replaced by its parametric version."""
-    junctions = [Junction(jn.order, geometric=False, fixed=jn.fixed, tangent=jn.tangent)
-                 for jn in problem.junctions]
-    return replace(options, continuity=junctions)
-
-
-def solve_with_continuation(
-    problem: VarProProblem, options: ChainOptions, params, **kwargs,
-) -> FitResult:
-    """Solve geometric junctions starting from the converged parametric solution.
-
-    The geometric problem has flat directions (shape parameters trade off
-    against the data parameterization) that make a cold start drift; the
-    parametric C^k fit is a feasible, well-determined starting point.
-    """
-    if not problem.constraints.has_shape_parameters:
-        return solve_problem(problem, params, problem.theta, **kwargs)
-    base_problem = parametric_options(options, problem).problem(
-        problem.sections, problem.knots, problem.degree)
-    base = solve_problem(base_problem, params, base_problem.theta, **kwargs)
-    theta0 = problem.constraints.theta_from_parametric(base.theta)
-    # Both stages share one evaluation budget
-    max_nfev = kwargs.get("max_nfev")
-    remaining = None if max_nfev is None else max_nfev - base.nfev
-    if base.message == STOPPED or (remaining is not None and remaining < 1):
-        # The same curve as a geometric join (alpha = 1), labelled and shaped like the fit asked for
-        message = STOPPED if base.message == STOPPED else _MESSAGES[0]
-        return result_from_problem(problem, base.parameters, theta0, base.nfev, False, message)
-    result = solve_problem(problem, base.parameters, theta0, **{**kwargs, "max_nfev": remaining})
-    result.nfev += base.nfev
-    return result
+        theta0 = problem.theta
+    if free_knots:
+        from .tolerance import solve_free_knots
+        return solve_free_knots(sections, knot_vectors, degree, options, params, theta0,
+                                min_knot_gap=min_knot_gap, **kwargs)
+    # One run whatever the junction type: geometric junctions start from the
+    # parametric shape values, which satisfy them exactly
+    return solve_problem(problem, params, theta0, **kwargs)
 
 
 def solve_problem(
@@ -370,7 +333,7 @@ def solve_problem(
     theta0: np.ndarray,
     *,
     max_nfev: Optional[int] = None,
-    tolerance: float = 1e-10,
+    tolerance: float = 1e-8,
     exact_jacobian: bool = True,
     verbose: int = 0,
     callback: Optional[Callback] = None,
@@ -528,7 +491,7 @@ def _lm_run(residual, jacobian, x0, max_nfev, tolerance, verbose):
     return result(status)
 
 
-def levenberg_marquardt(residual, jacobian, x0, *, max_nfev=None, tolerance=1e-10, verbose=0,
+def levenberg_marquardt(residual, jacobian, x0, *, max_nfev=None, tolerance=1e-8, verbose=0,
                         max_restarts=8):
     """Levenberg-Marquardt, restarted while it stops on ``xtol`` but still improves.
 

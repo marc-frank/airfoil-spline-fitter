@@ -24,6 +24,7 @@ from spline_fitter.io import (
     parse_spline_data,
 )
 from spline_fitter.optimization.models import (
+    ContinuityMode,
     FitResult,
     OptimizationConfig,
     OptimizerType,
@@ -32,7 +33,6 @@ from spline_fitter.optimization.models import (
 from spline_fitter.project_io import (
     create_optimization_run,
     create_project,
-    get_run_summary,
     load_project,
     save_project,
 )
@@ -111,6 +111,16 @@ def test_selig_with_whole_number_first_point_is_not_lednicer():
     assert coords[:, 0].min() == pytest.approx(0) and coords[:, 0].max() == pytest.approx(1)
 
 
+@pytest.mark.parametrize("text", [
+    "inf 5\n1 0\n0.5 0.06\n0 0\n0.5 -0.06\n1 0\n",
+    "inf 5\n1 0\n0.5 0.06\nnan nan\n0 0\n1e400 0\n0.5 -0.06\n1 0\n",
+], ids=["inf first line", "nan and overflow rows"])
+def test_non_finite_numbers_are_not_coordinates(text):
+    name, coords, precision = _parse(text)
+    assert name == "inf 5" and precision == 2
+    assert coords.tolist() == [[1, 0], [0.5, 0.06], [0, 0], [0.5, -0.06], [1, 0]]
+
+
 @pytest.mark.parametrize("name", ["2412 15", "0012 64"])
 def test_numeric_name_is_a_name(tmp_path, name):
     assert _parse(name + "\n" + "\n".join(ROWS))[0] == name
@@ -166,7 +176,8 @@ def _project(report=None, **options):
                        2, 1e-5, 3, 4, 0.5, report=report)
     project = create_project(airfoil)
     project.optimization_runs.append(create_optimization_run(
-        SplineConfig(degree=2, num_control_points=3), OptimizationConfig(**options), result, []))
+        SplineConfig(degree=2, num_control_points=3, continuity=ContinuityMode.G1,
+                     geometric_continuity=False), OptimizationConfig(**options), result, []))
     return project
 
 
@@ -215,11 +226,68 @@ def test_unknown_optimizer_warns_and_bad_version_is_a_value_error(tmp_path, capl
         load_project(str(path))
 
 
-def test_run_summary_shows_the_fitted_count():
-    run = _project(grow_control_points=True).optimization_runs[0]
-    summary = get_run_summary(run)
-    assert "3 per section, 5 fitted" in summary
-    assert summary.count("Time:") == 1 and "Elapsed: 0.50s" in summary
+def test_non_finite_numbers_are_standard_json_and_round_trip(tmp_path):
+    path = tmp_path / "p.asfproj"
+    project = _project(report={"leading_edge_radius": np.inf, "nested": [{"v": -np.inf}]})
+    project.optimization_runs[0].result.final_error = float("nan")
+    save_project(project, str(path))
+    text = path.read_text(encoding="utf-8")
+
+    def reject(token):
+        raise ValueError(f"non-standard token {token}")
+
+    data = json.loads(text, parse_constant=reject)  # a strict JSON reader accepts it
+    result = data["optimization_runs"][0]["result"]
+    assert result["final_error"] == "NaN" and result["report"]["leading_edge_radius"] == "Infinity"
+    assert result["report"]["nested"] == [{"v": "-Infinity"}]
+    back = load_project(str(path)).optimization_runs[0].result
+    assert np.isnan(back.final_error) and back.report["leading_edge_radius"] == np.inf
+    assert back.report["nested"] == [{"v": -np.inf}]
+    # A file of an earlier version, with bare tokens, loads to the same values
+    path.write_text(json.dumps(data).replace('"NaN"', "NaN").replace('"Infinity"', "Infinity")
+                    .replace('"-Infinity"', "-Infinity"), encoding="utf-8")
+    old = load_project(str(path)).optimization_runs[0].result
+    assert np.isnan(old.final_error) and old.report["leading_edge_radius"] == np.inf
+
+
+def test_written_files_have_unix_line_ends(tmp_path):
+    ctrl = [[(1.0, 0.0), (0.5, 0.1), (0.0, 0.0)], [(0.0, 0.0), (0.5, -0.1), (1.0, 0.0)]]
+    export_airfoil_data(str(tmp_path / "a.dat"), [tuple(p) for p in PTS], name="N")
+    export_spline_data(str(tmp_path / "a.deg2.spline.dat"), 2, ctrl, name="N")
+    save_project(_project(), str(tmp_path / "p.asfproj"))
+    for name in ("a.dat", "a.deg2.spline.dat", "p.asfproj"):
+        content = (tmp_path / name).read_bytes()
+        assert b"\n" in content and b"\r" not in content, name
+
+
+def test_stored_sections_and_degree_are_rebuilt_not_read(tmp_path):
+    path = tmp_path / "p.asfproj"
+    save_project(_project(), str(path))
+    data = json.loads(path.read_text(encoding="utf-8"))
+    junctions = data["airfoil"]["junction_indices"]
+    data["airfoil"]["sections"] = [[[9.0, 9.0]]]
+    data["airfoil"]["num_sections"] = 7
+    data["optimization_runs"][0]["result"]["degree"] = 9
+    data["metadata"]["format_version"] = "0.1"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    project = load_project(str(path))
+    expected = create_airfoil_data([tuple(p) for p in PTS], name="N", precision=6)
+    assert project.airfoil.sections == expected.sections and project.airfoil.num_sections == 2
+    assert list(project.airfoil.junction_indices) == junctions
+    assert project.optimization_runs[0].result.degree == 2
+    assert project.metadata.format_version == "1.0.0"
+
+
+@pytest.mark.parametrize("junctions", [[0], [20, 10], [len(PTS) - 1], [5, 5]])
+def test_junction_indices_that_do_not_split_the_coordinates_are_an_error(tmp_path, junctions):
+    path = tmp_path / "p.asfproj"
+    save_project(_project(), str(path))
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["airfoil"]["junction_indices"] = junctions
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(ValueError, match=re.escape(
+            "Airfoil: the junction indices do not split the coordinates.")):
+        load_project(str(path))
 
 
 # --- geometry, formatting, package ----------------------------------------
@@ -237,6 +305,17 @@ def test_too_few_points_on_one_side_is_an_error():
     points = [(1.0, 0.0), (0.0, 0.0), (0.3, -0.05), (0.6, -0.05), (1.0, 0.0)]
     with pytest.raises(ValueError, match="each side"):
         split_into_sections(points, 4)
+
+
+def test_a_curve_checks_its_knots_with_the_library():
+    from spline_fitter.spline import BSplineCurve2D
+    ctrl = [(0.0, 0.0), (0.3, 0.2), (0.7, 0.2), (1.0, 0.0)]
+    with pytest.raises(ValueError, match=re.escape(
+            "Knot vector length must be control points + degree + 1.")):
+        BSplineCurve2D(2, ctrl, [0, 0, 0, 1, 1, 1])
+    with pytest.raises(ValueError, match="Knot vector must be clamped on"):
+        BSplineCurve2D(2, ctrl, [0, 0, 0.1, 0.5, 1, 1, 1])
+    assert BSplineCurve2D(2, ctrl).knot_vector.tolist() == [0, 0, 0, 0.5, 1, 1, 1]
 
 
 def test_count_groups_thousands_apart_from_the_decimal_point():
