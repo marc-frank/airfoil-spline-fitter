@@ -169,21 +169,14 @@ pub fn chain_deviations(data: &[Vec2], curves: &[BSpline]) -> Vec<f64> {
 /// Ordered data lie between their ordered neighbours, so the window keeps a
 /// point from jumping to a distant part of the chain that passes close (the
 /// other side of a thin trailing edge). `start` is an extra candidate.
-pub fn project_between(
-    data: &[Vec2],
-    curves: &[BSpline],
-    lower: &[f64],
-    upper: &[f64],
-    start: Option<&[f64]>,
-) -> Vec<f64> {
+pub fn project_between(data: &[Vec2], curves: &[BSpline], lower: &[f64], upper: &[f64], start: Option<&[f64]>) -> Vec<f64> {
     const SAMPLES: usize = 16;
     let n = data.len();
     let upper: Vec<f64> = upper.iter().zip(lower).map(|(u, l)| u.max(*l)).collect();
     let mut u = Vec::with_capacity(n);
     let mut best = Vec::with_capacity(n);
     for i in 0..n {
-        let mut candidates: Vec<f64> =
-            (0..=SAMPLES).map(|k| lower[i] + (upper[i] - lower[i]) * (k as f64 / SAMPLES as f64)).collect();
+        let mut candidates: Vec<f64> = (0..=SAMPLES).map(|k| lower[i] + (upper[i] - lower[i]) * (k as f64 / SAMPLES as f64)).collect();
         if let Some(start) = start {
             candidates.push(start[i]);
         }

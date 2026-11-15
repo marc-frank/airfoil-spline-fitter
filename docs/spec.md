@@ -1,5 +1,11 @@
 # Airfoil Spline Fitter: Reimplementation Specification
 
+> **Note.** This specification describes the Python version (PyQt6, NumPy,
+> SciPy) that the Rust workspace in `crates/` replaces. Algorithms,
+> constants, file formats and texts still hold; names of Python modules,
+> Qt widgets and the verification scripts refer to that version. The README
+> lists where the Rust version deliberately differs.
+
 Product: `spline-fitter` 2.0.0 (Python package `spline_fitter`, window title "Airfoil Spline Fitter"), with its fitting library `bspline-varpro` 3.0.0 (`packages/bspline-varpro`).
 Baseline: source tree at commit `2febd13` on `main`, plus the exit fix in `src/spline_fitter/__main__.py` (section 1.1 step 5).
 The specification is this file plus Appendix B, `spec-appendix-icons.md` (the two icon files, base64).

@@ -1,112 +1,73 @@
 ﻿# Spline Fitter
 
-Professional B-spline curve fitting tool for airfoil coordinate data.
+B-spline fitting of airfoil coordinates for CAD: the fewest control points
+that keep every point within a tolerance, with geometric G1-G3 continuity
+where sections meet, written exactly to STEP, IGES or DXF.
 
 ## Features
 
-- **Interactive GUI** for real-time spline fitting visualization
 - **Tolerance mode** (VarPro LM): the fewest control points, with non-uniform
-  knots, whose curve stays within a maximum deviation of every point. The
-  default tolerance follows the file's precision (or its noise level for
-  scans).
-- **Continuity per junction**: parametric C0-C3 or geometric G1-G3, one setting
-  for all junctions or a list such as `G2, C1, G3` for any number of sections
-- **Whole-chain fitting**: the chain of sections is fitted to all points at
-  once. The split only sets where the junctions start, and points move between
-  sections as the curve fits them; with Optimize positions the junctions are
-  fitted too, anywhere
-- **CAD export**: exact STEP AP214, IGES 5.3, and DXF R2000 curves, per section
-  or merged into one B-spline, optionally with a closing line at a blunt
-  trailing edge
+  knots, whose curve stays within a maximum orthogonal deviation of every
+  point. The automatic tolerance follows the file's decimals (or the noise
+  level of scanned data).
+- **Continuity per junction**: parametric C0-C3 or geometric G1-G3, one
+  setting for all junctions or a list such as `G2, C1, G3`.
+- **Whole-chain fitting**: the sections are fitted to all points at once. The
+  split only sets where the junctions start; points move between sections as
+  the curve fits them, and with Optimize positions the junctions move too.
+- **Two methods**: VarPro Levenberg-Marquardt (variable projection with the
+  exact reduced Jacobian; tolerance search, free knots, geometric continuity)
+  and Direct LSQ (one constrained least-squares solve and a joint
+  refinement).
+- **CAD export**: STEP AP214, IGES 5.3 and DXF R2000, per section or merged
+  into one curve, optionally closing a blunt trailing edge.
 - **Fit report**: maximum and RMS deviation, control points and knots,
-  curvature extrema, junction continuity, leading-edge radius, and the
-  maximum thickness and camber with their chord positions (measured between
-  the surfaces at the same x, as airfoil databases do), with a chart of both
-  along the chord and a warning when the tolerance is below the data's
-  rounding error
-- **Import keeps the file's axes**: coordinates already in chords are used as
-  written; others are moved and scaled (never turned) so the leading edge is
-  at x = 0 and the trailing-edge midpoint at (1, 0), so the file's x axis
-  stays the chord line
-- **Knot display**, an interactive curvature comb, and the **deviation** of
-  every data point from the curve, magnified along the normal with the
-  tolerance band; both alternate blue and pink by spline section (one
-  section is all blue), so you can see where each section starts and ends
-- **Two fitting methods**: VarPro Levenberg-Marquardt (tolerance mode, free
-  knots, geometric continuity) and Direct LSQ (one constrained least-squares
-  solve)
-- **Batch processing**: convert entire airfoil libraries
+  curvature extrema, junction continuity, leading-edge radius, maximum
+  thickness and camber with a chart along the chord.
+- **Plots**: knots, a curvature comb (κ to d³κ/ds³) and the deviation of every
+  point magnified along the normal with the tolerance band, live while a fit
+  runs; convergence; and a comparison of the project's runs along any column.
+- **Projects**: every fit is kept as a run in an `.asfproj` file; the
+  explorer filters, sorts and pivots the runs and applies a run's settings.
+- **Sweeps** of degree, control points, sections and smoothing, and **batch
+  conversion** of a folder of airfoils.
+- Reads Selig and Lednicer files in many number formats (decimal commas,
+  Fortran exponents, fixed-width columns, 0-100 scaling), keeping the file's
+  chord line.
 
-VarPro fitting, tolerance search, and the CAD writers come from the
-standalone [`bspline-varpro`](packages/bspline-varpro) library, which can be
-used without the GUI.
+## Building and running
 
-## Installation
+Requires a Rust toolchain (1.80 or later).
 
 ```bash
-pip install spline-fitter
+cargo run --release
 ```
 
-Or for development:
+The binary is `target/release/spline-fitter`. Tests:
 
 ```bash
-git clone https://github.com/airfoil-library/spline-fitter.git
-cd spline-fitter
-pip install -e packages/bspline-varpro
-pip install -e ".[dev]"
+cargo test --workspace
 ```
 
-## Usage
-
-### GUI Application
+The tolerance-search reference fit takes about a minute and is ignored by
+default:
 
 ```bash
-spline-fitter
-# or
-python -m spline_fitter
+cargo test --release -p bspline-varpro -- --ignored
 ```
 
-To launch directly from this source checkout without installing it:
+## Workspace
 
-```bash
-python -m src.spline_fitter
-```
+| Crate | Purpose |
+|---|---|
+| [`bspline-varpro`](crates/bspline-varpro) | The fitting library: knots and basis, variable projection, Levenberg-Marquardt, tolerance search, joint refinement, diagnostics, airfoil helpers, STEP/IGES/DXF export. No GUI. |
+| [`spline-fitter`](crates/spline-fitter) | The application core: airfoil and spline files, section splitting, fit settings, the VarPro and Direct LSQ adapters, the fit report, project files, batch naming, optimizer logs. |
+| [`spline-fitter-gui`](crates/spline-fitter-gui) | The desktop application (egui): sidebar, plots, explorer, dialogs. |
 
-Typical workflow:
+## Spline file format
 
-1. **File > Open Airfoil** loads a `.dat` file (Selig order).
-2. Choose the **VarPro LM** algorithm. **Tolerance mode** and **Auto**
-   tolerance are on by default. Set the number of sections, the degree (5 is
-   recommended for CAD), and the continuity. Continuity is either one
-   **Smoothness** order with a **Continuity Type** (Geometric or Parametric),
-   or a comma-separated list in **Per Junction** with one entry per junction.
-   **Knot placement** is Free (knots move to where they reduce the error
-   most) or Uniform (evenly spaced). **Grow control points** starts from the
-   fewest control points and adds them where the fit is worst; off, the fit
-   starts from the Control Points setting (in tolerance mode the count can
-   still grow or shrink from there).
-3. **Fit Spline**. The status bar shows the maximum and RMS deviation and the
-   control-point count. **Show Knots** marks the knots on the curve, and
-   **Deviation** shows where the fit departs from the data, also while it
-   fits (its arrow sets the height: 5% of the chord at the tolerance).
-   **Curvature comb** and **Deviation** are drawn blue on the first, third,
-   ... spline section and pink on the others; a data point takes the color
-   of the section nearest to it.
-4. **View > Fit Report** (Ctrl+R) shows deviation, fairness, junction,
-   thickness and camber measurements, with thickness and camber charted
-   along the chord.
-5. **File > Export CAD** (Ctrl+E) writes STEP, IGES, or DXF with units and a
-   scale (for example the chord length). **Save Fitted** writes a resampled
-   `.dat` with cosine spacing, and **Save Spline** writes control points with
-   their knot vectors.
-
-Without tolerance mode, VarPro uses the fixed control-point count and supports
-parameter sweeps, like the other optimizers.
-
-### Spline file format
-
-`.spline.dat` files written since version 2 start with the airfoil name,
-followed by comment lines that describe the curves exactly:
+`.spline.dat` files start with the airfoil name, followed by comment lines
+that describe the curves exactly:
 
 ```
 NACA 2412
@@ -115,90 +76,43 @@ NACA 2412
 # sections 2
 # continuity G2
 # section 1 control_points 13
-# knots 1 0.0 0.0 0.0 0.0 0.0 0.0 0.259864810632751 0.3467311126423559 ... 1.0 1.0 1.0 1.0 1.0 1.0
+# knots 1 0.0 0.0 0.0 0.0 0.0 0.0 0.259864810632751 ... 1.0 1.0 1.0 1.0 1.0 1.0
 # section 2 control_points 12
 # knots 2 0.0 0.0 0.0 0.0 0.0 0.0 0.43274513071260046 ... 1.0 1.0 1.0 1.0 1.0 1.0
 1.000000000000 0.000000000000
 ...
 ```
 
-Sections are numbered from 1, and knots are written at full double precision.
+The coordinate lines hold the control points of all sections in order, each
+shared junction point once, so tools that only read coordinates still work.
+Older files without the header load as one section on uniform knots.
 
-The coordinate lines list the control points of all sections in order, with
-each shared junction point written once, so tools that only read coordinates
-still work. `spline_fitter.io.parse_spline_data` reads both this format and
-older files, which had uniform knots and no header.
+## Behaviour
 
-### Programmatic API
+[docs/spec.md](docs/spec.md) specifies the behaviour in full: algorithms,
+constants, file formats, messages and the window. It was written for the
+earlier Python version, which this workspace replaces. The Rust version
+follows it, reproduces its reference fits and file outputs (the tests in
+`crates/*/tests` hold the frozen Python results), and differs on purpose
+where the old behaviour was a defect:
 
-```python
-from spline_fitter import (
-    OptimizationConfig, OptimizerType, SplineConfig, FairnessWeights,
-    create_airfoil_data, run_optimization,
-)
-from spline_fitter.io import parse_airfoil_data
+- Progress goes through typed observers, not process-global counters and
+  callback signature inspection; a stopped fit is a flag, not a message
+  comparison.
+- Direct LSQ builds its junction constraints with the library's chain
+  constraints instead of a second hand-written copy.
+- A coordinate line with an infinite or NaN value is not a point (Python
+  failed with "cannot convert float infinity to integer").
+- Help > About shows the real version.
+- The fit report is a native table, not HTML.
+- Library features nothing used (tangent end conditions, averaged knots, knot
+  insertion, the second airfoil reader, finite-difference Jacobians) and the
+  retired settings (`smoothing_factor`, `early_stop_patience`,
+  `relative_tolerance`, `custom_parameters`) are gone; projects that hold
+  them still open.
 
-filename, name, coords, precision = parse_airfoil_data("naca2412.dat")
-airfoil = create_airfoil_data(coords, filename=filename, name=name, precision=precision)
-result = run_optimization(
-    SplineConfig(degree=5, geometric_continuity=True),          # G2 at the leading edge
-    OptimizationConfig(optimizer=OptimizerType.GN_VARPRO, tolerance=1e-5),
-    airfoil, FairnessWeights(), [],
-)
-result.section_control_points, result.section_knots
-```
-
-For scripts that do not need the GUI's data model, use `bspline-varpro`
-directly (`bspline_varpro.airfoil.fit_airfoil`, `bspline_varpro.export.write`).
-
-### Retired: Hierarchical LSQ
-
-The Hierarchical LSQ optimizer has been removed. Its foot-point projection
-could produce non-monotone parameters and fail, and tolerance mode covers its
-purpose (adding control points where the error is large). Projects that
-contain Hierarchical LSQ runs still open, and those runs load as VarPro LM
-runs.
-
-### Retired: Constrained LSQ, Orthogonal LSQ, Param Optimizer
-
-Constrained LSQ was Direct LSQ with arc-length parameters; Direct LSQ now has
-a Parameterization setting (centripetal or arc length) and the free-junction
-option. Orthogonal LSQ and the two-stage Param Optimizer refined the data
-parameters around an LSQ solve, which VarPro LM does better.
-
-### Retired: general-purpose optimizers
-
-The scipy optimizers (BFGS, SLSQP, L-BFGS-B, CG, TNC, Powell, Nelder-Mead,
-COBYLA) and the global ones (Differential evolution, Dual annealing,
-Basin-hopping) have been removed, with the settings only they read: error
-metric, fairness penalties, iteration limit, seed and search scale. They
-minimized a sampled error over raw control-point coordinates, which VarPro LM
-and Direct LSQ solve directly and much faster. Projects that contain their
-runs still open, and those runs load as VarPro LM runs.
-
-## Architecture
-
-The package is organized into focused modules:
-
-| Module | Purpose |
-| ------ | ------- |
-| `optimization/models.py` | Data structures (AirfoilData, SplineConfig, FitResult, etc.) |
-| `optimization/engine.py` | Optimizer dispatch (`run_optimization`) |
-| `optimization/run_log.py` | Optimizer progress CSVs (`optimizer_logs/`, or `SPLINE_FITTER_LOG_DIR`) |
-| `optimization/optimizers/` | Optimizer adapters, including `gn_varpro.py` for bspline-varpro |
-| `spline.py` | B-spline mathematics and curve evaluation |
-| `geometry.py` | Coordinate processing and geometric utilities |
-| `analysis.py` | Fit report: deviation, curvature, junctions, leading-edge radius |
-| `fairness.py` | Smoothness metrics and regularization |
-| `gui/` | PyQt6 graphical user interface (`ui.py` window, `layout.py` widgets, `file_actions.py` file menu and export, `theme.py` colors and styles) |
-| `io.py` | Airfoil and spline file parsing and export |
-| `project_io.py` | Project files (`.splineproj`) |
-| `formatting.py` | Display formatting utilities |
-
-The GUI's look follows the **Loft** design language, described in
-[docs/design-language.md](docs/design-language.md) and implemented in
-`gui/theme.py`. New GUI code takes its colors, fonts and spacing from there;
-`tests/test_design_language.py` checks it.
+The GUI follows the **Loft** design language,
+[docs/design-language.md](docs/design-language.md).
 
 ## License
 

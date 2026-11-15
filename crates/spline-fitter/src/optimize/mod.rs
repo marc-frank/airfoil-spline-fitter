@@ -80,12 +80,8 @@ pub(crate) mod tests {
     use bspline_varpro::KnotPlacement;
 
     pub fn naca2412() -> AirfoilData {
-        let points: Vec<Vec2> = Naca4::new("2412", true)
-            .unwrap()
-            .points(81)
-            .iter()
-            .map(|p| p.map(|v| (v * 1e6).round_ties_even() / 1e6))
-            .collect();
+        let points: Vec<Vec2> =
+            Naca4::new("2412", true).unwrap().points(81).iter().map(|p| p.map(|v| (v * 1e6).round_ties_even() / 1e6)).collect();
         AirfoilData::new(points, 2, "naca2412", "NACA 2412", 6).unwrap()
     }
 

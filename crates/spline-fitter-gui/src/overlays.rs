@@ -44,7 +44,11 @@ fn interp(x: f64, xs: &[f64], ys: &[f64]) -> f64 {
     }
     let i = xs.partition_point(|&v| v <= x) - 1;
     let (x0, x1) = (xs[i], xs[i + 1]);
-    if x1 == x0 { ys[i] } else { ys[i] + (x - x0) / (x1 - x0) * (ys[i + 1] - ys[i]) }
+    if x1 == x0 {
+        ys[i]
+    } else {
+        ys[i] + (x - x0) / (x1 - x0) * (ys[i + 1] - ys[i])
+    }
 }
 
 fn fine_grid(n: usize) -> Vec<f64> {
@@ -87,7 +91,11 @@ pub fn comb_parameters(curve: &BSpline, n: usize) -> Vec<f64> {
         .zip(&turn)
         .map(|(a, b)| {
             let arc = a / s_last;
-            if turn_last > 0.0 { (1.0 - COMB_TURNING_SHARE) * arc + COMB_TURNING_SHARE * b / turn_last } else { arc }
+            if turn_last > 0.0 {
+                (1.0 - COMB_TURNING_SHARE) * arc + COMB_TURNING_SHARE * b / turn_last
+            } else {
+                arc
+            }
         })
         .collect();
     linspace(0.0, 1.0, n).into_iter().map(|v| interp(v, &measure, &t)).collect()
@@ -115,10 +123,17 @@ fn gradient(f: &[f64], x: &[f64]) -> Vec<f64> {
 /// the first are differentiated numerically on a dense grid.
 pub fn comb_values(curve: &BSpline, t: &[f64], quantity: usize) -> Vec<f64> {
     if quantity <= 1 {
-        return t.iter().map(|&u| {
-            let (k, s) = curvature_and_slope(curve, u);
-            if quantity == 0 { k } else { s }
-        }).collect();
+        return t
+            .iter()
+            .map(|&u| {
+                let (k, s) = curvature_and_slope(curve, u);
+                if quantity == 0 {
+                    k
+                } else {
+                    s
+                }
+            })
+            .collect();
     }
     let fine = fine_grid(t.len());
     let speed: Vec<f64> = fine.iter().map(|&u| curve.derivative(u, 1).norm()).collect();
@@ -139,7 +154,11 @@ fn chord_of_curves(curves: &[BSpline]) -> f64 {
     let xs = curves.iter().flat_map(|c| linspace(0.0, 1.0, 200).into_iter().map(move |u| c.point(u).x));
     let (lo, hi) = xs.fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), x| (l.min(x), h.max(x)));
     let range = hi - lo;
-    if range > 0.0 { range } else { 1.0 }
+    if range > 0.0 {
+        range
+    } else {
+        1.0
+    }
 }
 
 /// The curvature comb: per section, teeth along the right normal whose
@@ -190,7 +209,8 @@ pub fn deviation(coords: &[Vec2], curves: &[BSpline], feet: &FootPoints, height:
     let reference = tolerance.unwrap_or_else(|| feet.distance.iter().fold(0.0, |m, d| m.max(d.abs())));
     let (lo, hi) = coords.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), p| (l.min(p.x), h.max(p.x)));
     let chord = hi - lo;
-    if !(reference > 0.0) || !(chord > 0.0) {
+    let positive = |v: f64| v.is_finite() && v > 0.0;
+    if !positive(reference) || !positive(chord) {
         return None;
     }
     let scale = height * chord / reference;

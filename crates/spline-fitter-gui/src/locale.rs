@@ -11,5 +11,9 @@ pub fn decimal_point() -> char {
     let locale = sys_locale::get_locale().unwrap_or_default().to_lowercase();
     let language = locale.split(['-', '_']).next().unwrap_or("");
     let swiss = locale.ends_with("-ch") && language == "de";
-    if COMMA_LANGUAGES.contains(&language) && !swiss { ',' } else { '.' }
+    if COMMA_LANGUAGES.contains(&language) && !swiss {
+        ','
+    } else {
+        '.'
+    }
 }

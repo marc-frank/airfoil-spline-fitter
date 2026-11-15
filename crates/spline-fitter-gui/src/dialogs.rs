@@ -12,7 +12,10 @@ use crate::plots::{shape_plot, View};
 use crate::runs::COLUMNS;
 use crate::store::Store;
 use crate::theme::{size, Glyph, ThemeMode};
-use crate::widgets::{self, form_row, muted};
+use crate::widgets::{self, form_row, muted, Field, IntOptions};
+
+/// Motion durations: steps of 25, 0 shown as Off.
+const MILLISECONDS: IntOptions = IntOptions { suffix: " milliseconds", zero: Some("Off"), step: 25 };
 
 /// CAD formats: filter text and suffix.
 pub const CAD_FORMATS: [(&str, &str); 3] = [("STEP AP214 (*.step)", ".step"), ("IGES 5.3 (*.igs)", ".igs"), ("DXF R2000 (*.dxf)", ".dxf")];
@@ -130,10 +133,26 @@ impl App {
                         );
                     });
                     form_row(ui, &p, "Points per side", true, "", |ui| {
-                        widgets::int_field(ui, &p, "naca_points", per_side, 10, crate::settings::UNLIMITED, 120.0, "", None, 1, "Spaced closer toward the leading and trailing edge");
+                        widgets::int_field(
+                            ui,
+                            &p,
+                            "naca_points",
+                            per_side,
+                            (10, crate::settings::UNLIMITED),
+                            Field::new(120.0, "Spaced closer toward the leading and trailing edge"),
+                            IntOptions::default(),
+                        );
                     });
                     form_row(ui, &p, "Trailing edge", true, "", |ui| {
-                        widgets::segmented(ui, closed, &[(true, "Closed", "Modified thickness coefficient: a sharp trailing edge"), (false, "Open", "Original thickness coefficient: a thin blunt trailing edge")], 160.0);
+                        widgets::segmented(
+                            ui,
+                            closed,
+                            &[
+                                (true, "Closed", "Modified thickness coefficient: a sharp trailing edge"),
+                                (false, "Open", "Original thickness coefficient: a thin blunt trailing edge"),
+                            ],
+                            160.0,
+                        );
                     });
                     let mut accepted = false;
                     let mut rejected = false;
@@ -141,10 +160,18 @@ impl App {
                     ui.horizontal(|ui| {
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             rejected = widgets::button(ui, "Cancel", "").clicked();
-                            accepted = ui.add_enabled(valid, egui::Button::new("Create").min_size(egui::vec2(0.0, size::CONTROL_HEIGHT))).clicked();
+                            accepted = ui
+                                .add_enabled(valid, egui::Button::new("Create").min_size(egui::vec2(0.0, size::CONTROL_HEIGHT)))
+                                .clicked();
                         });
                     });
-                    if accepted { Answer::Accept } else if rejected { Answer::Reject } else { Answer::Open }
+                    if accepted {
+                        Answer::Accept
+                    } else if rejected {
+                        Answer::Reject
+                    } else {
+                        Answer::Open
+                    }
                 });
                 match answer {
                     Answer::Accept if valid => {
@@ -170,7 +197,15 @@ impl App {
                         widgets::segmented(ui, &mut choice.units, &items, 200.0);
                     });
                     form_row(ui, &p, "Scale", true, "", |ui| {
-                        widgets::scientific_field(ui, &p, "cad_scale", &mut choice.scale, 1e-6, f64::INFINITY, 1.0, 200.0, "Coordinates are multiplied by this factor, for example the chord length.");
+                        widgets::scientific_field(
+                            ui,
+                            &p,
+                            "cad_scale",
+                            &mut choice.scale,
+                            (1e-6, f64::INFINITY),
+                            1.0,
+                            Field::new(200.0, "Coordinates are multiplied by this factor, for example the chord length."),
+                        );
                     });
                     form_row(ui, &p, "Sections", true, "", |ui| {
                         ui.checkbox(&mut choice.merge, "Merge sections into one curve").on_hover_text("Write the whole chain as a single B-spline (junctions become knots).\nOtherwise every section is its own curve.");
@@ -179,7 +214,13 @@ impl App {
                         ui.checkbox(&mut choice.close_te, "Close a blunt trailing edge with a line");
                     });
                     let (a, r, _) = buttons(ui, Some("Export..."), "Cancel", None);
-                    if a { Answer::Accept } else if r { Answer::Reject } else { Answer::Open }
+                    if a {
+                        Answer::Accept
+                    } else if r {
+                        Answer::Reject
+                    } else {
+                        Answer::Open
+                    }
                 });
                 match answer {
                     Answer::Accept => {
@@ -201,11 +242,18 @@ impl App {
                     for (label, folder) in [("Source", &mut source), ("Target", &mut target)] {
                         form_row(ui, &p, label, true, "", |ui| {
                             ui.horizontal(|ui| {
-                                ui.add(egui::Label::new(RichText::new(if folder.is_empty() { "Not chosen" } else { folder.as_str() }).color(p.text_3)).wrap());
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(if folder.is_empty() { "Not chosen" } else { folder.as_str() }).color(p.text_3),
+                                    )
+                                    .wrap(),
+                                );
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                     if widgets::button(ui, "Choose...", "").clicked() {
                                         let home = dirs::home_dir().unwrap_or_default();
-                                        if let Some(dir) = rfd::FileDialog::new().set_title(format!("{label} folder")).set_directory(home).pick_folder() {
+                                        if let Some(dir) =
+                                            rfd::FileDialog::new().set_title(format!("{label} folder")).set_directory(home).pick_folder()
+                                        {
                                             *folder = dir.to_string_lossy().into_owned();
                                         }
                                     }
@@ -214,7 +262,13 @@ impl App {
                         });
                     }
                     let (a, r, _) = buttons(ui, Some("Convert"), "Close", None);
-                    if a { Answer::Accept } else if r { Answer::Reject } else { Answer::Open }
+                    if a {
+                        Answer::Accept
+                    } else if r {
+                        Answer::Reject
+                    } else {
+                        Answer::Open
+                    }
                 });
                 self.batch_source = source;
                 self.batch_target = target;
@@ -231,13 +285,20 @@ impl App {
                 let mut mode = self.theme_mode;
                 let answer = modal(ctx, "Theme", 380.0, |ui| {
                     form_row(ui, &p, "Mode", true, "", |ui| {
-                        let items: Vec<(ThemeMode, &str, &str)> = ThemeMode::ALL.iter().map(|m| (*m, m.label(), if *m == ThemeMode::System { "Follow the light or dark setting of the system" } else { "" })).collect();
+                        let items: Vec<(ThemeMode, &str, &str)> = ThemeMode::ALL
+                            .iter()
+                            .map(|m| {
+                                (*m, m.label(), if *m == ThemeMode::System { "Follow the light or dark setting of the system" } else { "" })
+                            })
+                            .collect();
                         widgets::segmented(ui, &mut mode, &items, 240.0);
                     });
                     form_row(ui, &p, "Temperature", true, "", |ui| {
                         ui.label(RichText::new("Cool").color(p.text_2));
                         ui.spacing_mut().slider_width = size::SLIDER_WIDTH;
-                        let r = ui.add(egui::Slider::new(slider, -100..=100).show_value(false)).on_hover_text("Tint the greys cool (blue) or warm (sand); neutral in the middle");
+                        let r = ui
+                            .add(egui::Slider::new(slider, -100..=100).show_value(false))
+                            .on_hover_text("Tint the greys cool (blue) or warm (sand); neutral in the middle");
                         if r.dragged() && slider.abs() <= 4 {
                             *slider = 0;
                         }
@@ -251,7 +312,11 @@ impl App {
                         *slider = 0;
                         *pending = Some((0, Instant::now() - Duration::from_millis(100)));
                     }
-                    if r { Answer::Reject } else { Answer::Open }
+                    if r {
+                        Answer::Reject
+                    } else {
+                        Answer::Open
+                    }
                 });
                 if mode != self.theme_mode {
                     self.set_theme(Some(mode), None);
@@ -271,17 +336,37 @@ impl App {
                 let (mut scroll, mut zoom) = (self.scroll_ms as usize, self.zoom_ms as usize);
                 let answer = modal(ctx, "Scrolling and zooming", 380.0, |ui| {
                     form_row(ui, &p, "Scrolling", true, "", |ui| {
-                        widgets::int_field(ui, &p, "scroll_ms", &mut scroll, 0, 1000, 200.0, " milliseconds", Some("Off"), 25, "How long a wheel step glides in lists, tables, panels and documents; off jumps at once");
+                        widgets::int_field(
+                            ui,
+                            &p,
+                            "scroll_ms",
+                            &mut scroll,
+                            (0, 1000),
+                            Field::new(200.0, "How long a wheel step glides in lists, tables, panels and documents; off jumps at once"),
+                            MILLISECONDS,
+                        );
                     });
                     form_row(ui, &p, "Zooming", true, "", |ui| {
-                        widgets::int_field(ui, &p, "zoom_ms", &mut zoom, 0, 1000, 200.0, " milliseconds", Some("Off"), 25, "How long a wheel step glides when zooming a plot; off jumps at once");
+                        widgets::int_field(
+                            ui,
+                            &p,
+                            "zoom_ms",
+                            &mut zoom,
+                            (0, 1000),
+                            Field::new(200.0, "How long a wheel step glides when zooming a plot; off jumps at once"),
+                            MILLISECONDS,
+                        );
                     });
                     let (_, r, z) = buttons(ui, None, "Close", Some(("Default", "350 milliseconds scrolling, 650 zooming")));
                     if z {
                         scroll = DEFAULT_SCROLL_MS as usize;
                         zoom = DEFAULT_ZOOM_MS as usize;
                     }
-                    if r { Answer::Reject } else { Answer::Open }
+                    if r {
+                        Answer::Reject
+                    } else {
+                        Answer::Open
+                    }
                 });
                 if (scroll as u64, zoom as u64) != (self.scroll_ms, self.zoom_ms) {
                     self.set_motion(scroll as u64, zoom as u64);
@@ -291,9 +376,15 @@ impl App {
             Dialog::PointsPerSide { value } => {
                 let answer = modal(ctx, "Save fitted airfoil", 380.0, |ui| {
                     ui.label("Points per side, spaced closer toward the leading and trailing edge");
-                    widgets::int_field(ui, &p, "points_per_side", value, 3, 100_000, 160.0, "", None, 1, "");
+                    widgets::int_field(ui, &p, "points_per_side", value, (3, 100_000), Field::new(160.0, ""), IntOptions::default());
                     let (a, r, _) = buttons(ui, Some("OK"), "Cancel", None);
-                    if a { Answer::Accept } else if r { Answer::Reject } else { Answer::Open }
+                    if a {
+                        Answer::Accept
+                    } else if r {
+                        Answer::Reject
+                    } else {
+                        Answer::Open
+                    }
                 });
                 match answer {
                     Answer::Accept => {
@@ -361,7 +452,9 @@ impl App {
             });
             if let Some(shape) = &window.shape {
                 ui.add_space(size::PAD);
-                ui.allocate_ui(egui::vec2(ui.available_width(), ui.available_height().max(size::SHAPE_PLOT_HEIGHT)), |ui| shape_plot(ui, &p, shape, &mut window.view));
+                ui.allocate_ui(egui::vec2(ui.available_width(), ui.available_height().max(size::SHAPE_PLOT_HEIGHT)), |ui| {
+                    shape_plot(ui, &p, shape, &mut window.view)
+                });
             }
         });
         if !open {
@@ -386,7 +479,14 @@ impl App {
                     ui.label("Y axis");
                     let all: Vec<&str> = COLUMNS.iter().map(|c| c.name).collect();
                     let mut x = self.explorer.x_column;
-                    if widgets::combo(ui, "cmp_x", &mut x, &all, 110.0, "The explorer column the runs are plotted along.\nOnly the runs that pass the explorer's filter are shown.") {
+                    if widgets::combo(
+                        ui,
+                        "cmp_x",
+                        &mut x,
+                        &all,
+                        110.0,
+                        "The explorer column the runs are plotted along.\nOnly the runs that pass the explorer's filter are shown.",
+                    ) {
                         self.explorer.x_column = x;
                         self.explorer.forget_points();
                         self.refresh_comparison();
@@ -413,8 +513,24 @@ impl ReportWindow {
     }
 }
 
-/// A toggle with a drop-down of settings beside it.
-fn split_toggle(ui: &mut Ui, p: &crate::theme::Palette, text: &str, on: &mut bool, tip: &str, arrow_tip: &str, id: &str, content: impl FnOnce(&mut Ui) -> bool) -> (bool, bool) {
+/// The texts of a toggle with settings.
+struct SplitToggle<'a> {
+    text: &'a str,
+    tooltip: &'a str,
+    arrow_tooltip: &'a str,
+    id: &'a str,
+}
+
+/// A toggle with a drop-down of settings beside it; returns whether it was
+/// toggled and whether a setting changed.
+fn split_toggle(
+    ui: &mut Ui,
+    p: &crate::theme::Palette,
+    toggle: SplitToggle,
+    on: &mut bool,
+    content: impl FnOnce(&mut Ui) -> bool,
+) -> (bool, bool) {
+    let SplitToggle { text, tooltip: tip, arrow_tooltip: arrow_tip, id } = toggle;
     let mut toggled = false;
     let mut changed = false;
     ui.horizontal(|ui| {
@@ -443,30 +559,32 @@ pub fn comb_toggle(app: &mut App, ui: &mut Ui) {
     let p = app.palette.clone();
     let plot = &mut app.main_plot;
     let mut settings = plot.comb;
-    let (toggled, changed) = split_toggle(
-        ui,
-        &p,
-        "Curvature comb",
-        &mut plot.comb_on,
-        "Display curvature as perpendicular lines from the curve,\nblue and pink on alternate spline sections.\nUse the arrow for quantity, height and density.",
-        "Curvature comb settings",
-        "comb_settings",
-        |ui| {
-            let mut changed = false;
-            form_row(ui, &p, "Quantity", true, "", |ui| changed |= widgets::combo(ui, "comb_quantity", &mut settings.quantity, &QUANTITIES, 180.0, ""));
-            form_row(ui, &p, "Height", true, "", |ui| {
-                let mut h = settings.height;
-                let fmt = |v: f64| spline_fitter::formatting::number(v, ".4f");
-                let parse = |t: &str| widgets::parse_scientific(t);
-                let step = |v: f64, k: i32| v + 0.01 * k as f64;
-                let f = widgets::NumberFormat { format: &fmt, parse: &parse, step: &step };
-                changed |= widgets::number_field(ui, &p, "comb_height", &mut h, (0.0, 1000.0), 120.0, &f, "Length of a tooth, in chords, where the quantity is 1 on the airfoil\nscaled to a unit chord. The comb looks the same at any size of the data.");
-                settings.height = h;
-            });
-            form_row(ui, &p, "Density", true, "", |ui| changed |= widgets::int_field(ui, &p, "comb_density", &mut settings.density, 5, 2000, 120.0, "", None, 1, ""));
-            changed
-        },
-    );
+    let toggle = SplitToggle {
+        text: "Curvature comb",
+        tooltip: "Display curvature as perpendicular lines from the curve,\nblue and pink on alternate spline sections.\nUse the arrow for quantity, height and density.",
+        arrow_tooltip: "Curvature comb settings",
+        id: "comb_settings",
+    };
+    let (toggled, changed) = split_toggle(ui, &p, toggle, &mut plot.comb_on, |ui| {
+        let mut changed = false;
+        form_row(ui, &p, "Quantity", true, "", |ui| {
+            changed |= widgets::combo(ui, "comb_quantity", &mut settings.quantity, &QUANTITIES, 180.0, "")
+        });
+        form_row(ui, &p, "Height", true, "", |ui| {
+            let mut h = settings.height;
+            let fmt = |v: f64| spline_fitter::formatting::number(v, ".4f");
+            let parse = |t: &str| widgets::parse_scientific(t);
+            let step = |v: f64, k: i32| v + 0.01 * k as f64;
+            let f = widgets::NumberFormat { format: &fmt, parse: &parse, step: &step };
+            changed |= widgets::number_field(ui, &p, "comb_height", &mut h, (0.0, 1000.0), Field::new(120.0, "Length of a tooth, in chords, where the quantity is 1 on the airfoil\nscaled to a unit chord. The comb looks the same at any size of the data."), &f);
+            settings.height = h;
+        });
+        form_row(ui, &p, "Density", true, "", |ui| {
+            changed |=
+                widgets::int_field(ui, &p, "comb_density", &mut settings.density, (5, 2000), Field::new(120.0, ""), IntOptions::default())
+        });
+        changed
+    });
     plot.comb = settings;
     if toggled || (changed && plot.comb_on) {
         plot.refresh_comb();
@@ -478,26 +596,34 @@ pub fn deviation_toggle(app: &mut App, ui: &mut Ui) {
     let p = app.palette.clone();
     let plot = &mut app.main_plot;
     let mut height = plot.deviation_height;
-    let (toggled, changed) = split_toggle(
-        ui,
-        &p,
-        "Deviation",
-        &mut plot.deviation_on,
-        "Display the distance of every data point from the curve, magnified\nalong the normal, outward for a point outside, in the color of its\nnearest spline section (as the curvature comb). The dashed lines\nare the tolerance. Use the arrow for the height.",
-        "Deviation settings",
-        "deviation_settings",
-        |ui| {
-            let mut changed = false;
-            form_row(ui, &p, "Height", true, "", |ui| {
-                let fmt = |v: f64| spline_fitter::formatting::number(v, ".3f");
-                let parse = |t: &str| widgets::parse_scientific(t);
-                let step = |v: f64, k: i32| v + 0.01 * k as f64;
-                let f = widgets::NumberFormat { format: &fmt, parse: &parse, step: &step };
-                changed |= widgets::number_field(ui, &p, "deviation_height", &mut height, (0.001, 1.0), 120.0, &f, "How far from the curve the tolerance is drawn, as a share of the chord\n(without a tolerance, the largest deviation).");
-            });
-            changed
-        },
-    );
+    let toggle = SplitToggle {
+        text: "Deviation",
+        tooltip: "Display the distance of every data point from the curve, magnified\nalong the normal, outward for a point outside, in the color of its\nnearest spline section (as the curvature comb). The dashed lines\nare the tolerance. Use the arrow for the height.",
+        arrow_tooltip: "Deviation settings",
+        id: "deviation_settings",
+    };
+    let (toggled, changed) = split_toggle(ui, &p, toggle, &mut plot.deviation_on, |ui| {
+        let mut changed = false;
+        form_row(ui, &p, "Height", true, "", |ui| {
+            let fmt = |v: f64| spline_fitter::formatting::number(v, ".3f");
+            let parse = |t: &str| widgets::parse_scientific(t);
+            let step = |v: f64, k: i32| v + 0.01 * k as f64;
+            let f = widgets::NumberFormat { format: &fmt, parse: &parse, step: &step };
+            changed |= widgets::number_field(
+                ui,
+                &p,
+                "deviation_height",
+                &mut height,
+                (0.001, 1.0),
+                Field::new(
+                    120.0,
+                    "How far from the curve the tolerance is drawn, as a share of the chord\n(without a tolerance, the largest deviation).",
+                ),
+                &f,
+            );
+        });
+        changed
+    });
     plot.deviation_height = height;
     if toggled || changed {
         plot.refresh_deviation();

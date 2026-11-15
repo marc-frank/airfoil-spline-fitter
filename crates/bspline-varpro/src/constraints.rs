@@ -183,14 +183,7 @@ pub struct ChainConstraints {
 }
 
 impl ChainConstraints {
-    pub fn new(
-        sections: &[Vec<Vec2>],
-        knots: &[Vec<f64>],
-        degree: usize,
-        junctions: Vec<Junction>,
-        start: End,
-        end: End,
-    ) -> Result<Self> {
+    pub fn new(sections: &[Vec<Vec2>], knots: &[Vec<f64>], degree: usize, junctions: Vec<Junction>, start: End, end: End) -> Result<Self> {
         if junctions.len() + 1 != sections.len() {
             bail!("Need one junction per pair of consecutive sections.");
         }
@@ -218,7 +211,11 @@ impl ChainConstraints {
             .iter()
             .map(|s| {
                 let length: f64 = s.windows(2).map(|w| (w[1] - w[0]).norm()).sum();
-                if length == 0.0 { 1.0 } else { length }
+                if length == 0.0 {
+                    1.0
+                } else {
+                    length
+                }
             })
             .collect();
         let slots = junctions
@@ -266,10 +263,7 @@ impl ChainConstraints {
 
     /// `θ` of the parametric join: `α = 1`, `β = γ = 0`.
     pub fn parametric_params(&self) -> Vec<f64> {
-        self.slots
-            .iter()
-            .map(|&(j, shape)| if shape == Shape::Alpha { alpha_parameter(1.0, self.ratio(j)) } else { 0.0 })
-            .collect()
+        self.slots.iter().map(|&(j, shape)| if shape == Shape::Alpha { alpha_parameter(1.0, self.ratio(j)) } else { 0.0 }).collect()
     }
 
     /// `ln(α/ratio)` per `α` slot and its derivative `(dα/da)/α` with

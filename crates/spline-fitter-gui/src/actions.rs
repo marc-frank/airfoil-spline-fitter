@@ -27,7 +27,11 @@ fn extension(path: &Path) -> String {
 }
 
 fn plural(k: usize) -> &'static str {
-    if k == 1 { "" } else { "s" }
+    if k == 1 {
+        ""
+    } else {
+        "s"
+    }
 }
 
 impl App {
@@ -36,7 +40,9 @@ impl App {
         if self.fitting() {
             return;
         }
-        if let Some(path) = FileDialog::new().set_title("Open airfoil").set_directory(home()).add_filter("Airfoil data", &["dat"]).pick_file() {
+        if let Some(path) =
+            FileDialog::new().set_title("Open airfoil").set_directory(home()).add_filter("Airfoil data", &["dat"]).pick_file()
+        {
             self.load_airfoil(&path);
         }
     }
@@ -100,7 +106,13 @@ impl App {
         self.airfoil_path = path.to_string();
         self.main_plot.set_data(&airfoil.coordinates);
         self.loss.reset();
-        self.set_status(format!("{verb}: {} ({} points, {} sections: {})", airfoil.display_name(), airfoil.coordinates.len(), airfoil.num_sections(), airfoil.section_sizes()));
+        self.set_status(format!(
+            "{verb}: {} ({} points, {} sections: {})",
+            airfoil.display_name(),
+            airfoil.coordinates.len(),
+            airfoil.num_sections(),
+            airfoil.section_sizes()
+        ));
         self.airfoil = Some(airfoil);
         self.update_auto_tolerance();
         self.accept_settings_quietly();
@@ -130,7 +142,13 @@ impl App {
             Ok(a) => {
                 self.fit = None;
                 self.projects.shown_run = None;
-                self.set_status(format!("Re-split: {} ({} points, {} sections: {})", a.display_name(), a.coordinates.len(), a.num_sections(), a.section_sizes()));
+                self.set_status(format!(
+                    "Re-split: {} ({} points, {} sections: {})",
+                    a.display_name(),
+                    a.coordinates.len(),
+                    a.num_sections(),
+                    a.section_sizes()
+                ));
                 self.main_plot.set_data(&a.coordinates);
                 self.airfoil = Some(a);
             }
@@ -189,10 +207,17 @@ impl App {
         let (Some(fit), Some(airfoil)) = (self.fit.clone(), self.airfoil.clone()) else { return };
         let name = if airfoil.name.is_empty() { &airfoil.filename } else { &airfoil.name };
         let default = format!("{}_fitted.dat", file_stem(name, "airfoil"));
-        let Some(path) = FileDialog::new().set_title("Save fitted airfoil").set_directory(home()).set_file_name(&default).add_filter("Airfoil data", &["dat"]).save_file() else {
+        let Some(path) = FileDialog::new()
+            .set_title("Save fitted airfoil")
+            .set_directory(home())
+            .set_file_name(&default)
+            .add_filter("Airfoil data", &["dat"])
+            .save_file()
+        else {
             return self.set_status("Save cancelled.");
         };
-        let result = resample(&fit.curves(), per_side).and_then(|points| export_airfoil_data(&path, &points, Some(name), Some(airfoil.precision.max(6))));
+        let result = resample(&fit.curves(), per_side)
+            .and_then(|points| export_airfoil_data(&path, &points, Some(name), Some(airfoil.precision.max(6))));
         match result {
             Ok(()) => self.set_status(format!("Saved: {}", path.display())),
             Err(e) => self.fail(format!("Save failed: {e}")),
@@ -206,7 +231,13 @@ impl App {
         };
         let stem = if airfoil.filename.is_empty() { &airfoil.name } else { &airfoil.filename };
         let default = format!("{}.deg{}.spline.dat", file_stem(stem, "airfoil"), fit.degree);
-        let Some(path) = FileDialog::new().set_title("Save spline control points").set_directory(home()).set_file_name(&default).add_filter("Spline data", &["spline.dat", "dat"]).save_file() else {
+        let Some(path) = FileDialog::new()
+            .set_title("Save spline control points")
+            .set_directory(home())
+            .set_file_name(&default)
+            .add_filter("Spline data", &["spline.dat", "dat"])
+            .save_file()
+        else {
             return self.set_status("Save cancelled.");
         };
         let continuity = self
@@ -295,7 +326,13 @@ impl App {
         if self.projects.file.is_none() || !self.projects.modified {
             return true;
         }
-        let name = self.projects.path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "the project".into());
+        let name = self
+            .projects
+            .path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "the project".into());
         let answer = MessageDialog::new()
             .set_level(MessageLevel::Warning)
             .set_title("Unsaved runs")
@@ -339,7 +376,13 @@ impl App {
         if self.fitting() {
             return;
         }
-        if let Some(path) = FileDialog::new().set_title("Open project").set_directory(home()).add_filter("Spline project", &["asfproj"]).add_filter("All files", &["*"]).pick_file() {
+        if let Some(path) = FileDialog::new()
+            .set_title("Open project")
+            .set_directory(home())
+            .add_filter("Spline project", &["asfproj"])
+            .add_filter("All files", &["*"])
+            .pick_file()
+        {
             self.open_project(&path);
         }
     }
@@ -388,7 +431,11 @@ impl App {
         if let Some(last) = self.projects.file.as_ref().and_then(|f| f.runs.last()).cloned() {
             self.apply_run_settings(&last);
             self.show_run(&last);
-            self.set_status(format!("Loaded project with {run_count} run{}, showing {}", plural(run_count), last.optimization_config.optimizer.display_name()));
+            self.set_status(format!(
+                "Loaded project with {run_count} run{}, showing {}",
+                plural(run_count),
+                last.optimization_config.optimizer.display_name()
+            ));
         } else {
             self.set_status(format!("Loaded project: {}", path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()));
         }

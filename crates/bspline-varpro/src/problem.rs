@@ -113,9 +113,8 @@ impl VarProProblem {
         let total = *offsets.last().unwrap();
 
         let mut penalty = DMatrix::identity(total, total) * regularization;
-        let bending_energy = (smoothing > 0.0).then(|| {
-            block_diag(&knots.iter().map(|k| bending_energy_matrix(k, degree)).collect::<Vec<_>>())
-        });
+        let bending_energy =
+            (smoothing > 0.0).then(|| block_diag(&knots.iter().map(|k| bending_energy_matrix(k, degree)).collect::<Vec<_>>()));
         if let Some(s) = &bending_energy {
             penalty += s * smoothing;
         }
@@ -142,13 +141,9 @@ impl VarProProblem {
         let moving: Vec<bool> = chords.iter().map(|&c| c > 1e-12 * largest.max(1e-300)).collect();
         let local: Vec<Vec<f64>> = sections.iter().map(|s| centripetal_parameters(s, 0.5)).collect();
         let reference = chain_parameters(&local, sections);
-        let gap_section: Vec<f64> = reference
-            .windows(2)
-            .map(|w| (0.5 * (w[0] + w[1])).floor().min(num_sections as f64 - 1.0))
-            .collect();
-        let speed_pairs: Vec<usize> = (0..chords.len().saturating_sub(1))
-            .filter(|&i| moving[i] && moving[i + 1] && gap_section[i] == gap_section[i + 1])
-            .collect();
+        let gap_section: Vec<f64> = reference.windows(2).map(|w| (0.5 * (w[0] + w[1])).floor().min(num_sections as f64 - 1.0)).collect();
+        let speed_pairs: Vec<usize> =
+            (0..chords.len().saturating_sub(1)).filter(|&i| moving[i] && moving[i + 1] && gap_section[i] == gap_section[i + 1]).collect();
         let log_chords = chords.iter().zip(&moving).map(|(c, &m)| if m { c.ln() } else { 0.0 }).collect();
         let speed_pull = SPEED_PULL * spread.sqrt();
 
@@ -195,7 +190,11 @@ impl VarProProblem {
     }
 
     fn num_speed_rows(&self) -> usize {
-        if self.speed_pull > 0.0 { self.speed_pairs.len() } else { 0 }
+        if self.speed_pull > 0.0 {
+            self.speed_pairs.len()
+        } else {
+            0
+        }
     }
 
     fn layout(&self) -> Layout {
@@ -249,8 +248,7 @@ impl VarProProblem {
             let d = &constraints.d - &constraints.c * &center;
             let (offset, mu) = kkt.solve_full(&rhs, Some(&d));
             let p = offset + center;
-            *self.cache.borrow_mut() =
-                Some(Solution { u: u.to_vec(), theta: theta.to_vec(), n, p, mu, kkt, constraints });
+            *self.cache.borrow_mut() = Some(Solution { u: u.to_vec(), theta: theta.to_vec(), n, p, mu, kkt, constraints });
         }
         std::cell::Ref::map(self.cache.borrow(), |s| s.as_ref().unwrap())
     }

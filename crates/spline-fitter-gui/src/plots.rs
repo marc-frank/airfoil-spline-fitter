@@ -93,7 +93,15 @@ fn tick_label(mark: GridMark, log: bool) -> String {
 }
 
 /// Shows a plot frame and returns its transform; `paint` draws the items.
-pub fn show_plot(ui: &mut Ui, p: &Palette, id: &str, view: &mut View, axes: &Axes, motion_ms: u64, paint: impl FnOnce(&Canvas)) -> Response {
+pub fn show_plot(
+    ui: &mut Ui,
+    p: &Palette,
+    id: &str,
+    view: &mut View,
+    axes: &Axes,
+    motion_ms: u64,
+    paint: impl FnOnce(&Canvas),
+) -> Response {
     let rect = ui.available_rect_before_wrap();
     ui.painter().rect_filled(rect, 0.0, p.canvas);
     let log_x = axes.log_x;
@@ -203,7 +211,17 @@ pub enum Marker {
 
 impl Canvas {
     fn screen(&self, p: [f64; 2]) -> Option<Pos2> {
-        let axis = |v: f64, log: bool| if log { if v > 0.0 { Some(v.log10()) } else { None } } else { Some(v) };
+        let axis = |v: f64, log: bool| {
+            if log {
+                if v > 0.0 {
+                    Some(v.log10())
+                } else {
+                    None
+                }
+            } else {
+                Some(v)
+            }
+        };
         let x = axis(p[0], self.log_x)?;
         let y = axis(p[1], self.log_y)?;
         (x.is_finite() && y.is_finite()).then(|| self.transform.position_from_point(&PlotPoint::new(x, y)))
@@ -382,7 +400,8 @@ impl MainPlot {
     }
 
     pub fn refresh_comb(&mut self) {
-        self.comb_strokes = (self.comb_on && !self.curves.is_empty()).then(|| comb(&self.curves, self.comb.quantity, self.comb.height, self.comb.density));
+        self.comb_strokes =
+            (self.comb_on && !self.curves.is_empty()).then(|| comb(&self.curves, self.comb.quantity, self.comb.height, self.comb.density));
     }
 
     pub fn refresh_deviation(&mut self) {
@@ -435,7 +454,13 @@ impl MainPlot {
             // Construction: the control polygon.
             for curve in &self.curves {
                 c.polyline(curve.control_points.iter().map(xy), Stroke::new(1.0, alpha(p.construction, 170)), true);
-                c.markers(curve.control_points.iter().map(xy), Marker::Square, size::CONTROL_SIZE, p.canvas, Stroke::new(1.0, p.construction));
+                c.markers(
+                    curve.control_points.iter().map(xy),
+                    Marker::Square,
+                    size::CONTROL_SIZE,
+                    p.canvas,
+                    Stroke::new(1.0, p.construction),
+                );
             }
             // Measured data.
             c.markers(self.data.iter().map(xy), Marker::Circle, size::DATA_SIZE, alpha(p.data(), 220), Stroke::NONE);
@@ -482,10 +507,12 @@ impl LossPlot {
         let shown = n.min(MAX_PLOT_POINTS);
         let mut idx: Vec<usize> = linspace(0.0, n.saturating_sub(1) as f64, shown).iter().map(|v| v.round() as usize).collect();
         idx.dedup();
-        idx.iter().map(|&i| {
-            let (it, t, e) = self.data[i];
-            [if self.x_axis == 0 { it as f64 } else { t }, e]
-        }).collect()
+        idx.iter()
+            .map(|&i| {
+                let (it, t, e) = self.data[i];
+                [if self.x_axis == 0 { it as f64 } else { t }, e]
+            })
+            .collect()
     }
 
     pub fn show(&mut self, ui: &mut Ui, p: &Palette, motion_ms: u64) {
@@ -538,7 +565,14 @@ impl ComparisonPlot {
 
     pub fn show(&mut self, ui: &mut Ui, p: &Palette, motion_ms: u64) {
         let ticks = self.ticks.clone();
-        let axes = Axes { x_label: &self.x_label, y_label: &self.y_label, log_x: self.log_x, log_y: self.log_y, x_ticks: ticks.as_deref(), equal_aspect: false };
+        let axes = Axes {
+            x_label: &self.x_label,
+            y_label: &self.y_label,
+            log_x: self.log_x,
+            log_y: self.log_y,
+            x_ticks: ticks.as_deref(),
+            equal_aspect: false,
+        };
         let (points, marked, connected) = (&self.points, &self.marked, self.connected);
         show_plot(ui, p, "comparison_plot", &mut self.view, &axes, motion_ms, |c| {
             if connected {
@@ -559,12 +593,25 @@ pub fn shape_plot(ui: &mut Ui, p: &Palette, shape: &spline_fitter::bspline_varpr
         view.fit(bounds_of(thickness.iter().chain(camber.iter()).copied()));
         view.follow = false;
     }
-    let axes = Axes { x_label: "Chord (%)", y_label: "Percent of the chord", log_x: false, log_y: false, x_ticks: None, equal_aspect: false };
+    let axes =
+        Axes { x_label: "Chord (%)", y_label: "Percent of the chord", log_x: false, log_y: false, x_ticks: None, equal_aspect: false };
     show_plot(ui, p, "shape_plot", view, &axes, 0, |c| {
         c.polyline(thickness.iter().copied(), Stroke::new(1.5, p.trace()), false);
         c.polyline(camber.iter().copied(), Stroke::new(1.5, p.construction), true);
-        c.markers([[100.0 * shape.max_thickness_x, 100.0 * shape.max_thickness]], Marker::Circle, 7.0, p.trace(), Stroke::new(2.0, p.canvas));
-        c.markers([[100.0 * shape.max_camber_x, 100.0 * shape.max_camber]], Marker::Circle, 7.0, p.construction, Stroke::new(2.0, p.canvas));
+        c.markers(
+            [[100.0 * shape.max_thickness_x, 100.0 * shape.max_thickness]],
+            Marker::Circle,
+            7.0,
+            p.trace(),
+            Stroke::new(2.0, p.canvas),
+        );
+        c.markers(
+            [[100.0 * shape.max_camber_x, 100.0 * shape.max_camber]],
+            Marker::Circle,
+            7.0,
+            p.construction,
+            Stroke::new(2.0, p.canvas),
+        );
         let top_right = c.frame().right_top() + EVec2::new(-12.0, 12.0);
         c.text(top_right, "Thickness", p.trace());
         c.text(top_right + EVec2::new(0.0, 16.0), "Camber", p.construction);

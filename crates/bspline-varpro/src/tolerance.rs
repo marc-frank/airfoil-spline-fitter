@@ -14,8 +14,8 @@ use crate::basis::{clamped_knots, distinct, interior_knots, num_control_points, 
 use crate::chain::{chain_data, chain_deviations, groups, project_to_chain, section_ranges, Parameters};
 use crate::constraints::minimum_control_points;
 use crate::fitting::{
-    reduced_jacobian, result_from_problem, solve_problem, solve_with_continuation, start_parameters, validate_sections,
-    ChainOptions, FitResult, KnotPlacement,
+    reduced_jacobian, result_from_problem, solve_problem, solve_with_continuation, start_parameters, validate_sections, ChainOptions,
+    FitResult, KnotPlacement,
 };
 use crate::joint::refine;
 use crate::lm::{levenberg_marquardt, Model, Stopped};
@@ -30,26 +30,64 @@ const POLISH_BUDGET: usize = 60;
 /// Smallest polished knot span (unless the data are closer).
 const MIN_GAP: f64 = 1e-3;
 
-/// Refits on new knots, subsampling dense sections.
-#[allow(clippy::too_many_arguments)]
-fn refit(
-    sections: &[Vec<Vec2>],
-    knots: Vec<Vec<f64>>,
-    degree: usize,
-    options: &ChainOptions,
-    u: &[f64],
-    theta: Option<&[f64]>,
-    max_nfev: Option<usize>,
-    max_points: Option<usize>,
-    observer: &mut dyn Observer,
-) -> Result<FitResult> {
-    if let Some(m) = max_points.filter(|&m| sections.iter().any(|s| s.len() > m)) {
-        return fit_subsampled(sections, knots, degree, options, u, theta, max_nfev, m, observer);
+/// What every refit of one fit shares: the data, degree, constraints and
+/// budgets.
+#[derive(Clone, Copy)]
+pub(crate) struct Setup<'a> {
+    pub sections: &'a [Vec<Vec2>],
+    pub degree: usize,
+    pub options: &'a ChainOptions,
+    /// Residual evaluations per solve.
+    pub max_nfev: Option<usize>,
+    /// Subsample sections longer than this.
+    pub max_points: Option<usize>,
+}
+
+impl Setup<'_> {
+    /// Refits on new knots from `(u, θ)`, subsampling dense sections.
+    fn refit(&self, knots: Vec<Vec<f64>>, u: &[f64], theta: Option<&[f64]>, observer: &mut dyn Observer) -> Result<FitResult> {
+        if let Some(m) = self.max_points.filter(|&m| self.sections.iter().any(|s| s.len() > m)) {
+            return self.subsampled(knots, u, theta, m, observer);
+        }
+        let problem = self.options.problem(self.sections, knots, self.degree)?;
+        match theta.filter(|t| t.len() == problem.num_params()) {
+            Some(theta) => Ok(solve_problem(&problem, u, theta, self.max_nfev, observer)),
+            None => solve_with_continuation(&problem, self.options, self.sections, u, self.max_nfev, observer),
+        }
     }
-    let problem = options.problem(sections, knots, degree)?;
-    match theta.filter(|t| t.len() == problem.num_params()) {
-        Some(theta) => Ok(solve_problem(&problem, u, theta, max_nfev, observer)),
-        None => solve_with_continuation(&problem, options, sections, u, max_nfev, observer),
+
+    /// Variable projection on a subsample of at most `max_points` per
+    /// section, then joint refinement on all points.
+    ///
+    /// Variable projection costs `O(n³)` per iteration in the number of
+    /// points, the joint solver `O(n k²)` in the number of control coordinates.
+    pub(crate) fn subsampled(
+        &self,
+        knots: Vec<Vec<f64>>,
+        u: &[f64],
+        theta: Option<&[f64]>,
+        max_points: usize,
+        observer: &mut dyn Observer,
+    ) -> Result<FitResult> {
+        let data = chain_data(self.sections);
+        let indices: Vec<Vec<usize>> = section_ranges(self.sections)
+            .into_iter()
+            .map(|(first, last)| subsample_indices(last - first + 1, max_points).into_iter().map(|i| first + i).collect())
+            .collect();
+        let subsets: Vec<Vec<Vec2>> = indices.iter().map(|ix| ix.iter().map(|&i| data[i]).collect()).collect();
+        let mut chosen: Vec<usize> = indices.concat();
+        chosen.sort_unstable();
+        chosen.dedup();
+        let u_chosen: Vec<f64> = chosen.iter().map(|&i| u[i]).collect();
+        let coarse_setup = Setup { sections: &subsets, max_points: None, ..*self };
+        let mut coarse = coarse_setup.refit(knots, &u_chosen, theta, observer)?;
+        coarse.parameters = project_to_chain(&data, &coarse.curves(), &chosen, &coarse.parameters);
+        if coarse.stopped {
+            return Ok(coarse);
+        }
+        let mut refined = refine(self.sections, &coarse, self.options, observer)?;
+        refined.nfev += coarse.nfev;
+        Ok(refined)
     }
 }
 
@@ -61,42 +99,6 @@ fn subsample_indices(n: usize, m: usize) -> Vec<usize> {
     let mut indices: Vec<usize> = crate::basis::linspace(0.0, (n - 1) as f64, m).iter().map(|v| v.round_ties_even() as usize).collect();
     indices.dedup();
     indices
-}
-
-/// Variable projection on a subsample, then joint refinement on all points.
-///
-/// Variable projection costs `O(n³)` per iteration in the number of points,
-/// the joint solver `O(n k²)` in the number of control coordinates.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn fit_subsampled(
-    sections: &[Vec<Vec2>],
-    knots: Vec<Vec<f64>>,
-    degree: usize,
-    options: &ChainOptions,
-    u: &[f64],
-    theta: Option<&[f64]>,
-    max_nfev: Option<usize>,
-    max_points: usize,
-    observer: &mut dyn Observer,
-) -> Result<FitResult> {
-    let data = chain_data(sections);
-    let indices: Vec<Vec<usize>> = section_ranges(sections)
-        .into_iter()
-        .map(|(first, last)| subsample_indices(last - first + 1, max_points).into_iter().map(|i| first + i).collect())
-        .collect();
-    let subsets: Vec<Vec<Vec2>> = indices.iter().map(|ix| ix.iter().map(|&i| data[i]).collect()).collect();
-    let mut chosen: Vec<usize> = indices.concat();
-    chosen.sort_unstable();
-    chosen.dedup();
-    let u_chosen: Vec<f64> = chosen.iter().map(|&i| u[i]).collect();
-    let mut coarse = refit(&subsets, knots, degree, options, &u_chosen, theta, max_nfev, None, observer)?;
-    coarse.parameters = project_to_chain(&data, &coarse.curves(), &chosen, &coarse.parameters);
-    if coarse.stopped {
-        return Ok(coarse);
-    }
-    let mut refined = refine(sections, &coarse, options, observer)?;
-    refined.nfev += coarse.nfev;
-    Ok(refined)
 }
 
 /// Distinct knots and the span index of every parameter.
@@ -158,7 +160,11 @@ fn median(values: &[f64]) -> f64 {
     let mut v = values.to_vec();
     v.sort_by(f64::total_cmp);
     let n = v.len();
-    if n % 2 == 1 { v[n / 2] } else { 0.5 * (v[n / 2 - 1] + v[n / 2]) }
+    if n % 2 == 1 {
+        v[n / 2]
+    } else {
+        0.5 * (v[n / 2 - 1] + v[n / 2])
+    }
 }
 
 fn max_deviation(data: &[Vec2], result: &FitResult) -> f64 {
@@ -198,7 +204,13 @@ impl KnotGaps {
                     offset += floor.len();
                     let total: f64 = gaps.iter().sum();
                     let mut sum = 0.0;
-                    let interior: Vec<f64> = gaps[..gaps.len() - 1].iter().map(|g| { sum += g; sum / total }).collect();
+                    let interior: Vec<f64> = gaps[..gaps.len() - 1]
+                        .iter()
+                        .map(|g| {
+                            sum += g;
+                            sum / total
+                        })
+                        .collect();
                     clamped_knots(self.degree, &interior)
                 }
             })
@@ -292,16 +304,10 @@ impl Model for Polish<'_> {
 /// spans without data where the curve can wobble unseen. The budget stays
 /// capped: the error is so flat in the knot positions that a converged
 /// polish takes thousands of evaluations for well under a percent.
-pub fn polish_knots(
-    sections: &[Vec<Vec2>],
-    result: &FitResult,
-    options: &ChainOptions,
-    observer: &mut dyn Observer,
-) -> Result<FitResult> {
+pub fn polish_knots(sections: &[Vec<Vec2>], result: &FitResult, options: &ChainOptions, observer: &mut dyn Observer) -> Result<FitResult> {
     let degree = result.degree;
     let interiors: Vec<&[f64]> = result.knots.iter().map(|k| interior_knots(k, degree)).collect();
-    let counts: Vec<usize> =
-        interiors.iter().map(|inner| if inner.windows(2).all(|w| w[1] > w[0]) { inner.len() } else { 0 }).collect();
+    let counts: Vec<usize> = interiors.iter().map(|inner| if inner.windows(2).all(|w| w[1] > w[0]) { inner.len() } else { 0 }).collect();
     if counts.iter().sum::<usize>() == 0 {
         return Ok(result.clone());
     }
@@ -331,8 +337,7 @@ pub fn polish_knots(
         n_eta + result.theta.len() + xi0.len(),
         t_to_eta(&result.parameters).into_iter().chain(result.theta.iter().copied()).chain(xi0),
     );
-    let mut model =
-        Polish { sections, options, gaps, n_eta, n_theta: result.theta.len(), cached: None, observer };
+    let mut model = Polish { sections, options, gaps, n_eta, n_theta: result.theta.len(), cached: None, observer };
     match levenberg_marquardt(&mut model, x0, Some(POLISH_BUDGET), crate::fitting::LM_TOLERANCE) {
         Err(Stopped) => Ok(result.clone().stop()),
         Ok(solution) => {
@@ -351,26 +356,21 @@ pub fn polish_knots(
 /// can be split, any span holding two points is. Free placement finally
 /// polishes the knots (unless subsampled); uniform placement respaces the
 /// section evenly with the new count.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn grow_to_counts(
-    sections: &[Vec<Vec2>],
+    setup: Setup,
     counts: &[usize],
-    degree: usize,
-    options: &ChainOptions,
     mut u: Vec<f64>,
-    max_nfev: Option<usize>,
-    max_points: Option<usize>,
     placement: KnotPlacement,
     observer: &mut dyn Observer,
 ) -> Result<FitResult> {
+    let Setup { sections, degree, options, max_points, .. } = setup;
     let need = minimum_control_points(&options.orders(sections.len())?, degree);
-    let mut knots: Vec<Vec<f64>> =
-        need.iter().zip(counts).map(|(&n, &c)| open_uniform_knots(degree, n.min(c))).collect::<Result<_>>()?;
+    let mut knots: Vec<Vec<f64>> = need.iter().zip(counts).map(|(&n, &c)| open_uniform_knots(degree, n.min(c))).collect::<Result<_>>()?;
     let data = chain_data(sections);
     let mut theta: Option<Vec<f64>> = None;
     let mut result;
     loop {
-        result = refit(sections, knots.clone(), degree, options, &u, theta.as_deref(), max_nfev, max_points, observer)?;
+        result = setup.refit(knots.clone(), &u, theta.as_deref(), observer)?;
         if result.stopped {
             return Ok(result);
         }
@@ -511,12 +511,9 @@ pub fn fit_to_tolerance(
     let uniform = options.knot_placement == KnotPlacement::Uniform;
     let num_sections = sections.len();
     let need = minimum_control_points(&chain.orders(num_sections)?, degree);
-    let mut knots: Vec<Vec<f64>> = need
-        .iter()
-        .map(|&n| open_uniform_knots(degree, options.initial_control_points.map_or(n, |c| c.max(n))))
-        .collect::<Result<_>>()?;
-    let limits: Vec<usize> =
-        sections.iter().map(|s| (s.len() - 1).min(options.max_control_points.unwrap_or(s.len()))).collect();
+    let mut knots: Vec<Vec<f64>> =
+        need.iter().map(|&n| open_uniform_knots(degree, options.initial_control_points.map_or(n, |c| c.max(n)))).collect::<Result<_>>()?;
+    let limits: Vec<usize> = sections.iter().map(|s| (s.len() - 1).min(options.max_control_points.unwrap_or(s.len()))).collect();
     if need.iter().zip(&limits).any(|(n, l)| n > l) {
         bail!("Sections have too few points for the requested end conditions.");
     }
@@ -525,6 +522,7 @@ pub fn fit_to_tolerance(
     let max_points = options.max_points_per_section;
     let mut theta: Option<Vec<f64>> = None;
     let mut steps = Steps { inner: observer, stopped: false };
+    let setup = Setup { sections, degree, options: chain, max_nfev: options.max_nfev, max_points };
 
     let finish = |mut result: FitResult, deviation: f64, success: bool, message: String| {
         result.max_deviation = Some(deviation);
@@ -534,13 +532,15 @@ pub fn fit_to_tolerance(
         Ok(result)
     };
     let stopped = |result: FitResult, deviation: f64| finish(result, deviation, false, crate::STOPPED.to_string());
-    let done = |result: FitResult, deviation: f64| finish(result, deviation, true, format!("Within tolerance {}.", crate::numfmt::general6(tolerance)));
+    let done = |result: FitResult, deviation: f64| {
+        finish(result, deviation, true, format!("Within tolerance {}.", crate::numfmt::general6(tolerance)))
+    };
 
     let mut result = None;
     let mut deviation = f64::NAN;
     let mut met = false;
     for _ in 0..options.max_iterations {
-        let fitted = refit(sections, knots.clone(), degree, chain, &u, theta.as_deref(), options.max_nfev, max_points, &mut steps)?;
+        let fitted = setup.refit(knots.clone(), &u, theta.as_deref(), &mut steps)?;
         u = fitted.parameters.clone();
         theta = Some(fitted.theta.clone());
         let devs = chain_deviations(&data, &fitted.curves());
@@ -586,7 +586,7 @@ pub fn fit_to_tolerance(
             while num_control_points(&result.knots[s], degree) > need[s] {
                 let mut trial_knots = result.knots.clone();
                 trial_knots[s] = open_uniform_knots(degree, num_control_points(&result.knots[s], degree) - 1)?;
-                let trial = refit(sections, trial_knots, degree, chain, &result.parameters, Some(&result.theta), options.max_nfev, max_points, &mut steps)?;
+                let trial = setup.refit(trial_knots, &result.parameters, Some(&result.theta), &mut steps)?;
                 if trial.stopped {
                     return stopped(result, deviation);
                 }
@@ -642,7 +642,7 @@ pub fn fit_to_tolerance(
                     inner.remove(nearest);
                     let mut trial_knots = result.knots.clone();
                     trial_knots[s] = clamped_knots(degree, &inner);
-                    let mut trial = refit(sections, trial_knots, degree, chain, &result.parameters, Some(&result.theta), options.max_nfev, max_points, &mut steps)?;
+                    let mut trial = setup.refit(trial_knots, &result.parameters, Some(&result.theta), &mut steps)?;
                     if trial.stopped {
                         return stopped(result, deviation);
                     }

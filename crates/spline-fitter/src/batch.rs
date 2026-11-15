@@ -127,7 +127,14 @@ pub fn prepare(source: &Path, target: &Path, config: &SplineConfig, opt: &Optimi
 }
 
 /// Fits one prepared file and writes its spline.
-pub fn convert(item: &BatchItem, config: &SplineConfig, opt: &OptimizationConfig, auto_tolerance: bool, monitor: &mut dyn Monitor, cancelled: impl Fn() -> bool) -> Result<Outcome> {
+pub fn convert(
+    item: &BatchItem,
+    config: &SplineConfig,
+    opt: &OptimizationConfig,
+    auto_tolerance: bool,
+    monitor: &mut dyn Monitor,
+    cancelled: impl Fn() -> bool,
+) -> Result<Outcome> {
     if item.output.exists() {
         return Ok(Outcome::Skipped(item.output.clone()));
     }
@@ -165,7 +172,15 @@ mod tests {
 
     #[test]
     fn numbers() {
-        let cases = [(1e-4, "1e-4"), (2.5e-5, "2.5e-5"), (0.001, "1e-3"), (0.0123, "0.0123"), (0.5, "0.5"), (1e-6, "1e-6"), (3.33333e-7, "3.33e-7")];
+        let cases = [
+            (1e-4, "1e-4"),
+            (2.5e-5, "2.5e-5"),
+            (0.001, "1e-3"),
+            (0.0123, "0.0123"),
+            (0.5, "0.5"),
+            (1e-6, "1e-6"),
+            (3.33333e-7, "3.33e-7"),
+        ];
         for (v, text) in cases {
             assert_eq!(num(v), text);
         }
@@ -175,8 +190,18 @@ mod tests {
     fn output_names() {
         let (spline, opt) = reference_settings();
         assert_eq!(output_name("naca0012", &spline, &opt, false), "naca0012.deg5.spline.dat");
-        let config = SplineConfig { num_control_points: 30, num_sections: 3, junction_continuity: vec!["G2".into(), "C1".into()], ..SplineConfig::default() };
-        let o = OptimizationConfig { tolerance: Some(1e-4), knot_placement: KnotPlacement::Uniform, grow_control_points: false, ..Default::default() };
+        let config = SplineConfig {
+            num_control_points: 30,
+            num_sections: 3,
+            junction_continuity: vec!["G2".into(), "C1".into()],
+            ..SplineConfig::default()
+        };
+        let o = OptimizationConfig {
+            tolerance: Some(1e-4),
+            knot_placement: KnotPlacement::Uniform,
+            grow_control_points: false,
+            ..Default::default()
+        };
         assert_eq!(output_name("naca0012", &config, &o, false), "naca0012.deg5.n30.s3.G2-C1.tol1e-4.spline.dat");
         let o = OptimizationConfig { tolerance: Some(1e-5), ..Default::default() };
         assert_eq!(output_name("naca0012", &spline, &o, true), "naca0012.deg5.tol-auto.knots-free.grow.spline.dat");

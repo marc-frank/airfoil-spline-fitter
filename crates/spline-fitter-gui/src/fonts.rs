@@ -5,7 +5,8 @@ use std::sync::Arc;
 use eframe::egui::{self, FontData, FontDefinitions, FontFamily};
 
 /// Candidate font files, first found wins.
-const PROPORTIONAL: &[&str] = &["C:/Windows/Fonts/segoeui.ttf", "/System/Library/Fonts/SFNS.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"];
+const PROPORTIONAL: &[&str] =
+    &["C:/Windows/Fonts/segoeui.ttf", "/System/Library/Fonts/SFNS.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"];
 const MONOSPACE: &[&str] = &[
     "C:/Windows/Fonts/CascadiaMono.ttf",
     "C:/Windows/Fonts/consola.ttf",

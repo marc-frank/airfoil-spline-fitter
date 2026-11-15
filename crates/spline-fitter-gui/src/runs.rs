@@ -77,43 +77,251 @@ fn capitalized(text: &str) -> String {
 }
 
 pub const COLUMNS: [Column; 25] = [
-    Column { name: "Run", tooltip: "Order in which the runs were done; a number stays when other runs are deleted", log: false, metric: false, format: Format::Plain, value: |r| Cell::Int(r.number as i64), applies: always },
-    Column { name: "Optimizer", tooltip: "", log: false, metric: false, format: Format::Plain, value: |r| Cell::Text(r.optimization_config.optimizer.display_name().into()), applies: always },
-    Column { name: "Goal", tooltip: "", log: false, metric: false, format: Format::Plain, value: |r| Cell::Text(if r.optimization_config.tolerance.is_some() { "Tolerance" } else { "Fixed count" }.into()), applies: varpro },
-    Column { name: "Tolerance", tooltip: "Max deviation the tolerance goal had to meet", log: true, metric: false, format: Format::Spec(".3g"), value: |r| opt_float(r.optimization_config.tolerance), applies: |r| varpro(r) && r.optimization_config.tolerance.is_some() },
-    Column { name: "Knots", tooltip: "", log: false, metric: false, format: Format::Plain, value: |r| Cell::Text(match r.optimization_config.knot_placement { KnotPlacement::Uniform => "Uniform", KnotPlacement::Free => "Free" }.into()), applies: varpro },
-    Column { name: "Parameterization", tooltip: "", log: false, metric: false, format: Format::Plain, value: |r| Cell::Text(capitalized(&r.optimization_config.parameterization.value().replace('_', " "))), applies: |r| r.optimization_config.optimizer == OptimizerType::DirectLsq },
-    Column { name: "Grow points", tooltip: "", log: false, metric: false, format: Format::Plain, value: |r| Cell::Bool(r.optimization_config.grow_control_points), applies: varpro },
-    Column { name: "Degree", tooltip: "", log: false, metric: false, format: Format::Plain, value: |r| Cell::Int(r.spline_config.degree as i64), applies: always },
-    Column { name: "Control points", tooltip: "Control points per section as set (the start count of a tolerance goal)", log: false, metric: false, format: Format::Plain, value: |r| Cell::Int(r.spline_config.num_control_points as i64), applies: always },
-    Column { name: "Sections", tooltip: "", log: false, metric: false, format: Format::Plain, value: |r| Cell::Int(r.spline_config.num_sections as i64), applies: always },
-    Column { name: "Continuity", tooltip: "", log: false, metric: false, format: Format::Plain, value: |r| Cell::Text(r.spline_config.continuity.name().into()), applies: junctions },
-    Column { name: "Type", tooltip: "", log: false, metric: false, format: Format::Plain, value: |r| Cell::Text(if r.spline_config.geometric_continuity { "Geometric" } else { "Parametric" }.into()), applies: |r| varpro(r) && junctions(r) },
-    Column { name: "Per junction", tooltip: "", log: false, metric: false, format: Format::Plain, value: |r| Cell::Text(r.spline_config.junction_continuity.join(", ")), applies: varpro },
-    Column { name: "Subsample", tooltip: "Points per section of the subsample; blank when every point is used", log: false, metric: false, format: Format::Plain, value: |r| r.optimization_config.max_points_per_section.map_or(Cell::Empty, |m| Cell::Int(m as i64)), applies: varpro },
-    Column { name: "Smoothing", tooltip: "", log: true, metric: false, format: Format::Spec(".3g"), value: |r| Cell::Float(r.optimization_config.smoothing_weight), applies: |r| varpro(r) && r.optimization_config.tolerance.is_none() },
-    Column { name: "Optimize junctions", tooltip: "", log: false, metric: false, format: Format::Plain, value: |r| Cell::Bool(r.optimization_config.optimize_le_position), applies: junctions },
-    Column { name: "Error", tooltip: "RMS distance of the points to the curve, the same measure for every run", log: true, metric: true, format: Format::Spec(".3e"), value: |r| Cell::Float(r.result.comparison_error()), applies: always },
-    Column { name: "Max deviation", tooltip: "", log: true, metric: true, format: Format::Spec(".3e"), value: |r| opt_float(r.result.report.as_ref().map(|x| x.max_deviation)), applies: always },
-    Column { name: "RMS deviation", tooltip: "", log: true, metric: true, format: Format::Spec(".3e"), value: |r| opt_float(r.result.report.as_ref().map(|x| x.rms_deviation)), applies: always },
-    Column { name: "Fitted control points", tooltip: "Distinct control points of the fitted chain, junction points counted once", log: false, metric: true, format: Format::Plain, value: |r| Cell::Int(r.result.num_control_points() as i64), applies: always },
-    Column { name: "Iterations", tooltip: "", log: false, metric: true, format: Format::Plain, value: |r| Cell::Int(r.result.num_iterations as i64), applies: always },
-    Column { name: "Evaluations", tooltip: "", log: false, metric: true, format: Format::Plain, value: |r| Cell::Int(r.result.num_evaluations as i64), applies: always },
-    Column { name: "Time", tooltip: "", log: true, metric: true, format: Format::Duration, value: |r| Cell::Float(r.result.elapsed_seconds), applies: always },
-    Column { name: "Converged", tooltip: "", log: false, metric: false, format: Format::Plain, value: |r| Cell::Bool(r.result.converged), applies: always },
-    Column { name: "Date", tooltip: "", log: false, metric: false, format: Format::Plain, value: |r| Cell::Text(r.timestamp.chars().take(16).collect::<String>().replace('T', " ")), applies: always },
+    Column {
+        name: "Run",
+        tooltip: "Order in which the runs were done; a number stays when other runs are deleted",
+        log: false,
+        metric: false,
+        format: Format::Plain,
+        value: |r| Cell::Int(r.number as i64),
+        applies: always,
+    },
+    Column {
+        name: "Optimizer",
+        tooltip: "",
+        log: false,
+        metric: false,
+        format: Format::Plain,
+        value: |r| Cell::Text(r.optimization_config.optimizer.display_name().into()),
+        applies: always,
+    },
+    Column {
+        name: "Goal",
+        tooltip: "",
+        log: false,
+        metric: false,
+        format: Format::Plain,
+        value: |r| Cell::Text(if r.optimization_config.tolerance.is_some() { "Tolerance" } else { "Fixed count" }.into()),
+        applies: varpro,
+    },
+    Column {
+        name: "Tolerance",
+        tooltip: "Max deviation the tolerance goal had to meet",
+        log: true,
+        metric: false,
+        format: Format::Spec(".3g"),
+        value: |r| opt_float(r.optimization_config.tolerance),
+        applies: |r| varpro(r) && r.optimization_config.tolerance.is_some(),
+    },
+    Column {
+        name: "Knots",
+        tooltip: "",
+        log: false,
+        metric: false,
+        format: Format::Plain,
+        value: |r| {
+            Cell::Text(
+                match r.optimization_config.knot_placement {
+                    KnotPlacement::Uniform => "Uniform",
+                    KnotPlacement::Free => "Free",
+                }
+                .into(),
+            )
+        },
+        applies: varpro,
+    },
+    Column {
+        name: "Parameterization",
+        tooltip: "",
+        log: false,
+        metric: false,
+        format: Format::Plain,
+        value: |r| Cell::Text(capitalized(&r.optimization_config.parameterization.value().replace('_', " "))),
+        applies: |r| r.optimization_config.optimizer == OptimizerType::DirectLsq,
+    },
+    Column {
+        name: "Grow points",
+        tooltip: "",
+        log: false,
+        metric: false,
+        format: Format::Plain,
+        value: |r| Cell::Bool(r.optimization_config.grow_control_points),
+        applies: varpro,
+    },
+    Column {
+        name: "Degree",
+        tooltip: "",
+        log: false,
+        metric: false,
+        format: Format::Plain,
+        value: |r| Cell::Int(r.spline_config.degree as i64),
+        applies: always,
+    },
+    Column {
+        name: "Control points",
+        tooltip: "Control points per section as set (the start count of a tolerance goal)",
+        log: false,
+        metric: false,
+        format: Format::Plain,
+        value: |r| Cell::Int(r.spline_config.num_control_points as i64),
+        applies: always,
+    },
+    Column {
+        name: "Sections",
+        tooltip: "",
+        log: false,
+        metric: false,
+        format: Format::Plain,
+        value: |r| Cell::Int(r.spline_config.num_sections as i64),
+        applies: always,
+    },
+    Column {
+        name: "Continuity",
+        tooltip: "",
+        log: false,
+        metric: false,
+        format: Format::Plain,
+        value: |r| Cell::Text(r.spline_config.continuity.name().into()),
+        applies: junctions,
+    },
+    Column {
+        name: "Type",
+        tooltip: "",
+        log: false,
+        metric: false,
+        format: Format::Plain,
+        value: |r| Cell::Text(if r.spline_config.geometric_continuity { "Geometric" } else { "Parametric" }.into()),
+        applies: |r| varpro(r) && junctions(r),
+    },
+    Column {
+        name: "Per junction",
+        tooltip: "",
+        log: false,
+        metric: false,
+        format: Format::Plain,
+        value: |r| Cell::Text(r.spline_config.junction_continuity.join(", ")),
+        applies: varpro,
+    },
+    Column {
+        name: "Subsample",
+        tooltip: "Points per section of the subsample; blank when every point is used",
+        log: false,
+        metric: false,
+        format: Format::Plain,
+        value: |r| r.optimization_config.max_points_per_section.map_or(Cell::Empty, |m| Cell::Int(m as i64)),
+        applies: varpro,
+    },
+    Column {
+        name: "Smoothing",
+        tooltip: "",
+        log: true,
+        metric: false,
+        format: Format::Spec(".3g"),
+        value: |r| Cell::Float(r.optimization_config.smoothing_weight),
+        applies: |r| varpro(r) && r.optimization_config.tolerance.is_none(),
+    },
+    Column {
+        name: "Optimize junctions",
+        tooltip: "",
+        log: false,
+        metric: false,
+        format: Format::Plain,
+        value: |r| Cell::Bool(r.optimization_config.optimize_le_position),
+        applies: junctions,
+    },
+    Column {
+        name: "Error",
+        tooltip: "RMS distance of the points to the curve, the same measure for every run",
+        log: true,
+        metric: true,
+        format: Format::Spec(".3e"),
+        value: |r| Cell::Float(r.result.comparison_error()),
+        applies: always,
+    },
+    Column {
+        name: "Max deviation",
+        tooltip: "",
+        log: true,
+        metric: true,
+        format: Format::Spec(".3e"),
+        value: |r| opt_float(r.result.report.as_ref().map(|x| x.max_deviation)),
+        applies: always,
+    },
+    Column {
+        name: "RMS deviation",
+        tooltip: "",
+        log: true,
+        metric: true,
+        format: Format::Spec(".3e"),
+        value: |r| opt_float(r.result.report.as_ref().map(|x| x.rms_deviation)),
+        applies: always,
+    },
+    Column {
+        name: "Fitted control points",
+        tooltip: "Distinct control points of the fitted chain, junction points counted once",
+        log: false,
+        metric: true,
+        format: Format::Plain,
+        value: |r| Cell::Int(r.result.num_control_points() as i64),
+        applies: always,
+    },
+    Column {
+        name: "Iterations",
+        tooltip: "",
+        log: false,
+        metric: true,
+        format: Format::Plain,
+        value: |r| Cell::Int(r.result.num_iterations as i64),
+        applies: always,
+    },
+    Column {
+        name: "Evaluations",
+        tooltip: "",
+        log: false,
+        metric: true,
+        format: Format::Plain,
+        value: |r| Cell::Int(r.result.num_evaluations as i64),
+        applies: always,
+    },
+    Column {
+        name: "Time",
+        tooltip: "",
+        log: true,
+        metric: true,
+        format: Format::Duration,
+        value: |r| Cell::Float(r.result.elapsed_seconds),
+        applies: always,
+    },
+    Column {
+        name: "Converged",
+        tooltip: "",
+        log: false,
+        metric: false,
+        format: Format::Plain,
+        value: |r| Cell::Bool(r.result.converged),
+        applies: always,
+    },
+    Column {
+        name: "Date",
+        tooltip: "",
+        log: false,
+        metric: false,
+        format: Format::Plain,
+        value: |r| Cell::Text(r.timestamp.chars().take(16).collect::<String>().replace('T', " ")),
+        applies: always,
+    },
 ];
 
 pub const ERROR_COLUMN: usize = 16;
 pub const CONTROL_POINTS_COLUMN: usize = 8;
 
-pub fn column_index(name: &str) -> Option<usize> {
-    COLUMNS.iter().position(|c| c.name == name)
-}
-
 impl Column {
     pub fn cell(&self, run: &OptimizationRun) -> Cell {
-        if (self.applies)(run) { (self.value)(run) } else { Cell::Empty }
+        if (self.applies)(run) {
+            (self.value)(run)
+        } else {
+            Cell::Empty
+        }
     }
 
     pub fn text(&self, cell: &Cell) -> String {
@@ -131,11 +339,14 @@ impl Column {
 
 /// Every cell of a run with its text.
 pub fn row(run: &OptimizationRun) -> Vec<(Cell, String)> {
-    COLUMNS.iter().map(|c| {
-        let cell = c.cell(run);
-        let text = c.text(&cell);
-        (cell, text)
-    }).collect()
+    COLUMNS
+        .iter()
+        .map(|c| {
+            let cell = c.cell(run);
+            let text = c.text(&cell);
+            (cell, text)
+        })
+        .collect()
 }
 
 /// Sort order of cells: empty cells last (in both directions, so the caller
@@ -261,12 +472,15 @@ mod tests {
 
     #[test]
     fn parses_filters() {
-        assert_eq!(parse_filter(" >= 1e-5 varpro =free !=x"), vec![
-            Term::Numeric { op: Op::Ge, value: 1e-5 },
-            Term::Substring("varpro".into()),
-            Term::Whole { equal: true, text: "free".into() },
-            Term::Whole { equal: false, text: "x".into() },
-        ]);
+        assert_eq!(
+            parse_filter(" >= 1e-5 varpro =free !=x"),
+            vec![
+                Term::Numeric { op: Op::Ge, value: 1e-5 },
+                Term::Substring("varpro".into()),
+                Term::Whole { equal: true, text: "free".into() },
+                Term::Whole { equal: false, text: "x".into() },
+            ]
+        );
         assert_eq!(parse_filter("<inf"), vec![Term::Numeric { op: Op::Lt, value: f64::INFINITY }]);
         assert!(term_matches(&Term::Substring("pro".into()), &Cell::Empty, "VarPro LM"));
         assert!(!term_matches(&Term::Numeric { op: Op::Gt, value: 1.0 }, &Cell::Bool(true), "yes"));

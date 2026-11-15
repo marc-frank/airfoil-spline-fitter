@@ -63,13 +63,11 @@ pub fn fit_report(sections: &[Vec<Vec2>], fit: &FitResult, precision: Option<i32
     let curves = fit.curves();
     let data = chain_data(sections);
     let distances: Vec<Vec<f64>> = curves.iter().map(|c| project(&data, c).into_iter().map(|(_, d)| d).collect()).collect();
-    let nearest: Vec<usize> = (0..data.len())
-        .map(|i| (0..curves.len()).fold(0, |b, s| if distances[s][i] < distances[b][i] { s } else { b }))
-        .collect();
+    let nearest: Vec<usize> =
+        (0..data.len()).map(|i| (0..curves.len()).fold(0, |b, s| if distances[s][i] < distances[b][i] { s } else { b })).collect();
     let deviation: Vec<f64> = (0..data.len()).map(|i| distances[nearest[i]][i]).collect();
-    let section_max_deviation = (0..curves.len())
-        .map(|s| (0..data.len()).filter(|&i| nearest[i] == s).map(|i| deviation[i]).fold(0.0, f64::max))
-        .collect();
+    let section_max_deviation =
+        (0..curves.len()).map(|s| (0..data.len()).filter(|&i| nearest[i] == s).map(|i| deviation[i]).fold(0.0, f64::max)).collect();
     let degree = fit.degree;
     let fairness = (degree >= 2).then(|| {
         let f = fairness(&curves);

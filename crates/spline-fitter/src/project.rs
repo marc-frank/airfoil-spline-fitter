@@ -12,8 +12,8 @@ use bspline_varpro::KnotPlacement;
 use crate::analysis::{FairnessReport, JunctionReport, Report, ShapeReport};
 use crate::geometry::AirfoilData;
 use crate::models::{
-    placement_from_value, placement_value, ContinuityMode, FitResult, IterationRecord, OptimizationConfig, OptimizerType,
-    Parameterization, SplineConfig,
+    placement_from_value, placement_value, ContinuityMode, FitResult, IterationRecord, OptimizationConfig, OptimizerType, Parameterization,
+    SplineConfig,
 };
 use crate::{bail, Error, Result, Vec2};
 
@@ -57,7 +57,12 @@ pub struct OptimizationRun {
 }
 
 impl OptimizationRun {
-    pub fn new(spline_config: SplineConfig, optimization_config: OptimizationConfig, result: FitResult, loss_history: Vec<IterationRecord>) -> Self {
+    pub fn new(
+        spline_config: SplineConfig,
+        optimization_config: OptimizationConfig,
+        result: FitResult,
+        loss_history: Vec<IterationRecord>,
+    ) -> Self {
         OptimizationRun {
             run_id: uuid::Uuid::new_v4().to_string(),
             number: 0,
@@ -603,7 +608,11 @@ fn decode_spline_config(json: &Json, place: &str) -> Result<SplineConfig> {
     };
     let junctions = match part.optional("junction_continuity") {
         None => vec![],
-        Some(v) => part.list_of("junction_continuity", v)?.iter().map(|s| part.text_of("junction_continuity", s).map(String::from)).collect::<Result<_>>()?,
+        Some(v) => part
+            .list_of("junction_continuity", v)?
+            .iter()
+            .map(|s| part.text_of("junction_continuity", s).map(String::from))
+            .collect::<Result<_>>()?,
     };
     SplineConfig {
         degree: part.count("degree")?,
@@ -770,9 +779,11 @@ pub fn parse_project(text: &str) -> Result<LoadedProject> {
         Some(Json::Str(s)) => s.clone(),
         Some(other) => other.to_text(),
     };
-    let major: u32 = version.split('.').next().and_then(|m| m.trim().parse().ok()).ok_or_else(|| {
-        Error::new(format!("Project file version {} is not valid.", bspline_varpro::numfmt::quoted(&version)))
-    })?;
+    let major: u32 = version
+        .split('.')
+        .next()
+        .and_then(|m| m.trim().parse().ok())
+        .ok_or_else(|| Error::new(format!("Project file version {} is not valid.", bspline_varpro::numfmt::quoted(&version))))?;
     if major > 1 {
         bail!("Project file version {version} is not supported. Please update the application.");
     }
@@ -819,7 +830,12 @@ mod tests {
             rms_error: Some(1e-7),
         };
         let mut p = ProjectFile::new(airfoil);
-        p.runs.push(OptimizationRun::new(SplineConfig::default(), OptimizationConfig::default(), result, vec![IterationRecord { iteration: 1, error: 0.5, elapsed_seconds: 0.0 }]));
+        p.runs.push(OptimizationRun::new(
+            SplineConfig::default(),
+            OptimizationConfig::default(),
+            result,
+            vec![IterationRecord { iteration: 1, error: 0.5, elapsed_seconds: 0.0 }],
+        ));
         number_runs(&mut p.runs, 0);
         p
     }
@@ -855,7 +871,8 @@ mod tests {
 
     #[test]
     fn python_layout() {
-        let text = Json::Object(vec![("a".into(), Json::Array(vec![Json::Float(1e-7), Json::Int(2)])), ("b".into(), Json::Array(vec![]))]).to_text();
+        let text = Json::Object(vec![("a".into(), Json::Array(vec![Json::Float(1e-7), Json::Int(2)])), ("b".into(), Json::Array(vec![]))])
+            .to_text();
         assert_eq!(text, "{\n  \"a\": [\n    1e-07,\n    2\n  ],\n  \"b\": []\n}");
     }
 }

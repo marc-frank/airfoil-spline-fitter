@@ -164,7 +164,11 @@ impl Palette {
 
     /// Comb (and deviation) colour of a section.
     pub fn comb(&self, section: usize) -> Color32 {
-        if section % 2 == 0 { self.comb_even } else { self.comb_odd }
+        if section % 2 == 0 {
+            self.comb_even
+        } else {
+            self.comb_odd
+        }
     }
 }
 

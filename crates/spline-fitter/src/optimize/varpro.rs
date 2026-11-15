@@ -1,9 +1,7 @@
 //! Variable projection fits through `bspline-varpro`: a fixed number of
 //! control points per section, or the fewest within a tolerance.
 
-use bspline_varpro::{
-    fit_to_tolerance, ChainOptions, Continuity, FitOptions, FitResult, Junction, Observer, Progress, ToleranceOptions,
-};
+use bspline_varpro::{fit_to_tolerance, ChainOptions, Continuity, FitOptions, FitResult, Junction, Observer, Progress, ToleranceOptions};
 
 use super::{Monitor, RawResult, Update, UpdateKind};
 use crate::models::{OptimizationConfig, SplineConfig};

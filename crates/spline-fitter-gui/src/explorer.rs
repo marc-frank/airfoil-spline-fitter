@@ -11,7 +11,7 @@ use spline_fitter::models::{FitResult, IterationRecord, OptimizationConfig, Spli
 use spline_fitter::project::{number_runs, OptimizationRun, ProjectFile};
 
 use crate::app::App;
-use crate::runs::{column_index, compare, parse_filter, row, term_matches, Cell, Filters, Term, COLUMNS, CONTROL_POINTS_COLUMN, ERROR_COLUMN};
+use crate::runs::{compare, parse_filter, row, term_matches, Cell, Filters, Term, COLUMNS, CONTROL_POINTS_COLUMN, ERROR_COLUMN};
 use crate::theme::{size, Glyph, Palette};
 use crate::widgets::{self, caption, muted};
 
@@ -128,8 +128,13 @@ struct ColumnPopup {
 impl App {
     /// The visible runs in table order, with their cells.
     fn visible_rows(&self) -> Vec<(String, Vec<(Cell, String)>)> {
-        let mut rows: Vec<(String, Vec<(Cell, String)>)> =
-            self.projects.runs().iter().map(|r| (r.run_id.clone(), row(r))).filter(|(_, cells)| self.explorer.filters.shows(cells)).collect();
+        let mut rows: Vec<(String, Vec<(Cell, String)>)> = self
+            .projects
+            .runs()
+            .iter()
+            .map(|r| (r.run_id.clone(), row(r)))
+            .filter(|(_, cells)| self.explorer.filters.shows(cells))
+            .collect();
         let (column, ascending) = self.explorer.sort;
         rows.sort_by(|a, b| {
             let (x, y) = (&a.1[column], &b.1[column]);
@@ -139,7 +144,11 @@ impl App {
                 (false, true) => std::cmp::Ordering::Less,
                 _ => {
                     let o = compare(x, y);
-                    if ascending { o } else { o.reverse() }
+                    if ascending {
+                        o
+                    } else {
+                        o.reverse()
+                    }
                 }
             }
         });
@@ -148,7 +157,14 @@ impl App {
 
     /// Adds a fit as a run (replacing the run of the same settings); false
     /// when a cancelled fit would replace a finished run.
-    pub fn add_run(&mut self, config: &SplineConfig, opt: &OptimizationConfig, fit: FitResult, history: Vec<IterationRecord>, replot: bool) -> bool {
+    pub fn add_run(
+        &mut self,
+        config: &SplineConfig,
+        opt: &OptimizationConfig,
+        fit: FitResult,
+        history: Vec<IterationRecord>,
+        replot: bool,
+    ) -> bool {
         let Some(airfoil) = self.airfoil.clone() else { return false };
         let existing = self.projects.runs().iter().position(|r| same_settings(r, config, opt));
         if fit.cancelled && existing.is_some_and(|i| !self.projects.runs()[i].result.cancelled) {
@@ -312,11 +328,15 @@ impl App {
 
     pub fn explorer_rail(&mut self, ui: &mut Ui) {
         let p = self.palette.clone();
-        egui::Panel::right("explorer_rail").resizable(false).exact_size(size::CONTROL_HEIGHT + 8.0).frame(egui::Frame::new().fill(p.panel).inner_margin(egui::Margin { left: 4, right: 4, top: 10, bottom: 12 })).show(ui, |ui| {
-            if widgets::icon_button(ui, &p, Glyph::ChevronLeft, false, "Show the project explorer (Ctrl+Shift+E)").clicked() {
-                self.explorer_visible = true;
-            }
-        });
+        egui::Panel::right("explorer_rail")
+            .resizable(false)
+            .exact_size(size::CONTROL_HEIGHT + 8.0)
+            .frame(egui::Frame::new().fill(p.panel).inner_margin(egui::Margin { left: 4, right: 4, top: 10, bottom: 12 }))
+            .show(ui, |ui| {
+                if widgets::icon_button(ui, &p, Glyph::ChevronLeft, false, "Show the project explorer (Ctrl+Shift+E)").clicked() {
+                    self.explorer_visible = true;
+                }
+            });
     }
 
     pub fn explorer_panel(&mut self, ui: &mut Ui) {
@@ -355,11 +375,21 @@ impl App {
                 let fitting = self.fitting();
                 let k = self.projects.selected.len();
                 ui.horizontal(|ui| {
-                    if ui.add_enabled(!fitting && k == 1, egui::Button::new("Load settings").min_size(egui::vec2(0.0, size::CONTROL_HEIGHT))).on_hover_text("Set the sidebar to the selected run's settings (or double-click the run)").clicked() {
+                    if ui
+                        .add_enabled(!fitting && k == 1, egui::Button::new("Load settings").min_size(egui::vec2(0.0, size::CONTROL_HEIGHT)))
+                        .on_hover_text("Set the sidebar to the selected run's settings (or double-click the run)")
+                        .clicked()
+                    {
                         let id = self.projects.selected.iter().next().unwrap().clone();
                         self.load_settings(&id);
                     }
-                    if ui.add_enabled(!fitting && k > 0, egui::Button::new("Delete").min_size(egui::vec2(0.0, size::CONTROL_HEIGHT))).on_hover_text("Delete the selected runs from the project (Delete key).\nEdit > Restore deleted runs brings them back.").clicked() {
+                    if ui
+                        .add_enabled(!fitting && k > 0, egui::Button::new("Delete").min_size(egui::vec2(0.0, size::CONTROL_HEIGHT)))
+                        .on_hover_text(
+                            "Delete the selected runs from the project (Delete key).\nEdit > Restore deleted runs brings them back.",
+                        )
+                        .clicked()
+                    {
                         self.confirm_delete_runs();
                     }
                 });
@@ -421,7 +451,13 @@ impl App {
         let filtered = self.explorer.filters.excluded.contains_key(&column);
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click());
         let glyph_x = rect.right() - 6.0 - 5.0;
-        ui.painter().text(rect.left_center() + egui::vec2(2.0, 0.0), egui::Align2::LEFT_CENTER, col.name, egui::FontId::proportional(crate::theme::typeface::BASE), p.text_2);
+        ui.painter().text(
+            rect.left_center() + egui::vec2(2.0, 0.0),
+            egui::Align2::LEFT_CENTER,
+            col.name,
+            egui::FontId::proportional(crate::theme::typeface::BASE),
+            p.text_2,
+        );
         let glyph = if filtered { Glyph::Filter } else { Glyph::ChevronDown };
         glyph.paint(ui.painter(), egui::pos2(glyph_x, rect.center().y), size::GLYPH, if filtered { p.text } else { p.text_3 });
         if self.explorer.sort.0 == column {
@@ -471,7 +507,8 @@ impl App {
         let mut double: Option<String> = None;
         let delete = ui.input(|i| i.key_pressed(egui::Key::Delete));
         let columns: Vec<usize> = (0..COLUMNS.len()).collect();
-        let mut builder = TableBuilder::new(ui).id_salt("runs").striped(false).resizable(true).sense(Sense::click()).auto_shrink([false, false]);
+        let mut builder =
+            TableBuilder::new(ui).id_salt("runs").striped(false).resizable(true).sense(Sense::click()).auto_shrink([false, false]);
         for _ in &columns {
             builder = builder.column(TableColumn::auto().at_least(48.0).clip(true));
         }
@@ -489,7 +526,8 @@ impl App {
                         table_row.col(|ui| {
                             let (cell, text) = &cells[c];
                             let rich = if cell.is_number() { RichText::new(text).monospace() } else { RichText::new(text) };
-                            let layout = if cell.is_number() { Layout::right_to_left(Align::Center) } else { Layout::left_to_right(Align::Center) };
+                            let layout =
+                                if cell.is_number() { Layout::right_to_left(Align::Center) } else { Layout::left_to_right(Align::Center) };
                             ui.with_layout(layout, |ui| ui.add(egui::Label::new(rich.color(p.text)).selectable(false).truncate()));
                         });
                     }
@@ -595,13 +633,23 @@ impl App {
         let mut seen: BTreeMap<String, Cell> = BTreeMap::new();
         for run in self.projects.runs() {
             let cells = row(run);
-            if self.explorer.filters.matches_except(&cells, Some(column)) || self.explorer.filters.excluded.get(&column).is_some_and(|e| e.contains(&cells[column].1)) {
+            if self.explorer.filters.matches_except(&cells, Some(column))
+                || self.explorer.filters.excluded.get(&column).is_some_and(|e| e.contains(&cells[column].1))
+            {
                 seen.entry(cells[column].1.clone()).or_insert(cells[column].0.clone());
             }
         }
         let mut values: Vec<(Cell, String)> = seen.into_iter().map(|(t, c)| (c, t)).collect();
         values.sort_by(|a, b| {
-            let rank = |v: &(Cell, String)| if v.1.is_empty() { 2 } else if v.0.is_number() { 0 } else { 1 };
+            let rank = |v: &(Cell, String)| {
+                if v.1.is_empty() {
+                    2
+                } else if v.0.is_number() {
+                    0
+                } else {
+                    1
+                }
+            };
             rank(a).cmp(&rank(b)).then_with(|| compare(a, b))
         });
         values
@@ -722,6 +770,5 @@ impl App {
             self.apply_popup();
             self.explorer.popup = None;
         }
-        let _ = column_index;
     }
 }

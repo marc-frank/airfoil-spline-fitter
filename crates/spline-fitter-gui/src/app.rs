@@ -244,9 +244,8 @@ impl App {
         if self.fitting() {
             return;
         }
-        let supported = |p: &PathBuf| {
-            p.extension().map(|e| e.to_string_lossy().to_lowercase()).is_some_and(|e| e == "dat" || e == "asfproj")
-        };
+        let supported =
+            |p: &PathBuf| p.extension().map(|e| e.to_string_lossy().to_lowercase()).is_some_and(|e| e == "dat" || e == "asfproj");
         if let Some(path) = files.into_iter().find(supported) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             self.open_path(&path);
@@ -361,9 +360,12 @@ impl App {
     }
 
     fn status_bar(&mut self, ui: &mut Ui) {
-        egui::Panel::bottom("status").frame(egui::Frame::new().fill(self.palette.window).inner_margin(egui::Margin::symmetric(8, 3))).show(ui, |ui| {
-            ui.label(RichText::new(&self.status).color(self.palette.text_2));
-        });
+        egui::Panel::bottom("status").frame(egui::Frame::new().fill(self.palette.window).inner_margin(egui::Margin::symmetric(8, 3))).show(
+            ui,
+            |ui| {
+                ui.label(RichText::new(&self.status).color(self.palette.text_2));
+            },
+        );
     }
 
     fn title(&self) -> String {
@@ -455,7 +457,9 @@ impl eframe::App for App {
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(self.title()));
 
         let p = self.palette.clone();
-        egui::Panel::top("menu").frame(egui::Frame::new().fill(p.window).inner_margin(egui::Margin::symmetric(4, 2))).show(ui, |ui| self.menu_bar(ui));
+        egui::Panel::top("menu")
+            .frame(egui::Frame::new().fill(p.window).inner_margin(egui::Margin::symmetric(4, 2)))
+            .show(ui, |ui| self.menu_bar(ui));
         self.status_bar(ui);
         self.sidebar(ui);
         if self.explorer_visible {

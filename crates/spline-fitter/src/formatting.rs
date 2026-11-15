@@ -16,14 +16,22 @@ pub fn set_decimal_point(point: char) {
 
 /// The display decimal point.
 pub fn decimal_point() -> char {
-    if DECIMAL_COMMA.load(Ordering::Relaxed) { ',' } else { '.' }
+    if DECIMAL_COMMA.load(Ordering::Relaxed) {
+        ','
+    } else {
+        '.'
+    }
 }
 
 /// A number in a format spec (`.2e`, `.6f`, `.4g`, `g`, ...) with the
 /// display decimal point.
 pub fn number(v: f64, spec: &str) -> String {
     let text = format_spec(v, spec);
-    if decimal_point() == ',' { text.replace('.', ",") } else { text }
+    if decimal_point() == ',' {
+        text.replace('.', ",")
+    } else {
+        text
+    }
 }
 
 /// A number in a format spec: `.Ne`, `.Nf`, `.Ng` or `g`.
@@ -105,7 +113,11 @@ pub fn sanitize_filename(s: &str) -> String {
 pub fn file_stem(s: &str, default: &str) -> String {
     let replaced: String = s.chars().map(|c| if "<>:\"/\\|?*".contains(c) || (c as u32) < 32 { '_' } else { c }).collect();
     let stem = replaced.trim().trim_end_matches(['.', ' ']);
-    if stem.is_empty() { default.to_string() } else { stem.to_string() }
+    if stem.is_empty() {
+        default.to_string()
+    } else {
+        stem.to_string()
+    }
 }
 
 #[cfg(test)]

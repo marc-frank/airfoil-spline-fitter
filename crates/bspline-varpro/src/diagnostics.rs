@@ -40,9 +40,7 @@ pub fn project(points: &[Vec2], curve: &BSpline) -> Vec<(f64, f64)> {
             for (d, s) in d2.iter_mut().zip(&samples) {
                 *d = (s - q).norm_squared();
             }
-            let is_min = |j: usize| {
-                (j == 0 || d2[j] <= d2[j - 1]) && (j == last || d2[j] <= d2[j + 1])
-            };
+            let is_min = |j: usize| (j == 0 || d2[j] <= d2[j - 1]) && (j == last || d2[j] <= d2[j + 1]);
             let mut minima: Vec<usize> = (0..grid.len()).filter(|&j| is_min(j)).collect();
             minima.sort_by(|&a, &b| d2[a].total_cmp(&d2[b]));
             let mut best: Option<(f64, f64)> = None;

@@ -128,7 +128,11 @@ fn place_point(digits: &str, exponent: i32, point: bool) -> String {
         format!("0.{}{digits}", "0".repeat((-exponent - 1) as usize))
     } else if exponent + 1 >= n {
         let zeros = "0".repeat((exponent + 1 - n) as usize);
-        if point { format!("{digits}{zeros}.0") } else { format!("{digits}{zeros}") }
+        if point {
+            format!("{digits}{zeros}.0")
+        } else {
+            format!("{digits}{zeros}")
+        }
     } else {
         let split = (exponent + 1) as usize;
         format!("{}.{}", &digits[..split], &digits[split..])

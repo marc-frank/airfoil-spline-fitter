@@ -4,12 +4,8 @@ use bspline_varpro::airfoil::{default_tolerance, Naca4};
 use bspline_varpro::{fit, ChainOptions, Continuity, FitOptions, Junction, KnotPlacement, Silent, Vec2};
 
 fn naca2412() -> Vec<Vec<Vec2>> {
-    let points: Vec<Vec2> = Naca4::new("2412", true)
-        .unwrap()
-        .points(81)
-        .iter()
-        .map(|p| p.map(|v| (v * 1e6).round_ties_even() / 1e6))
-        .collect();
+    let points: Vec<Vec2> =
+        Naca4::new("2412", true).unwrap().points(81).iter().map(|p| p.map(|v| (v * 1e6).round_ties_even() / 1e6)).collect();
     vec![points[..81].to_vec(), points[80..].to_vec()]
 }
 

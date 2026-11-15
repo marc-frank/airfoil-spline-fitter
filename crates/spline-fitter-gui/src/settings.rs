@@ -3,9 +3,7 @@
 
 use spline_fitter::bspline_varpro::KnotPlacement;
 use spline_fitter::formatting::number;
-use spline_fitter::models::{
-    minimum_control_points, ContinuityMode, OptimizationConfig, OptimizerType, Parameterization, SplineConfig,
-};
+use spline_fitter::models::{minimum_control_points, ContinuityMode, OptimizationConfig, OptimizerType, Parameterization, SplineConfig};
 use spline_fitter::project::OptimizationRun;
 use spline_fitter::Result;
 
@@ -54,12 +52,7 @@ pub struct IntSweep {
 
 impl IntSweep {
     pub fn new(value: usize, min: usize, max: usize) -> Self {
-        IntSweep {
-            value: IntField::new(value, min, max),
-            active: false,
-            end: IntField::new((2 * value).min(max), min, max),
-            allowed: true,
-        }
+        IntSweep { value: IntField::new(value, min, max), active: false, end: IntField::new((2 * value).min(max), min, max), allowed: true }
     }
 
     /// Turns the sweep on (end at twice the value) or off.
@@ -89,11 +82,19 @@ impl IntSweep {
 
     /// The value box and, while sweeping, the end box.
     fn ends_mut(&mut self) -> Vec<&mut IntField> {
-        if self.active { vec![&mut self.value, &mut self.end] } else { vec![&mut self.value] }
+        if self.active {
+            vec![&mut self.value, &mut self.end]
+        } else {
+            vec![&mut self.value]
+        }
     }
 
     fn ends(&self) -> Vec<usize> {
-        if self.active { vec![self.value.value, self.end.value] } else { vec![self.value.value] }
+        if self.active {
+            vec![self.value.value, self.end.value]
+        } else {
+            vec![self.value.value]
+        }
     }
 
     /// The swept values, ascending.
@@ -298,7 +299,11 @@ impl Settings {
 
     /// The continuity labels: `G0`..`G3` for geometric VarPro, else `C0`..`C3`.
     pub fn continuity_letter(&self) -> char {
-        if self.varpro() && self.geometric { 'G' } else { 'C' }
+        if self.varpro() && self.geometric {
+            'G'
+        } else {
+            'C'
+        }
     }
 
     /// Runs after the optimizer, goal, Grow points, Auto or section count
@@ -405,7 +410,7 @@ impl Settings {
             let have = self.control_points.value.value;
             degree_cap = have.saturating_sub(1).max(degree_min);
             let order = self.continuity;
-            let fitting = (1..=sections_cap.min(3)).filter(|&k| minimum_control_points(&vec![order; k - 1], 1) <= have).last().unwrap_or(1);
+            let fitting = (1..=sections_cap.min(3)).rev().find(|&k| minimum_control_points(&vec![order; k - 1], 1) <= have).unwrap_or(1);
             if fitting < 3 {
                 sections_cap = fitting;
             }
@@ -417,7 +422,8 @@ impl Settings {
 
     /// Settings after a user change from `before`: the rules for what changed.
     pub fn settle(&mut self, before: &Settings) {
-        let sweep_changed = |a: &IntSweep, b: &IntSweep| a.value.value != b.value.value || a.active != b.active || a.end.value != b.end.value;
+        let sweep_changed =
+            |a: &IntSweep, b: &IntSweep| a.value.value != b.value.value || a.active != b.active || a.end.value != b.end.value;
         if sweep_changed(&self.degree, &before.degree) {
             self.keep_curve_valid(Change::Degree);
         }
@@ -617,7 +623,11 @@ fn advanced_fields(s: &Settings) -> Vec<(Tracked, bool)> {
         (Tracked { name: "Per junction", value: s.per_junction.trim().into(), text: s.per_junction.clone() }, varpro),
         (Tracked { name: "Subsample", value: on_off(s.subsample), text: on_off(s.subsample) }, varpro),
         (
-            Tracked { name: "Subsample points", value: s.subsample_points.value.to_string(), text: format!("{} points", s.subsample_points.value) },
+            Tracked {
+                name: "Subsample points",
+                value: s.subsample_points.value.to_string(),
+                text: format!("{} points", s.subsample_points.value),
+            },
             varpro,
         ),
         (Tracked { name: "Smoothing", value: s.smoothing.value.to_string(), text: number(s.smoothing.value, ".6g") }, varpro),
@@ -738,11 +748,15 @@ pub fn combination_configs(
 /// Every combination of the axes in order.
 pub fn combinations(axes: &[(Axis, Vec<AxisValue>)]) -> Vec<Vec<(Axis, AxisValue)>> {
     axes.iter().fold(vec![vec![]], |acc, (axis, values)| {
-        acc.iter().flat_map(|prefix| values.iter().map(move |v| {
-            let mut c = prefix.clone();
-            c.push((*axis, *v));
-            c
-        })).collect()
+        acc.iter()
+            .flat_map(|prefix| {
+                values.iter().map(move |v| {
+                    let mut c = prefix.clone();
+                    c.push((*axis, *v));
+                    c
+                })
+            })
+            .collect()
     })
 }
 

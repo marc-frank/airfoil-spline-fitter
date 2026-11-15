@@ -3,12 +3,12 @@
 use nalgebra::{DMatrix, DVector};
 
 use crate::basis::open_uniform_knots;
-use crate::chain::{validate_chain_parameters, initial_chain_parameters, Parameters};
+use crate::chain::{initial_chain_parameters, validate_chain_parameters, Parameters};
 use crate::constraints::{End, Junction};
 use crate::lm::{levenberg_marquardt, Model, Stopped};
 use crate::problem::VarProProblem;
 use crate::reparam::{apply_eta_jacobian, eta_to_t, t_to_eta};
-use crate::tolerance::{fit_subsampled, grow_to_counts, polish_knots};
+use crate::tolerance::{grow_to_counts, polish_knots, Setup};
 use crate::{bail, BSpline, Observer, Progress, Result, Vec2, STOPPED};
 
 /// Convergence tolerance (ftol, xtol and gtol) of every variable-projection solve.
@@ -79,15 +79,7 @@ impl ChainOptions {
 
     pub fn problem(&self, sections: &[Vec<Vec2>], knots: Vec<Vec<f64>>, degree: usize) -> Result<VarProProblem> {
         let end = End { fixed: self.fix_ends };
-        VarProProblem::new(
-            sections,
-            knots,
-            degree,
-            self.junctions(sections.len())?,
-            (end, end),
-            self.smoothing,
-            self.regularization,
-        )
+        VarProProblem::new(sections, knots, degree, self.junctions(sections.len())?, (end, end), self.smoothing, self.regularization)
     }
 }
 
@@ -225,10 +217,12 @@ pub fn fit(
     let dense = options.max_points_per_section.is_some_and(|m| sections.iter().any(|s| s.len() > m));
     let (max_nfev, max_points) = (options.max_nfev, options.max_points_per_section);
     if options.grow {
-        return grow_to_counts(sections, counts, degree, chain, u0, max_nfev, max_points, options.knot_placement, observer);
+        let setup = Setup { sections, degree, options: chain, max_nfev, max_points };
+        return grow_to_counts(setup, counts, u0, options.knot_placement, observer);
     }
     if let Some(m) = max_points.filter(|_| dense) {
-        return fit_subsampled(sections, knots, degree, chain, &u0, None, max_nfev, m, observer);
+        let setup = Setup { sections, degree, options: chain, max_nfev, max_points };
+        return setup.subsampled(knots, &u0, None, m, observer);
     }
     let problem = chain.problem(sections, knots, degree)?;
     let result = solve_with_continuation(&problem, chain, sections, &u0, max_nfev, observer)?;
@@ -342,7 +336,11 @@ pub(crate) fn solve_problem(
     };
     let (u, theta) = model.unpack(&x);
     let result = result_from_problem(problem, &u, &theta, model.nfev, success, message);
-    if stopped { result.stop() } else { result }
+    if stopped {
+        result.stop()
+    } else {
+        result
+    }
 }
 
 /// A [`FitResult`] from the problem state at `(u, θ)`.

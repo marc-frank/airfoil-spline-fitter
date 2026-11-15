@@ -29,7 +29,7 @@ pub fn clamped_knots(degree: usize, interior: &[f64]) -> Vec<f64> {
     sorted.sort_by(f64::total_cmp);
     let mut knots = vec![0.0; degree + 1];
     knots.extend(sorted);
-    knots.extend(std::iter::repeat(1.0).take(degree + 1));
+    knots.extend(std::iter::repeat_n(1.0, degree + 1));
     knots
 }
 
@@ -220,7 +220,7 @@ impl SparseRows {
             let span = find_span(&knots[s], degree, local);
             starts.push(offsets[s] + span - degree);
             if order > degree {
-                values.extend(std::iter::repeat(0.0).take(width));
+                values.extend(std::iter::repeat_n(0.0, width));
             } else {
                 values.extend_from_slice(&basis_derivatives(&knots[s], degree, span, local, order)[order]);
             }
@@ -372,10 +372,7 @@ mod tests {
     #[test]
     fn open_uniform() {
         assert_eq!(open_uniform_knots(3, 5).unwrap(), vec![0., 0., 0., 0., 0.5, 1., 1., 1., 1.]);
-        assert_eq!(
-            open_uniform_knots(3, 3).unwrap_err().0,
-            "Number of control points (3) must be greater than degree (3)."
-        );
+        assert_eq!(open_uniform_knots(3, 3).unwrap_err().0, "Number of control points (3) must be greater than degree (3).");
     }
 
     #[test]

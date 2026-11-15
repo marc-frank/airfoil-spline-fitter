@@ -1,6 +1,6 @@
 //! Equality-constrained least squares through the KKT system.
 
-use nalgebra::{DMatrix, LU, Dyn};
+use nalgebra::{DMatrix, Dyn, LU};
 
 use crate::linalg::pinv;
 

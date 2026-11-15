@@ -20,10 +20,8 @@ fn play(notes: &'static [(f32, f32)]) {
         let Ok(sink) = rodio::DeviceSinkBuilder::open_default_sink() else { return };
         let player = rodio::Player::connect_new(sink.mixer());
         for &(frequency, seconds) in notes {
-            let note = SineWave::new(frequency)
-                .take_duration(Duration::from_secs_f32(seconds))
-                .fade_in(Duration::from_millis(8))
-                .amplify(0.15);
+            let note =
+                SineWave::new(frequency).take_duration(Duration::from_secs_f32(seconds)).fade_in(Duration::from_millis(8)).amplify(0.15);
             player.append(note);
         }
         player.sleep_until_end();

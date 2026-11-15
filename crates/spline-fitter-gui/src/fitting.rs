@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use spline_fitter::batch::{airfoil_files, output_name, prepare, write_result, BatchItem};
+use spline_fitter::batch::{airfoil_files, prepare, write_result, BatchItem};
 use spline_fitter::formatting::{format_count, format_duration, format_error, number};
 use spline_fitter::geometry::AirfoilData;
 use spline_fitter::models::{FitResult, IterationRecord, OptimizationConfig, OptimizerType, SplineConfig};
@@ -19,7 +19,6 @@ use crate::settings::{combination_configs, combinations, sweep_axes, Axis, AxisV
 pub struct Sweep {
     combos: Vec<Vec<(Axis, AxisValue)>>,
     index: usize,
-    names: Vec<Axis>,
     x_axis: Axis,
     base: SplineConfig,
     opt: OptimizationConfig,
@@ -109,14 +108,9 @@ impl App {
         if self.settings.sweeping() {
             return self.start_sweep(config, opt);
         }
-        let size = match opt.tolerance {
-            Some(t) => format!("tolerance {}", number(t, ".2e")),
-            None => format!("{} control points", config.num_control_points),
-        };
         self.main_plot.clear_items();
         self.loss.reset();
         self.set_status(format!("Starting {}...", opt.optimizer.display_name()));
-        let _ = size;
         let live = Live::new(airfoil.display_name(), self.live_mode);
         let job = FitJob::start(config, opt, airfoil, live, "");
         self.running = Some(Running::Fit(job));
@@ -168,7 +162,8 @@ impl App {
                 self.show_current_fit();
             }
             Ok(outcome) => {
-                let history: Vec<IterationRecord> = log.history().map(|(i, t, e)| IterationRecord { iteration: i, error: e, elapsed_seconds: t }).collect();
+                let history: Vec<IterationRecord> =
+                    log.history().map(|(i, t, e)| IterationRecord { iteration: i, error: e, elapsed_seconds: t }).collect();
                 let kept = !self.add_run(&job.config, &job.options, outcome.fit.clone(), history, true);
                 self.fit = Some(outcome.fit.clone());
                 self.show_current_fit();
@@ -190,7 +185,11 @@ impl App {
                 let mut status = if outcome.cancelled {
                     format!("Cancelled: {effort} in {duration} | Best error {}", format_error(outcome.raw.error))
                 } else {
-                    format!("Completed ({}): {effort} in {duration} | Error {}", job.options.optimizer.display_name(), format_error(outcome.raw.error))
+                    format!(
+                        "Completed ({}): {effort} in {duration} | Error {}",
+                        job.options.optimizer.display_name(),
+                        format_error(outcome.raw.error)
+                    )
                 };
                 if let Some(r) = &outcome.fit.report {
                     status += &format!(" | {}", r.summary_line());
@@ -226,10 +225,14 @@ impl App {
     fn start_sweep(&mut self, base: SplineConfig, opt: OptimizationConfig) {
         let axes = sweep_axes(&self.settings);
         let names: Vec<Axis> = axes.iter().map(|(a, _)| *a).collect();
-        let x_axis = axes.iter().fold(None::<&(Axis, Vec<AxisValue>)>, |best, a| match best {
-            Some(b) if b.1.len() >= a.1.len() => Some(b),
-            _ => Some(a),
-        }).map(|a| a.0).unwrap();
+        let x_axis = axes
+            .iter()
+            .fold(None::<&(Axis, Vec<AxisValue>)>, |best, a| match best {
+                Some(b) if b.1.len() >= a.1.len() => Some(b),
+                _ => Some(a),
+            })
+            .map(|a| a.0)
+            .unwrap();
         let mut left_out = 0;
         let combos: Vec<_> = combinations(&axes)
             .into_iter()
@@ -250,9 +253,14 @@ impl App {
         self.explorer.forget_points();
         self.main_plot.clear_items();
         let names_text: Vec<&str> = names.iter().map(|a| a.name()).collect();
-        let left_text = if left_out > 0 { format!(" | Left out {left_out} combinations with too few control points for their degree and junctions") } else { String::new() };
+        let left_text = if left_out > 0 {
+            format!(" | Left out {left_out} combinations with too few control points for their degree and junctions")
+        } else {
+            String::new()
+        };
         self.set_status(format!("Sweep: fitting {} splines ({}){left_text}...", combos.len(), names_text.join(", ")));
-        let sweep = Sweep { combos, index: 0, names, x_axis, base, opt, results: vec![], left_out, failed: 0, cancelled: false, started: Instant::now() };
+        let sweep =
+            Sweep { combos, index: 0, x_axis, base, opt, results: vec![], left_out, failed: 0, cancelled: false, started: Instant::now() };
         self.next_sweep_step(Box::new(sweep));
     }
 
@@ -274,7 +282,12 @@ impl App {
                     let mut sweep = sweep;
                     sweep.failed += 1;
                     sweep.index += 1;
-                    self.set_status(format!("Sweep: {}/{} | {} | Failed: {e}", sweep.index, sweep.combos.len(), Self::sweep_label(&sweep.combos[sweep.index - 1])));
+                    self.set_status(format!(
+                        "Sweep: {}/{} | {} | Failed: {e}",
+                        sweep.index,
+                        sweep.combos.len(),
+                        Self::sweep_label(&sweep.combos[sweep.index - 1])
+                    ));
                     return self.next_sweep_step(sweep);
                 }
             },
@@ -296,7 +309,8 @@ impl App {
         let total = sweep.combos.len();
         let label = Self::sweep_label(&combo);
         sweep.index += 1;
-        let mut status = format!("Sweep: {}/{total} ({}%) | {label}", sweep.index, number(100.0 * sweep.index as f64 / total as f64, ".0f"));
+        let mut status =
+            format!("Sweep: {}/{total} ({}%) | {label}", sweep.index, number(100.0 * sweep.index as f64 / total as f64, ".0f"));
         match job.join() {
             Err(e) => {
                 eprintln!("Sweep fit failed: {e}");
@@ -345,11 +359,19 @@ impl App {
 
     fn finish_sweep(&mut self, sweep: Sweep) {
         let duration = format_duration(sweep.started.elapsed().as_secs_f64());
-        let left = if sweep.left_out > 0 { format!(" | Left out {} combinations with too few control points for their degree and junctions", sweep.left_out) } else { String::new() };
-        let best = sweep.results.iter().fold(None::<&(Vec<(Axis, AxisValue)>, FitResult)>, |b, r| match b {
-            Some(b) if b.1.comparison_error() <= r.1.comparison_error() => Some(b),
-            _ => Some(r),
-        }).cloned();
+        let left = if sweep.left_out > 0 {
+            format!(" | Left out {} combinations with too few control points for their degree and junctions", sweep.left_out)
+        } else {
+            String::new()
+        };
+        let best = sweep
+            .results
+            .iter()
+            .fold(None::<&(Vec<(Axis, AxisValue)>, FitResult)>, |b, r| match b {
+                Some(b) if b.1.comparison_error() <= r.1.comparison_error() => Some(b),
+                _ => Some(r),
+            })
+            .cloned();
         let mut status = match &best {
             Some((combo, fit)) => {
                 if !sweep.cancelled {
@@ -367,7 +389,11 @@ impl App {
             }
             None => {
                 self.show_current_fit();
-                if sweep.cancelled { "Sweep cancelled: no fit finished".into() } else { "Sweep failed: no fit succeeded".into() }
+                if sweep.cancelled {
+                    "Sweep cancelled: no fit finished".into()
+                } else {
+                    "Sweep failed: no fit succeeded".into()
+                }
             }
         };
         status += &left;
@@ -380,7 +406,6 @@ impl App {
         } else if !sweep.cancelled && best.is_some() {
             crate::chime::completion();
         }
-        let _ = &sweep.names;
     }
 
     /// Sets the swept settings to the best values; sweeps stop.
@@ -419,7 +444,20 @@ impl App {
             (Err(e), _) | (_, Err(e)) => return self.set_status(e.0),
         };
         let auto = self.settings.auto_tolerance;
-        let batch = Batch { files, index: 0, source, target, config, opt, auto, item: None, done: 0, failed: 0, skipped: 0, started: Instant::now() };
+        let batch = Batch {
+            files,
+            index: 0,
+            source,
+            target,
+            config,
+            opt,
+            auto,
+            item: None,
+            done: 0,
+            failed: 0,
+            skipped: 0,
+            started: Instant::now(),
+        };
         self.next_batch_file(Box::new(batch));
     }
 
@@ -515,6 +553,5 @@ impl App {
         if self.airfoil.is_some() {
             self.show_current_fit();
         }
-        let _ = output_name;
     }
 }

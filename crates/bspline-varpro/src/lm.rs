@@ -58,7 +58,7 @@ fn run(model: &mut dyn Model, x0: DVector<f64>, max_nfev: Option<usize>, toleran
     let mut r = model.residual(&x)?;
     let mut nfev = 1;
     let mut cost = 0.5 * r.norm_squared();
-    let affordable = |nfev: usize| max_nfev.is_none_or(|m| nfev + 1 <= m);
+    let affordable = |nfev: usize| max_nfev.is_none_or(|m| nfev < m);
 
     let mut jac = model.jacobian(&x)?;
     let mut a = jac.transpose() * &jac;
@@ -75,7 +75,11 @@ fn run(model: &mut dyn Model, x0: DVector<f64>, max_nfev: Option<usize>, toleran
         let max_cosine = (0..g.len())
             .map(|j| {
                 let column = a[(j, j)].max(0.0).sqrt();
-                if column > 0.0 { g[j].abs() / (column * r_norm) } else { 0.0 }
+                if column > 0.0 {
+                    g[j].abs() / (column * r_norm)
+                } else {
+                    0.0
+                }
             })
             .fold(0.0, f64::max);
         if r_norm == 0.0 || max_cosine <= tolerance {
@@ -138,12 +142,7 @@ fn run(model: &mut dyn Model, x0: DVector<f64>, max_nfev: Option<usize>, toleran
 /// improves: after a series of rejected steps the damping grows until the
 /// step length triggers xtol in curved valleys, and a restart resets it.
 /// `max_nfev` caps the residual evaluations of all runs together.
-pub fn levenberg_marquardt(
-    model: &mut dyn Model,
-    x0: DVector<f64>,
-    max_nfev: Option<usize>,
-    tolerance: f64,
-) -> Result<Solution, Stopped> {
+pub fn levenberg_marquardt(model: &mut dyn Model, x0: DVector<f64>, max_nfev: Option<usize>, tolerance: f64) -> Result<Solution, Stopped> {
     let mut x = x0;
     let mut used = 0;
     let mut best = f64::INFINITY;

@@ -1,10 +1,7 @@
 //! Controls of the Loft design: form rows, segmented controls, numeric
 //! fields with step arrows, the sweep toggle, captions and headers.
 
-use eframe::egui::{
-    self, Align, Button, Color32, CornerRadius, FontId, Key, Layout, Response, RichText, Sense, TextEdit,
-    Ui, Vec2, Widget,
-};
+use eframe::egui::{self, Align, Button, CornerRadius, FontId, Key, Layout, Response, RichText, Sense, TextEdit, Ui, Vec2, Widget};
 use spline_fitter::formatting::{decimal_point, number};
 
 use crate::theme::{size, typeface, Glyph, Palette, INK, INK_HOVER, ON_INK};
@@ -62,7 +59,11 @@ pub fn icon_button(ui: &mut Ui, p: &Palette, glyph: Glyph, checked: bool, toolti
     };
     let glyph_side = if glyph == Glyph::Range { size::GLYPH_LARGE } else { size::GLYPH };
     glyph.paint(ui.painter(), response.rect.center(), glyph_side, color);
-    if tooltip.is_empty() { response } else { response.on_hover_text(tooltip) }
+    if tooltip.is_empty() {
+        response
+    } else {
+        response.on_hover_text(tooltip)
+    }
 }
 
 /// Joined buttons for a choice of two to four short options; returns true
@@ -81,7 +82,8 @@ pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, items: &[(T, &
                 ne: if i + 1 == items.len() { r } else { 0 },
                 se: if i + 1 == items.len() { r } else { 0 },
             };
-            let mut response = ui.add_sized([each, size::CONTROL_HEIGHT], Button::new(*text).selected(*value == *item).corner_radius(radius));
+            let mut response =
+                ui.add_sized([each, size::CONTROL_HEIGHT], Button::new(*text).selected(*value == *item).corner_radius(radius));
             if !tooltip.is_empty() {
                 response = response.on_hover_text(*tooltip);
             }
@@ -94,6 +96,36 @@ pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, items: &[(T, &
     changed
 }
 
+/// Width and tooltip of a field.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Field<'a> {
+    pub width: f32,
+    pub tooltip: &'a str,
+}
+
+impl<'a> Field<'a> {
+    pub fn new(width: f32, tooltip: &'a str) -> Self {
+        Field { width, tooltip }
+    }
+}
+
+/// How an integer field shows its value.
+#[derive(Debug, Clone, Copy)]
+pub struct IntOptions<'a> {
+    /// Text after the number (` points`).
+    pub suffix: &'a str,
+    /// Text shown in place of 0 (`Off`).
+    pub zero: Option<&'a str>,
+    /// Change of one arrow step.
+    pub step: usize,
+}
+
+impl Default for IntOptions<'_> {
+    fn default() -> Self {
+        IntOptions { suffix: "", zero: None, step: 1 }
+    }
+}
+
 /// How a numeric field shows, reads and steps its value.
 pub struct NumberFormat<'a> {
     pub format: &'a dyn Fn(f64) -> String,
@@ -103,7 +135,16 @@ pub struct NumberFormat<'a> {
 
 /// A text field holding a number, with step arrows; edits apply on Enter
 /// or when the field loses focus. Returns true when the value changed.
-pub fn number_field(ui: &mut Ui, p: &Palette, id_salt: impl std::hash::Hash + std::fmt::Debug, value: &mut f64, range: (f64, f64), width: f32, fmt: &NumberFormat, tooltip: &str) -> bool {
+pub fn number_field(
+    ui: &mut Ui,
+    p: &Palette,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
+    value: &mut f64,
+    range: (f64, f64),
+    field: Field,
+    fmt: &NumberFormat,
+) -> bool {
+    let Field { width, tooltip } = field;
     let id = ui.make_persistent_id(id_salt);
     let buffer_id = id.with("buffer");
     let mut changed = false;
@@ -151,7 +192,11 @@ pub fn number_field(ui: &mut Ui, p: &Palette, id_salt: impl std::hash::Hash + st
         let (rect, _) = ui.allocate_exact_size(Vec2::new(arrows, size::CONTROL_HEIGHT), Sense::hover());
         let half = rect.height() / 2.0;
         for (k, glyph) in [(1, Glyph::ChevronUp), (-1, Glyph::ChevronDown)] {
-            let r = if k == 1 { egui::Rect::from_min_size(rect.min, Vec2::new(arrows, half)) } else { egui::Rect::from_min_size(rect.min + Vec2::new(0.0, half), Vec2::new(arrows, half)) };
+            let r = if k == 1 {
+                egui::Rect::from_min_size(rect.min, Vec2::new(arrows, half))
+            } else {
+                egui::Rect::from_min_size(rect.min + Vec2::new(0.0, half), Vec2::new(arrows, half))
+            };
             let arrow = ui.interact(r, id.with(k), Sense::click());
             if arrow.hovered() && ui.is_enabled() {
                 ui.painter().rect_filled(r, 0.0, p.field_hover);
@@ -172,7 +217,16 @@ pub fn number_field(ui: &mut Ui, p: &Palette, id_salt: impl std::hash::Hash + st
 }
 
 /// An integer field (`suffix` after the number, `zero` in place of 0).
-pub fn int_field(ui: &mut Ui, p: &Palette, id_salt: impl std::hash::Hash + std::fmt::Debug, value: &mut usize, min: usize, max: usize, width: f32, suffix: &str, zero: Option<&str>, step: usize, tooltip: &str) -> bool {
+pub fn int_field(
+    ui: &mut Ui,
+    p: &Palette,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
+    value: &mut usize,
+    range: (usize, usize),
+    field: Field,
+    options: IntOptions,
+) -> bool {
+    let IntOptions { suffix, zero, step } = options;
     let format = |v: f64| match zero {
         Some(z) if v == 0.0 => z.to_string(),
         _ => format!("{}{suffix}", v as usize),
@@ -187,7 +241,7 @@ pub fn int_field(ui: &mut Ui, p: &Palette, id_salt: impl std::hash::Hash + std::
     let stepper = |v: f64, k: i32| (v + (k as f64) * step as f64).max(0.0);
     let fmt = NumberFormat { format: &format, parse: &parse, step: &stepper };
     let mut v = *value as f64;
-    let changed = number_field(ui, p, id_salt, &mut v, (min as f64, max as f64), width, &fmt, tooltip);
+    let changed = number_field(ui, p, id_salt, &mut v, (range.0 as f64, range.1 as f64), field, &fmt);
     *value = v as usize;
     changed
 }
@@ -219,7 +273,16 @@ pub fn ladder_step(v: f64, up: bool, single_step: f64, minimum: f64) -> f64 {
 
 /// A field for values spanning decades: six significant digits, stepping
 /// along 1-2-5 ladders.
-pub fn scientific_field(ui: &mut Ui, p: &Palette, id_salt: impl std::hash::Hash + std::fmt::Debug, value: &mut f64, min: f64, max: f64, single_step: f64, width: f32, tooltip: &str) -> bool {
+pub fn scientific_field(
+    ui: &mut Ui,
+    p: &Palette,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
+    value: &mut f64,
+    range: (f64, f64),
+    single_step: f64,
+    field: Field,
+) -> bool {
+    let min = range.0;
     let format = |v: f64| number(v, ".6g");
     let parse = |t: &str| parse_scientific(t);
     let step = |v: f64, k: i32| {
@@ -230,7 +293,7 @@ pub fn scientific_field(ui: &mut Ui, p: &Palette, id_salt: impl std::hash::Hash 
         x
     };
     let fmt = NumberFormat { format: &format, parse: &parse, step: &step };
-    number_field(ui, p, id_salt, value, (min, max), width, &fmt, tooltip)
+    number_field(ui, p, id_salt, value, range, field, &fmt)
 }
 
 /// The sweep toggle: a dimension line `|←→|`.
@@ -248,7 +311,11 @@ pub fn sweep_toggle(ui: &mut Ui, p: &Palette, active: &mut bool, allowed: bool) 
 pub fn collapsible_header(ui: &mut Ui, p: &Palette, title: &str, open: &mut bool, badge: &str, badge_tip: &str) {
     ui.horizontal(|ui| {
         let glyph = if *open { Glyph::ChevronDown } else { Glyph::ChevronRight };
-        let text = RichText::new(format!("      {}", title.to_uppercase())).size(typeface::CAPTION).strong().color(p.text_3).extra_letter_spacing(0.8);
+        let text = RichText::new(format!("      {}", title.to_uppercase()))
+            .size(typeface::CAPTION)
+            .strong()
+            .color(p.text_3)
+            .extra_letter_spacing(0.8);
         let response = ui.add(Button::new(text).frame(false)).on_hover_cursor(egui::CursorIcon::PointingHand);
         glyph.paint(ui.painter(), response.rect.left_center() + Vec2::new(4.0, 0.0), size::GLYPH, p.text_3);
         if response.clicked() {
@@ -278,7 +345,7 @@ pub fn readout_list(ui: &mut Ui, p: &Palette, title: &str, pairs: &[(String, Str
     ui.label(RichText::new(title).color(p.text).strong());
     let mono = FontId::monospace(typeface::BASE);
     let body = FontId::proportional(typeface::BASE);
-    let width = |text: &str, font: &FontId| ui.fonts_mut(|f| f.layout_no_wrap(text.to_string(), font.clone(), Color32::WHITE).size().x);
+    let width = |text: &str, font: &FontId| ui.fonts_mut(|f| f.layout_no_wrap(text.to_string(), font.clone(), p.text).size().x);
     let label_w: Vec<f32> = pairs.iter().map(|(l, _)| width(l, &body)).collect();
     let value_w: Vec<f32> = pairs.iter().map(|(_, v)| width(v, &mono) + 8.0).collect();
     let available = ui.available_width();
@@ -308,7 +375,14 @@ pub fn readout_list(ui: &mut Ui, p: &Palette, title: &str, pairs: &[(String, Str
 }
 
 /// A combo box of texts; returns true when the choice changed.
-pub fn combo(ui: &mut Ui, id_salt: impl std::hash::Hash + std::fmt::Debug, selected: &mut usize, items: &[&str], width: f32, tooltip: &str) -> bool {
+pub fn combo(
+    ui: &mut Ui,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
+    selected: &mut usize,
+    items: &[&str],
+    width: f32,
+    tooltip: &str,
+) -> bool {
     let before = *selected;
     let response = egui::ComboBox::from_id_salt(id_salt)
         .width(width)
@@ -328,7 +402,11 @@ pub fn combo(ui: &mut Ui, id_salt: impl std::hash::Hash + std::fmt::Debug, selec
 /// A plain button of control height.
 pub fn button(ui: &mut Ui, text: &str, tooltip: &str) -> Response {
     let r = Button::new(text).min_size(Vec2::new(0.0, size::CONTROL_HEIGHT)).ui(ui);
-    if tooltip.is_empty() { r } else { r.on_hover_text(tooltip) }
+    if tooltip.is_empty() {
+        r
+    } else {
+        r.on_hover_text(tooltip)
+    }
 }
 
 #[cfg(test)]

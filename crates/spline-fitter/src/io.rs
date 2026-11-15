@@ -74,9 +74,10 @@ pub fn split_lines(text: &str) -> Vec<&str> {
 /// (Python's float syntax); only finite values count.
 fn parse_number(text: &str) -> Option<f64> {
     let bytes = text.as_bytes();
-    let underscores_ok = bytes.iter().enumerate().all(|(i, &b)| {
-        b != b'_' || (i > 0 && i + 1 < bytes.len() && bytes[i - 1].is_ascii_digit() && bytes[i + 1].is_ascii_digit())
-    });
+    let underscores_ok = bytes
+        .iter()
+        .enumerate()
+        .all(|(i, &b)| b != b'_' || (i > 0 && i + 1 < bytes.len() && bytes[i - 1].is_ascii_digit() && bytes[i + 1].is_ascii_digit()));
     if !underscores_ok {
         return None;
     }
@@ -166,7 +167,11 @@ pub fn filter_coordinate_outliers(coords: Vec<Vec2>) -> Vec<Vec2> {
     let (q1, q3) = (sd[sd.len() / 4], sd[3 * sd.len() / 4]);
     let threshold = q3 + 5.0 * (q3 - q1);
     let kept: Vec<Vec2> = coords.iter().zip(&distances).filter(|(_, &d)| d <= threshold).map(|(p, _)| *p).collect();
-    if (kept.len() as f64) < coords.len() as f64 * 0.8 { coords } else { kept }
+    if (kept.len() as f64) < coords.len() as f64 * 0.8 {
+        coords
+    } else {
+        kept
+    }
 }
 
 /// Leading edge and trailing-edge midpoint this close to (0, 0) and (1, 0),
@@ -202,7 +207,7 @@ fn normalize(coords: Vec<Vec2>) -> (Vec<Vec2>, f64) {
 /// lengths are multiplied by `scale`, rounded down unless within a few
 /// percent of a whole number.
 pub fn scaled_precision(precision: i32, scale: f64) -> i32 {
-    if !(scale > 0.0) || !scale.is_finite() {
+    if !scale.is_finite() || scale <= 0.0 {
         return precision;
     }
     let value = precision as f64 - scale.log10();
@@ -271,13 +276,21 @@ fn lednicer_to_selig(coords: &[Vec2], n_upper: usize, n_lower: usize) -> Vec<Vec
 /// (after any backslashes) gets one backslash more, so it is no comment.
 pub fn name_line(name: &str) -> String {
     let name = name.trim();
-    if name.trim_start_matches('\\').starts_with('#') { format!("\\{name}") } else { name.to_string() }
+    if name.trim_start_matches('\\').starts_with('#') {
+        format!("\\{name}")
+    } else {
+        name.to_string()
+    }
 }
 
 /// The name a header line holds: undoes [`name_line`].
 pub fn name_of_line(line: &str) -> String {
     let escaped = line.starts_with('\\') && line.trim_start_matches('\\').starts_with('#');
-    if escaped { line[1..].to_string() } else { line.to_string() }
+    if escaped {
+        line[1..].to_string()
+    } else {
+        line.to_string()
+    }
 }
 
 /// An airfoil read from text.

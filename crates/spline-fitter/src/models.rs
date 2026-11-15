@@ -101,8 +101,8 @@ impl OptimizerType {
         match value.to_lowercase().as_str() {
             "gn-varpro" | "hierarchical-lsq" => (Self::VarPro, true),
             "direct-lsq" | "constrained-lsq" => (Self::DirectLsq, true),
-            "orthogonal-lsq" | "param-opt" | "bfgs" | "slsqp" | "l-bfgs-b" | "cg" | "tnc" | "powell" | "nelder-mead"
-            | "cobyla" | "de" | "da" | "bh" => (Self::VarPro, true),
+            "orthogonal-lsq" | "param-opt" | "bfgs" | "slsqp" | "l-bfgs-b" | "cg" | "tnc" | "powell" | "nelder-mead" | "cobyla" | "de"
+            | "da" | "bh" => (Self::VarPro, true),
             _ => (Self::VarPro, false),
         }
     }
@@ -192,7 +192,11 @@ impl SplineConfig {
     /// joined by `, `, else the mode name.
     pub fn continuity_label(&self) -> String {
         let specs = self.junction_specs();
-        if specs.is_empty() { self.continuity.name().to_string() } else { specs.join(", ") }
+        if specs.is_empty() {
+            self.continuity.name().to_string()
+        } else {
+            specs.join(", ")
+        }
     }
 }
 
@@ -272,7 +276,7 @@ impl Default for OptimizationConfig {
 
 impl OptimizationConfig {
     pub fn validated(self) -> Result<Self> {
-        if let Some(t) = self.tolerance.filter(|t| !(*t > 0.0)) {
+        if let Some(t) = self.tolerance.filter(|t| t.is_nan() || *t <= 0.0) {
             bail!("tolerance must be positive, got {}", bspline_varpro::numfmt::shortest(t));
         }
         if let Some(m) = self.max_points_per_section.filter(|&m| m < 2) {

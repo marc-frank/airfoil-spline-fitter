@@ -157,9 +157,8 @@ pub fn to_step(curves: &[BSpline], name: &str, scale: f64, units: Units) -> Resu
     };
     let angle = add("(NAMED_UNIT(*)PLANE_ANGLE_UNIT()SI_UNIT($,.RADIAN.))".into());
     let solid = add("(NAMED_UNIT(*)SI_UNIT($,.STERADIAN.)SOLID_ANGLE_UNIT())".into());
-    let uncertainty = add(format!(
-        "UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-07),#{length},'distance_accuracy_value','confusion accuracy')"
-    ));
+    let uncertainty =
+        add(format!("UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-07),#{length},'distance_accuracy_value','confusion accuracy')"));
     let context = add(format!(
         "(GEOMETRIC_REPRESENTATION_CONTEXT(3)GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#{uncertainty}))\
          GLOBAL_UNIT_ASSIGNED_CONTEXT((#{length},#{angle},#{solid}))\
@@ -172,10 +171,8 @@ pub fn to_step(curves: &[BSpline], name: &str, scale: f64, units: Units) -> Resu
     let mut curve_ids = Vec::new();
     for (i, curve) in curves.iter().enumerate() {
         let (knots, control) = curve_data(curve, scale)?;
-        let points: Vec<String> = control
-            .iter()
-            .map(|p| format!("#{}", add(format!("CARTESIAN_POINT('',({}))", p.map(step_real).join(",")))))
-            .collect();
+        let points: Vec<String> =
+            control.iter().map(|p| format!("#{}", add(format!("CARTESIAN_POINT('',({}))", p.map(step_real).join(","))))).collect();
         let (values, counts): (Vec<f64>, Vec<usize>) = runs(&knots).unzip();
         curve_ids.push(format!(
             "#{}",
@@ -191,18 +188,14 @@ pub fn to_step(curves: &[BSpline], name: &str, scale: f64, units: Units) -> Resu
         ));
     }
     let curve_set = add(format!("GEOMETRIC_CURVE_SET('curves',({}))", curve_ids.join(",")));
-    let representation = add(format!(
-        "GEOMETRICALLY_BOUNDED_WIREFRAME_SHAPE_REPRESENTATION({product_name},(#{curve_set},#{placement}),#{context})"
-    ));
+    let representation =
+        add(format!("GEOMETRICALLY_BOUNDED_WIREFRAME_SHAPE_REPRESENTATION({product_name},(#{curve_set},#{placement}),#{context})"));
     add(format!("SHAPE_DEFINITION_REPRESENTATION(#{pds},#{representation})"));
     let mut lines = vec![
         "ISO-10303-21;".to_string(),
         "HEADER;".into(),
         "FILE_DESCRIPTION(('B-spline curves'),'2;1');".into(),
-        format!(
-            "FILE_NAME({product_name},'{}',(''),(''),'bspline-varpro','bspline-varpro','');",
-            local_time("%Y-%m-%dT%H:%M:%S")
-        ),
+        format!("FILE_NAME({product_name},'{}',(''),(''),'bspline-varpro','bspline-varpro','');", local_time("%Y-%m-%dT%H:%M:%S")),
         "FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));".into(),
         "ENDSEC;".into(),
         "DATA;".into(),
@@ -220,7 +213,11 @@ fn ascii(text: &str) -> String {
 /// IGES Hollerith string of at most 60 characters; empty for empty text.
 fn hollerith(text: &str) -> String {
     let text: String = ascii(text).chars().take(60).collect();
-    if text.is_empty() { text } else { format!("{}H{text}", text.len()) }
+    if text.is_empty() {
+        text
+    } else {
+        format!("{}H{text}", text.len())
+    }
 }
 
 fn iges_real(v: f64) -> String {
@@ -316,7 +313,7 @@ pub fn to_iges(curves: &[BSpline], name: &str, scale: f64, units: Units) -> Resu
             "0".into(),
         ];
         fields.extend(knots.iter().map(|&k| iges_real(k)));
-        fields.extend(std::iter::repeat("1.0".to_string()).take(control.len()));
+        fields.extend(std::iter::repeat_n("1.0".to_string(), control.len()));
         fields.extend(control.iter().flat_map(|c| c.map(iges_real)));
         fields.push(iges_real(knots[p]));
         fields.push(iges_real(knots[knots.len() - p - 1]));
@@ -325,18 +322,22 @@ pub fn to_iges(curves: &[BSpline], name: &str, scale: f64, units: Units) -> Resu
         let records = iges_records(&delimit(fields), 'P', p_start, &de.to_string());
         let label: String = format!("SPL{}", i + 1).chars().take(8).collect();
         directory.push(format!("{:>8}{:>8}{:>8}{:>8}{:>8}{:>8}{:>8}{:>8}{:>8}D{:7}", 126, p_start, 0, 0, 0, 0, 0, 0, "00000000", de));
-        directory.push(format!("{:>8}{:>8}{:>8}{:>8}{:>8}{:>8}{:>8}{:>8}{:>8}D{:7}", 126, 0, 0, records.len(), 0, "", "", label, 0, de + 1));
+        directory.push(format!(
+            "{:>8}{:>8}{:>8}{:>8}{:>8}{:>8}{:>8}{:>8}{:>8}D{:7}",
+            126,
+            0,
+            0,
+            records.len(),
+            0,
+            "",
+            "",
+            label,
+            0,
+            de + 1
+        ));
         parameter.extend(records);
     }
-    let terminate = format!(
-        "S{:7}G{:7}D{:7}P{:7}{:<40}T{:7}",
-        start.len(),
-        global.len(),
-        directory.len(),
-        parameter.len(),
-        "",
-        1
-    );
+    let terminate = format!("S{:7}G{:7}D{:7}P{:7}{:<40}T{:7}", start.len(), global.len(), directory.len(), parameter.len(), "", 1);
     let mut all = start;
     all.extend(global);
     all.extend(directory);
@@ -436,9 +437,7 @@ pub fn to_dxf(curves: &[BSpline], scale: f64, layer: &str, units: Units) -> Resu
     d.table("LTYPE", None, |d, t| {
         [("ByBlock", ""), ("ByLayer", ""), ("Continuous", "Solid line")]
             .iter()
-            .map(|(name, text)| {
-                d.record("LTYPE", t, "AcDbLinetypeTableRecord", name, &[(3, text), (72, "65"), (73, "0"), (40, "0.0")], 5)
-            })
+            .map(|(name, text)| d.record("LTYPE", t, "AcDbLinetypeTableRecord", name, &[(3, text), (72, "65"), (73, "0"), (40, "0.0")], 5))
             .collect()
     });
     let layers: Vec<String> = if layer == "0" { vec!["0".into()] } else { vec!["0".into(), layer.clone()] };
@@ -455,9 +454,7 @@ pub fn to_dxf(curves: &[BSpline], scale: f64, layer: &str, units: Units) -> Resu
     d.table("VIEW", None, |_, _| vec![]);
     d.table("UCS", None, |_, _| vec![]);
     d.table("APPID", None, |d, t| vec![d.record("APPID", t, "AcDbRegAppTableRecord", "ACAD", &[], 5)]);
-    d.table("DIMSTYLE", Some("AcDbDimStyleTable"), |d, t| {
-        vec![d.record("DIMSTYLE", t, "AcDbDimStyleTableRecord", "Standard", &[], 105)]
-    });
+    d.table("DIMSTYLE", Some("AcDbDimStyleTable"), |d, t| vec![d.record("DIMSTYLE", t, "AcDbDimStyleTableRecord", "Standard", &[], 105)]);
     let records = d.table("BLOCK_RECORD", None, |d, t| {
         ["*Model_Space", "*Paper_Space"].iter().map(|name| d.record("BLOCK_RECORD", t, "AcDbBlockTableRecord", name, &[], 5)).collect()
     });
@@ -474,7 +471,18 @@ pub fn to_dxf(curves: &[BSpline], scale: f64, layer: &str, units: Units) -> Resu
         if paper_space {
             d.pair(67, 1);
         }
-        for (code, value) in [(8, "0"), (100, "AcDbBlockBegin"), (2, name), (70, "0"), (10, "0.0"), (20, "0.0"), (30, "0.0"), (3, name), (1, ""), (0, "ENDBLK")] {
+        for (code, value) in [
+            (8, "0"),
+            (100, "AcDbBlockBegin"),
+            (2, name),
+            (70, "0"),
+            (10, "0.0"),
+            (20, "0.0"),
+            (30, "0.0"),
+            (3, name),
+            (1, ""),
+            (0, "ENDBLK"),
+        ] {
             d.pair(code, value);
         }
         let h = d.handle();
@@ -520,15 +528,21 @@ pub fn to_dxf(curves: &[BSpline], scale: f64, layer: &str, units: Units) -> Resu
     d.pair(0, "SECTION");
     d.pair(2, "OBJECTS");
     let (root, group) = (d.handle(), d.handle());
-    for (code, value) in [(0, "DICTIONARY"), (5, root.as_str()), (330, "0"), (100, "AcDbDictionary"), (281, "1"), (3, "ACAD_GROUP"), (350, group.as_str())] {
+    for (code, value) in
+        [(0, "DICTIONARY"), (5, root.as_str()), (330, "0"), (100, "AcDbDictionary"), (281, "1"), (3, "ACAD_GROUP"), (350, group.as_str())]
+    {
         d.pair(code, value);
     }
-    for (code, value) in [(0, "DICTIONARY"), (5, group.as_str()), (330, root.as_str()), (100, "AcDbDictionary"), (281, "1"), (0, "ENDSEC"), (0, "EOF")] {
+    for (code, value) in
+        [(0, "DICTIONARY"), (5, group.as_str()), (330, root.as_str()), (100, "AcDbDictionary"), (281, "1"), (0, "ENDSEC"), (0, "EOF")]
+    {
         d.pair(code, value);
     }
     let body = std::mem::take(&mut d.lines);
     let seed = d.handle();
-    for (code, value) in [(0, "SECTION"), (2, "HEADER"), (9, "$ACADVER"), (1, "AC1015"), (9, "$HANDSEED"), (5, seed.as_str()), (9, "$INSUNITS")] {
+    for (code, value) in
+        [(0, "SECTION"), (2, "HEADER"), (9, "$ACADVER"), (1, "AC1015"), (9, "$HANDSEED"), (5, seed.as_str()), (9, "$INSUNITS")]
+    {
         d.pair(code, value);
     }
     d.pair(70, insunits);
@@ -547,7 +561,11 @@ pub fn arc_length(curve: &BSpline) -> f64 {
     breaks.sort_by(f64::total_cmp);
     breaks.dedup();
     let (nodes, weights) = gauss_legendre(16);
-    breaks.windows(2).flat_map(|w| on_interval(&nodes, &weights, w[0], w[1]).collect::<Vec<_>>()).map(|(u, w)| w * curve.derivative(u, 1).norm()).sum()
+    breaks
+        .windows(2)
+        .flat_map(|w| on_interval(&nodes, &weights, w[0], w[1]).collect::<Vec<_>>())
+        .map(|(u, w)| w * curve.derivative(u, 1).norm())
+        .sum()
 }
 
 /// One B-spline on `[0, 1]` reproducing a position-continuous chain.
@@ -637,10 +655,13 @@ fn remove_knot(curve: &BSpline, u: f64) -> Option<BSpline> {
     let candidate = BSpline { degree: k, knots: new_t.clone(), control_points: control.clone() };
     let check = linspace(new_t[0], new_t[new_t.len() - 1], 20 * new_t.len());
     let scale = target.iter().fold(1.0f64, |m, p| m.max(p.x.abs()).max(p.y.abs()));
-    let error = check.iter().map(|&v| {
-        let d = candidate.point(v) - curve.point(v);
-        d.x.abs().max(d.y.abs())
-    }).fold(0.0, f64::max);
+    let error = check
+        .iter()
+        .map(|&v| {
+            let d = candidate.point(v) - curve.point(v);
+            d.x.abs().max(d.y.abs())
+        })
+        .fold(0.0, f64::max);
     if error > 1e-10 * scale {
         return None;
     }

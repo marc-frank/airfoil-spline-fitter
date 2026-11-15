@@ -58,9 +58,7 @@ impl BSpline {
         let p = self.degree;
         let span = find_span(&self.knots, p, u);
         let ders = basis_derivatives(&self.knots, p, span, u, order);
-        (0..=order)
-            .map(|k| ders[k].iter().enumerate().map(|(j, &b)| self.control_points[span - p + j] * b).sum())
-            .collect()
+        (0..=order).map(|k| ders[k].iter().enumerate().map(|(j, &b)| self.control_points[span - p + j] * b).sum()).collect()
     }
 
     pub fn points(&self, u: &[f64]) -> Vec<Vec2> {

@@ -54,11 +54,8 @@ impl JointProblem {
             offsets.push(offsets.last().unwrap() + num_control_points(k, degree));
         }
         let total = *offsets.last().unwrap();
-        let (z_basis, p0) = if c.nrows() > 0 {
-            (null_space(c, 1e-10).0, lstsq(c, d))
-        } else {
-            (DMatrix::identity(total, total), DMatrix::zeros(total, 2))
-        };
+        let (z_basis, p0) =
+            if c.nrows() > 0 { (null_space(c, 1e-10).0, lstsq(c, d)) } else { (DMatrix::identity(total, total), DMatrix::zeros(total, 2)) };
         let mut penalty = DMatrix::identity(total, total) * regularization;
         if smoothing > 0.0 {
             penalty += block_diag(&knots.iter().map(|k| bending_energy_matrix(k, degree)).collect::<Vec<_>>()) * smoothing;
@@ -147,7 +144,7 @@ fn nondecreasing(values: &[f64]) -> Vec<f64> {
             blocks.push(((m1 * c1 as f64 + m2 * c2 as f64) / (c1 + c2) as f64, c1 + c2));
         }
     }
-    blocks.into_iter().flat_map(|(m, c)| std::iter::repeat(m).take(c)).collect()
+    blocks.into_iter().flat_map(|(m, c)| std::iter::repeat_n(m, c)).collect()
 }
 
 /// Largest cosine between the residual and a Jacobian column.
@@ -163,10 +160,17 @@ fn gradient_cosine(g_t: &DVector<f64>, u_diag: &DVector<f64>, g_z: &DVector<f64>
         .zip(norms)
         .map(|(g, n2)| {
             let norm = n2.max(0.0).sqrt();
-            if norm > 0.0 { g.abs() / (norm * r_norm) } else { 0.0 }
+            if norm > 0.0 {
+                g.abs() / (norm * r_norm)
+            } else {
+                0.0
+            }
         })
         .fold(0.0, f64::max)
 }
+
+/// Called after every accepted step of [`solve_joint`]; true stops it.
+pub type StepCallback<'a> = dyn FnMut(&JointProblem, &[f64], &DVector<f64>) -> bool + 'a;
 
 /// End state of [`solve_joint`].
 #[derive(Debug, Clone)]
@@ -190,27 +194,32 @@ pub fn solve_joint(
     z: DVector<f64>,
     max_iterations: Option<usize>,
     tolerance: f64,
-    on_step: &mut dyn FnMut(&JointProblem, &[f64], &DVector<f64>) -> bool,
+    on_step: &mut StepCallback,
 ) -> Result<JointSolution> {
     if max_iterations == Some(0) {
         bail!("max_iterations must be at least 1 or None.");
     }
-    if !(tolerance > 0.0) {
+    if tolerance.is_nan() || tolerance <= 0.0 {
         bail!("tolerance must be positive.");
     }
     let s = problem.knots.len() as f64;
     let n_points = problem.data.len();
     let free: Vec<usize> = (1..n_points.saturating_sub(1)).collect();
     let mut running = f64::NEG_INFINITY;
-    let mut u: Vec<f64> = u.iter().map(|&v| { running = running.max(v); running.clamp(0.0, s) }).collect();
+    let mut u: Vec<f64> = u
+        .iter()
+        .map(|&v| {
+            running = running.max(v);
+            running.clamp(0.0, s)
+        })
+        .collect();
     let mut z = z;
     let mut eval = problem.evaluate(&u, &z, true);
     let mut cost = 0.5 * eval.r.norm_squared();
     let mut mu: Option<f64> = None;
     let mut nu = 2.0;
-    let solution = |u: Vec<f64>, z: DVector<f64>, iterations, converged, message| {
-        Ok(JointSolution { u, z, iterations, converged, message })
-    };
+    let solution =
+        |u: Vec<f64>, z: DVector<f64>, iterations, converged, message| Ok(JointSolution { u, z, iterations, converged, message });
     let mut iteration = 0;
     let (mut converged, mut message) = (false, "Maximum iterations reached.");
     while max_iterations.is_none_or(|m| iteration < m) {
@@ -272,8 +281,8 @@ pub fn solve_joint(
             let z_new = &z + &dz;
             let cost_new = 0.5 * problem.residual(&u_new, &z_new).norm_squared();
             let wdz = &w * &dz;
-            let predicted = -(g_t.dot(&dt) + g_z.dot(&dz))
-                - 0.5 * (dt.dot(&u_diag.component_mul(&dt)) + 2.0 * dt.dot(&wdz) + dz.dot(&(&v * &dz)));
+            let predicted =
+                -(g_t.dot(&dt) + g_z.dot(&dz)) - 0.5 * (dt.dot(&u_diag.component_mul(&dt)) + 2.0 * dt.dot(&wdz) + dz.dot(&(&v * &dz)));
             let rho = if predicted > 0.0 { (cost - cost_new) / predicted } else { -1.0 };
             if rho > 0.0 {
                 damping *= (1.0 / 3.0f64).max(1.0 - (2.0 * rho - 1.0).powi(3));
@@ -328,16 +337,12 @@ fn to_result(problem: &JointProblem, u: &[f64], z: &DVector<f64>, template: &Fit
 /// Joint Levenberg-Marquardt refinement of a fit on all points: the second
 /// stage for dense data after variable projection on a subsample. Knots and
 /// junction shape parameters stay fixed; the result has `max_deviation`.
-pub fn refine(
-    sections: &[Vec<Vec2>],
-    result: &FitResult,
-    options: &ChainOptions,
-    observer: &mut dyn Observer,
-) -> Result<FitResult> {
+pub fn refine(sections: &[Vec<Vec2>], result: &FitResult, options: &ChainOptions, observer: &mut dyn Observer) -> Result<FitResult> {
     let constraints = options.problem(sections, result.knots.clone(), result.degree)?.constraints;
     let theta = if result.theta.len() == constraints.num_params() { result.theta.clone() } else { constraints.initial_params() };
     let built = constraints.build(&theta);
-    let mut problem = JointProblem::new(sections, result.knots.clone(), result.degree, &built.c, &built.d, options.smoothing, options.regularization);
+    let mut problem =
+        JointProblem::new(sections, result.knots.clone(), result.degree, &built.c, &built.d, options.smoothing, options.regularization);
     let z0 = problem.z_from(&points_to_matrix(&result.control_points.concat()));
     let mut on_step = |problem: &JointProblem, u: &[f64], z: &DVector<f64>| {
         let step = to_result(problem, u, z, result);

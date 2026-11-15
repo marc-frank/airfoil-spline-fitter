@@ -49,11 +49,7 @@ pub fn inverse_softplus(y: f64) -> f64 {
 /// gap would otherwise stay collapsed in every warm-started fit.
 pub fn t_to_eta(u: &[f64]) -> Vec<f64> {
     let gaps: Vec<f64> = u.windows(2).map(|w| w[1] - w[0]).collect();
-    let floor = if gaps.is_empty() {
-        1e-15
-    } else {
-        (MIN_RELATIVE_GAP * gaps.iter().sum::<f64>() / gaps.len() as f64).max(1e-15)
-    };
+    let floor = if gaps.is_empty() { 1e-15 } else { (MIN_RELATIVE_GAP * gaps.iter().sum::<f64>() / gaps.len() as f64).max(1e-15) };
     gaps.iter().map(|&g| inverse_softplus(g.max(floor))).collect()
 }
 
@@ -86,7 +82,11 @@ pub fn eta_slopes(eta: &[f64], span: f64) -> Vec<f64> {
     eta.iter()
         .map(|&e| {
             let inside = e.is_nan() || e.abs() <= ETA_LIMIT;
-            if inside { span * sigmoid(sanitize(e)) / total } else { 0.0 }
+            if inside {
+                span * sigmoid(sanitize(e)) / total
+            } else {
+                0.0
+            }
         })
         .collect()
 }

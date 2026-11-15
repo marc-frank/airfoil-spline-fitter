@@ -9,8 +9,7 @@
 use bspline_varpro::basis::SparseRows;
 use bspline_varpro::chain::{chain_data, chain_parameters, evaluate_chain, locate};
 use bspline_varpro::{
-    centripetal_parameters, open_uniform_knots, solve_joint, BSpline, ChainConstraints, End, JointProblem, Junction,
-    KktSolver,
+    centripetal_parameters, open_uniform_knots, solve_joint, BSpline, ChainConstraints, End, JointProblem, Junction, KktSolver,
 };
 use nalgebra::DMatrix;
 
@@ -65,10 +64,8 @@ pub fn fit(config: &SplineConfig, options: &OptimizationConfig, sections: &[Vec<
 
     let section_control_points: Vec<Vec<Vec2>> =
         (0..s).map(|k| (k * n..(k + 1) * n).map(|i| Vec2::new(control[(i, 0)], control[(i, 1)])).collect()).collect();
-    let curves: Vec<BSpline> = section_control_points
-        .iter()
-        .map(|c| BSpline { degree: p, knots: knots[0].clone(), control_points: c.clone() })
-        .collect();
+    let curves: Vec<BSpline> =
+        section_control_points.iter().map(|c| BSpline { degree: p, knots: knots[0].clone(), control_points: c.clone() }).collect();
     let sum: f64 = data.iter().zip(&u).map(|(d, &v)| (evaluate_chain(&curves, v, 0) - d).norm_squared()).sum();
     let error = (sum / data.len() as f64).sqrt();
     monitor.update(&Update {

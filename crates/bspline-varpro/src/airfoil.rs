@@ -186,7 +186,11 @@ pub fn leading_edge_radius(curves: &[BSpline]) -> f64 {
     let (i, u, _) = leading_edge(curves);
     let d = curves[i].derivatives(u, 2);
     let kappa = cross(d[1], d[2]).abs() / d[1].norm().powi(3);
-    if kappa > 0.0 { 1.0 / kappa } else { f64::INFINITY }
+    if kappa > 0.0 {
+        1.0 / kappa
+    } else {
+        f64::INFINITY
+    }
 }
 
 /// Brent's bounded minimization of `f` on `[a, b]` (as SciPy's `fminbound`):
@@ -205,7 +209,15 @@ pub fn fminbound(f: impl Fn(f64) -> f64, a: f64, b: f64, xatol: f64) -> (f64, f6
     let mut xm = 0.5 * (a + b);
     let mut tol1 = sqrt_eps * xf.abs() + xatol / 3.0;
     let mut tol2 = 2.0 * tol1;
-    let sign = |v: f64| if v > 0.0 { 1.0 } else if v < 0.0 { -1.0 } else { 0.0 };
+    let sign = |v: f64| {
+        if v > 0.0 {
+            1.0
+        } else if v < 0.0 {
+            -1.0
+        } else {
+            0.0
+        }
+    };
     while (xf - xm).abs() > tol2 - 0.5 * (b - a) {
         let mut golden = true;
         if e.abs() > tol1 {
@@ -240,12 +252,20 @@ pub fn fminbound(f: impl Fn(f64) -> f64, a: f64, b: f64, xatol: f64) -> (f64, f6
         let fu = f(x);
         evaluations += 1;
         if fu <= fx {
-            if x >= xf { a = xf } else { b = xf }
+            if x >= xf {
+                a = xf
+            } else {
+                b = xf
+            }
             (fulc, ffulc) = (nfc, fnfc);
             (nfc, fnfc) = (xf, fx);
             (xf, fx) = (x, fu);
         } else {
-            if x < xf { a = x } else { b = x }
+            if x < xf {
+                a = x
+            } else {
+                b = x
+            }
             if fu <= fnfc || nfc == xf {
                 (fulc, ffulc) = (nfc, fnfc);
                 (nfc, fnfc) = (x, fu);
@@ -310,7 +330,7 @@ pub fn resample(curves: &[BSpline], n_per_side: usize) -> Result<Vec<Vec2>> {
     let mut offset = 0.0;
     for (i, curve) in curves.iter().enumerate() {
         let (u, s) = arc_table(curve);
-        sections.extend(std::iter::repeat(i).take(u.len()));
+        sections.extend(std::iter::repeat_n(i, u.len()));
         us.extend_from_slice(&u);
         let total = s[s.len() - 1];
         ss.extend(s.iter().map(|v| v + offset));
@@ -437,7 +457,7 @@ pub fn trailing_edge_segment(curves: &[BSpline]) -> Option<BSpline> {
     }
     let k = curves[0].degree;
     let mut knots = vec![0.0; k + 1];
-    knots.extend(std::iter::repeat(1.0).take(k + 1));
+    knots.extend(std::iter::repeat_n(1.0, k + 1));
     let control_points = (0..=k).map(|i| start + (end - start) * (i as f64 / k as f64)).collect();
     Some(BSpline { degree: k, knots, control_points })
 }
@@ -448,12 +468,8 @@ mod tests {
 
     #[test]
     fn naca_points_and_tolerance() {
-        let pts: Vec<Vec2> = Naca4::new("2412", true)
-            .unwrap()
-            .points(81)
-            .iter()
-            .map(|p| p.map(|v| (v * 1e6).round_ties_even() / 1e6))
-            .collect();
+        let pts: Vec<Vec2> =
+            Naca4::new("2412", true).unwrap().points(81).iter().map(|p| p.map(|v| (v * 1e6).round_ties_even() / 1e6)).collect();
         assert_eq!(pts.len(), 161);
         assert_eq!(pts[80], Vec2::new(0.0, 0.0));
         assert_eq!(decimal_places(&pts), Some(6));
