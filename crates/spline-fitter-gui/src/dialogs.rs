@@ -466,11 +466,11 @@ impl App {
         ui.vertical(|ui| {
             ui.horizontal(|ui| {
                 widgets::caption(ui, &p, "Runs");
-                // The two combos share the width left after the labels.
+                // The two combos share the width left after the labels (and
+                // the three gaps between the four).
                 let font = egui::FontId::proportional(crate::theme::typeface::BASE);
-                let labels: f32 =
-                    ["X axis", "Y axis"].iter().map(|t| ui.painter().layout_no_wrap(t.to_string(), font.clone(), p.text_2).size().x).sum();
-                let each = ((ui.available_width() - labels - 4.0 * size::GAP) / 2.0).max(60.0);
+                let labels: f32 = ["X axis", "Y axis"].iter().map(|t| crate::fonts::layout_width(ui, t, &font, false)).sum();
+                let each = ((ui.available_width() - labels - 3.0 * ui.spacing().item_spacing.x) / 2.0).max(60.0);
                 ui.label(egui::RichText::new("X axis").color(p.text_2));
                 let all: Vec<&str> = COLUMNS.iter().map(|c| c.name).collect();
                 let mut x = self.explorer.x_column;

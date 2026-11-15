@@ -93,15 +93,22 @@ pub fn checkbox(ui: &mut Ui, p: &Palette, checked: &mut bool, text: impl Into<Ri
     tristate_checkbox(ui, p, checked, false, text)
 }
 
+/// The width of a check box with `text`: its box, a gap and the text as Qt
+/// measures it.
+pub fn checkbox_width(ui: &Ui, text: &str) -> f32 {
+    size::CHECK_BOX + size::GAP + crate::fonts::layout_width(ui, text, &FontId::proportional(typeface::BASE), false)
+}
+
 /// A check box that can show a dash: some of what it stands for checked.
 pub fn tristate_checkbox(ui: &mut Ui, p: &Palette, checked: &mut bool, partly: bool, text: impl Into<RichText>) -> Response {
-    const BOX: f32 = 14.0;
+    const BOX: f32 = size::CHECK_BOX;
     let enabled = ui.is_enabled();
     let text: RichText = text.into();
+    let width = checkbox_width(ui, text.text());
     let color = if enabled { p.text } else { p.text_3 };
     let galley = egui::WidgetText::from(text).into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Body);
     let height = galley.size().y.max(BOX);
-    let (rect, mut response) = ui.allocate_exact_size(Vec2::new(BOX + size::GAP + galley.size().x, height), Sense::click());
+    let (rect, mut response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
     if response.clicked() {
         *checked = !*checked;
         response.mark_changed();
@@ -114,10 +121,11 @@ pub fn tristate_checkbox(ui: &mut Ui, p: &Palette, checked: &mut bool, partly: b
         (true, false) => (p.field, p.rule_strong),
     };
     ui.painter().rect(indicator, CornerRadius::same(2), fill, egui::Stroke::new(1.0, border), egui::StrokeKind::Inside);
+    // The glyph fills the box inside its border.
     if partly {
-        Glyph::Dash.paint(ui.painter(), indicator.center(), BOX, p.text);
+        Glyph::Dash.paint(ui.painter(), indicator.center(), BOX - 2.0, p.text);
     } else if *checked {
-        Glyph::Check.paint(ui.painter(), indicator.center(), BOX, p.text);
+        Glyph::Check.paint(ui.painter(), indicator.center(), BOX - 2.0, p.text);
     }
     ui.painter().galley(egui::pos2(indicator.right() + size::GAP, rect.center().y - galley.size().y / 2.0), galley, color);
     response.on_hover_cursor(egui::CursorIcon::Default)
@@ -574,7 +582,7 @@ pub fn collapsible_header(ui: &mut Ui, p: &Palette, title: &str, open: &mut bool
     let font = crate::fonts::semibold_id(typeface::CAPTION);
     let text = title.to_uppercase();
     let galley = ui.painter().layout_no_wrap(text.clone(), font.clone(), p.text_3);
-    let height = galley.size().y.max(size::GLYPH);
+    let height = galley.size().y.max(size::CAPTION_LINE);
     let indent = size::GLYPH + 9.0;
     let interact = ui.spacing().interact_size.y;
     ui.spacing_mut().interact_size.y = height;
@@ -584,13 +592,15 @@ pub fn collapsible_header(ui: &mut Ui, p: &Palette, title: &str, open: &mut bool
         let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
         let color = if response.hovered() { p.text } else { p.text_3 };
         let glyph = if *open { Glyph::ChevronDown } else { Glyph::ChevronRight };
-        glyph.paint(ui.painter(), rect.left_center() + Vec2::new(size::GLYPH / 2.0, 0.0), size::GLYPH, color);
+        // Text and chevron on the caption's line, at the top as in a label.
+        let middle = rect.top() + galley.size().y / 2.0;
+        glyph.paint(ui.painter(), egui::pos2(rect.left() + size::GLYPH / 2.0, middle), size::GLYPH, color);
         let job = egui::text::LayoutJob::single_section(
             text,
             egui::TextFormat { font_id: font, color, extra_letter_spacing: 1.0, ..Default::default() },
         );
         let galley = ui.painter().layout_job(job);
-        ui.painter().galley(egui::pos2(rect.left() + indent, rect.center().y - galley.size().y / 2.0), galley, color);
+        ui.painter().galley(egui::pos2(rect.left() + indent, rect.top()), galley, color);
         if response.clicked() {
             *open = !*open;
         }
@@ -605,6 +615,23 @@ pub fn collapsible_header(ui: &mut Ui, p: &Palette, title: &str, open: &mut bool
 }
 
 /// A thin horizontal rule.
+/// A size grip with its bottom right at `corner`: a triangle of dots that
+/// resizes the window when dragged.
+pub fn size_grip(ui: &mut Ui, p: &Palette, corner: egui::Pos2) {
+    let rect = egui::Rect::from_min_max(corner - Vec2::splat(size::GRIP), corner);
+    let response = ui.interact(rect, ui.scope_id().with("size_grip"), Sense::drag()).on_hover_cursor(egui::CursorIcon::ResizeSouthEast);
+    if response.drag_started() {
+        ui.ctx().send_viewport_cmd(egui::ViewportCommand::BeginResize(egui::viewport::ResizeDirection::SouthEast));
+    }
+    // Four rows of 2 px dots, 3 px apart, 1 px in from the corner.
+    for row in 0..4 {
+        for col in 0..=row {
+            let at = corner - Vec2::new(3.0 + 3.0 * col as f32, 3.0 + 3.0 * (3 - row) as f32);
+            ui.painter().rect_filled(egui::Rect::from_min_size(at, Vec2::splat(2.0)), 0.0, p.rule_strong);
+        }
+    }
+}
+
 pub fn rule(ui: &mut Ui, p: &Palette) {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), Sense::hover());
     ui.painter().rect_filled(rect, 0.0, p.rule);
@@ -666,28 +693,43 @@ pub fn combo(
 ) -> bool {
     let before = *selected;
     // As wide as the longest item, its padding and the drop-down glyph.
-    let width = if width > 0.0 {
-        width
-    } else {
-        let font = FontId::proportional(typeface::BASE);
-        let longest = items.iter().map(|t| ui.painter().layout_no_wrap(t.to_string(), font.clone(), p.text).size().x).fold(0.0, f32::max);
-        longest + size::COMBO_EXTRA
-    };
+    let width = if width > 0.0 { width } else { combo_width(ui, items) };
     let glyph = p.text_2;
+    // Qt's layout: the text 8 px in, the chevron centred 11.5 px from the
+    // right edge; the gap between them gives way to keep the width.
+    let text = items.get(*selected).copied().unwrap_or("");
+    let font = FontId::proportional(typeface::BASE);
+    let text_width = ui.painter().layout_no_wrap(text.to_string(), font, p.text).size().x;
+    let spacing = ui.spacing().clone();
+    let pad = size::COMBO_PADDING;
+    let icon = 2.0 * (size::COMBO_CHEVRON_INSET - pad);
+    let gap = (width - 2.0 * pad - icon - text_width).clamp(0.0, size::COMBO_EXTRA);
+    ui.spacing_mut().button_padding.x = pad;
+    ui.spacing_mut().icon_width = icon;
+    ui.spacing_mut().icon_spacing = gap;
     let response = egui::ComboBox::from_id_salt(id_salt)
         .width(width)
-        .selected_text(items.get(*selected).copied().unwrap_or(""))
+        .selected_text(text)
         .icon(move |ui, rect, _visuals, _open| Glyph::ChevronDown.paint(ui.painter(), rect.center(), size::GLYPH, glyph))
         .show_ui(ui, |ui| {
+            *ui.spacing_mut() = spacing.clone();
             for (i, item) in items.iter().enumerate() {
                 ui.selectable_value(selected, i, *item);
             }
         })
         .response;
+    *ui.spacing_mut() = spacing;
     if !tooltip.is_empty() {
         response.on_hover_text(tooltip);
     }
     *selected != before
+}
+
+/// The width of a combo box that fits `items`: as Qt sizes one, the
+/// longest item's ink and the room around it.
+pub fn combo_width(ui: &Ui, items: &[&str]) -> f32 {
+    let font = FontId::proportional(typeface::BASE);
+    items.iter().map(|t| crate::fonts::ink_width(ui, t, &font)).fold(0.0, f32::max) + size::COMBO_EXTRA
 }
 
 /// A plain button of control height.

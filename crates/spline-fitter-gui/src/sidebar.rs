@@ -10,12 +10,17 @@ use crate::settings::{Change, IntSweep};
 use crate::theme::{size, typeface, Palette};
 use crate::widgets::{self, caption, form_row, muted, Field, IntOptions};
 
+/// A section's margins; the bottom one holds the rule below it (Qt draws
+/// a border inside the margin).
+const SECTION_MARGIN: egui::Margin = egui::Margin { left: 12, right: 12, top: 10, bottom: 11 };
+
 /// A section of the sidebar: caption, content, bottom rule.
 fn section(ui: &mut Ui, p: &Palette, title: &str, content: impl FnOnce(&mut Ui)) {
-    egui::Frame::new().inner_margin(egui::Margin { left: 12, right: 12, top: 10, bottom: 12 }).show(ui, |ui| {
+    egui::Frame::new().inner_margin(SECTION_MARGIN).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = size::GAP;
-        caption(ui, p, title);
-        ui.add_space(3.0);
+        let caption = caption(ui, p, title);
+        // The caption takes a line of its own, a group's space above the content.
+        ui.add_space(size::CAPTION_LINE - caption.rect.height() + size::GROUP - size::GAP);
         content(ui);
     });
     widgets::rule(ui, p);
@@ -51,9 +56,9 @@ impl App {
         let p = self.palette.clone();
         let frame = egui::Frame::new().fill(p.panel);
         let mut panel =
-            egui::Panel::left("sidebar").resizable(true).default_size(size::SIDEBAR_WIDTH).min_size(size::SIDEBAR_MIN_WIDTH).frame(frame);
+            egui::Panel::left("sidebar").resizable(true).default_size(size::SIDEBAR_WIDTH + size::SPLITTER).min_size(size::SIDEBAR_MIN_WIDTH).frame(frame);
         if std::mem::take(&mut self.reset_sidebar) {
-            panel = panel.exact_size(size::SIDEBAR_WIDTH);
+            panel = panel.exact_size(size::SIDEBAR_WIDTH + size::SPLITTER);
         }
         let shown = panel.show(ui, |ui| {
             let bar = egui::Panel::bottom("run_bar")
@@ -148,9 +153,8 @@ impl App {
                 });
                 form_row(ui, &p, "Max deviation", view.tolerance_mode, "", |ui| {
                     ui.horizontal(|ui| {
-                        // The check box: its 14 px box, 6 px and its text.
-                        let font = egui::FontId::proportional(typeface::BASE);
-                        let auto_w = 14.0 + size::GAP + ui.painter().layout_no_wrap("Auto".into(), font, p.text).size().x.ceil() + 2.0;
+                        ui.spacing_mut().item_spacing.x = size::GAP;
+                        let auto_w = widgets::checkbox_width(ui, "Auto");
                         ui.add_enabled_ui(view.tolerance_mode && !s.auto_tolerance, |ui| {
                             widgets::scientific_field(
                                 ui,
@@ -263,7 +267,7 @@ impl App {
         let p = self.palette.clone();
         let (badge, badge_tip) = self.baseline.badge(&self.settings);
         let fitting = self.fitting();
-        egui::Frame::new().inner_margin(egui::Margin { left: 12, right: 12, top: 10, bottom: 12 }).show(ui, |ui| {
+        egui::Frame::new().inner_margin(SECTION_MARGIN).show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = size::GAP;
             widgets::collapsible_header(ui, &p, "Advanced", &mut self.advanced_open, &badge, &badge_tip);
             if !self.advanced_open {
@@ -339,7 +343,7 @@ impl App {
             self.on_fit();
         }
         let Some(fit) = self.fit.clone().filter(|_| !self.fitting()) else { return };
-        ui.add_space(size::PAD);
+        ui.add_space(size::PAD - ui.spacing().item_spacing.y);
         let (error_caption, error_value) = match &fit.report {
             Some(r) => ("Max deviation", number(r.max_deviation, ".2e")),
             None => ("Error", format_error(fit.final_error)),
@@ -372,13 +376,14 @@ impl App {
                     ui.spacing_mut().item_spacing.y = 0.0;
                     muted(ui, &p, caption);
                     let r = ui.label(RichText::new(value).monospace().size(typeface::READOUT).color(p.text));
+                    ui.add_space((size::READOUT_LINE - r.rect.height()).max(0.0));
                     if !tip.is_empty() {
                         r.on_hover_text(tip);
                     }
                 });
             }
         });
-        ui.add_space(size::PAD - size::GAP);
+        ui.add_space(size::PAD - ui.spacing().item_spacing.y);
         // The exports share the row in equal widths.
         let each = (width - 2.0 * size::GAP) / 3.0;
         ui.horizontal(|ui| {

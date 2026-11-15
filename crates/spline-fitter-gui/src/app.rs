@@ -419,12 +419,16 @@ impl App {
     }
 
     fn status_bar(&mut self, ui: &mut Ui) {
-        egui::Panel::bottom("status").frame(egui::Frame::new().fill(self.palette.window).inner_margin(egui::Margin::symmetric(8, 3))).show(
-            ui,
-            |ui| {
-                ui.label(RichText::new(&self.status).color(self.palette.text_2));
-            },
-        );
+        let p = &self.palette;
+        let margin = egui::Margin { left: 8, right: 8, top: 2, bottom: 3 };
+        egui::Panel::bottom("status").frame(egui::Frame::new().fill(p.window).inner_margin(margin)).show(ui, |ui| {
+            ui.label(RichText::new(&self.status).color(p.text_2));
+            // The size grip in the window's corner (none when maximized).
+            if !ui.input(|i| i.viewport().maximized.unwrap_or(false)) {
+                let corner = ui.max_rect().right_bottom() + egui::vec2(margin.right as f32, margin.bottom as f32);
+                widgets::size_grip(ui, p, corner);
+            }
+        });
     }
 
     fn title(&self) -> String {
@@ -438,25 +442,28 @@ impl App {
         let p = self.palette.clone();
         let frame = egui::Frame::new().fill(p.window).inner_margin(egui::Margin::same(8));
         egui::CentralPanel::default().frame(frame).show(ui, |ui| {
+            // Toolbar, main plot and the bottom plots a gap apart; the plots
+            // share the height 3 : 2.
+            ui.spacing_mut().item_spacing = egui::vec2(size::GAP, size::GAP);
             self.plot_toolbar(ui);
-            ui.add_space(size::GAP);
             let total = ui.available_height();
             let main_height = (total - size::GAP) * 0.6;
             ui.allocate_ui(egui::vec2(ui.available_width(), main_height), |ui| self.main_plot.show(ui, &p, self.zoom_ms));
-            ui.add_space(size::GAP);
             let rest = ui.available_height();
             let wide = ui.available_width() >= 2.0 * 440.0 + size::GROUP;
+            // The bottom plots are a group's space apart.
+            let between = size::GROUP - size::GAP;
             if wide {
                 let half = (ui.available_width() - size::GROUP) / 2.0;
                 ui.horizontal(|ui| {
                     ui.allocate_ui(egui::vec2(half, rest), |ui| self.loss_block(ui));
-                    ui.add_space(size::GROUP);
+                    ui.add_space(between);
                     ui.allocate_ui(egui::vec2(half, rest), |ui| self.comparison_block(ui));
                 });
             } else {
                 let half = (rest - size::GROUP) / 2.0;
                 ui.allocate_ui(egui::vec2(ui.available_width(), half), |ui| self.loss_block(ui));
-                ui.add_space(size::GROUP);
+                ui.add_space(between);
                 ui.allocate_ui(egui::vec2(ui.available_width(), half), |ui| self.comparison_block(ui));
             }
         });
@@ -488,8 +495,7 @@ impl App {
         // under them when the plot is too narrow for both.
         let font = egui::FontId::proportional(crate::theme::typeface::BASE);
         let measure = |ui: &Ui, t: &str| ui.painter().layout_no_wrap(t.to_string(), font.clone(), p.text).size().x;
-        let longest = LiveMode::LABELS.iter().map(|t| measure(ui, t)).fold(0.0, f32::max);
-        let live_width = measure(ui, "Live preview") + size::GAP + longest + size::COMBO_EXTRA;
+        let live_width = measure(ui, "Live preview") + size::GAP + widgets::combo_width(ui, &LiveMode::LABELS);
         let mut wraps = false;
         ui.horizontal(|ui| {
             let knots =

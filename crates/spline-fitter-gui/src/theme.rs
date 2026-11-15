@@ -191,10 +191,21 @@ pub mod size {
     pub const TOOL_BUTTON_PADDING: f32 = 15.5;
     /// The drop-down half of a split toggle.
     pub const ARROW_BUTTON_WIDTH: f32 = 24.0;
-    /// A combo box is this much wider than its longest item.
-    pub const COMBO_EXTRA: f32 = 34.0;
+    /// A combo box is this much wider than its longest item's ink.
+    pub const COMBO_EXTRA: f32 = 36.0;
+    /// A combo box's text inset, and its chevron's centre from the right.
+    pub const COMBO_PADDING: f32 = 8.0;
+    pub const COMBO_CHEVRON_INSET: f32 = 11.5;
+    /// A check box's box, its 1 px border included.
+    pub const CHECK_BOX: f32 = 16.0;
     /// A form row holding only a check box: a line of text.
     pub const CHECK_ROW_HEIGHT: f32 = 16.0;
+    /// A section caption's line.
+    pub const CAPTION_LINE: f32 = 14.0;
+    /// The status bar's size grip.
+    pub const GRIP: f32 = 17.0;
+    /// A run bar readout's value: a line of the readout face.
+    pub const READOUT_LINE: f32 = 18.0;
     /// The menu bar: a line of text and 4 px above and below.
     pub const MENU_BAR_HEIGHT: f32 = 24.0;
     pub const GLYPH: f32 = 10.0;
@@ -206,6 +217,9 @@ pub mod size {
     /// Advanced, two fields and the toggle) at the base type size.
     pub const SIDEBAR_WIDTH: f32 = 410.0;
     pub const SIDEBAR_MIN_WIDTH: f32 = 300.0;
+    /// The rule between panels: Qt's splitter handle lies between them, an
+    /// egui panel's size takes it in.
+    pub const SPLITTER: f32 = 1.0;
     pub const EXPLORER_WIDTH: f32 = 570.0;
     pub const EXPLORER_MIN_WIDTH: f32 = 180.0;
     pub const SLIDER_WIDTH: f32 = 220.0;

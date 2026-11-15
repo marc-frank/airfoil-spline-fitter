@@ -137,14 +137,13 @@ impl ExplorerState {
 }
 
 /// Run table: header and row heights, and what a header and a cell add to
-/// their text (padding, and the header's sort and filter glyphs).
+/// their text (padding, and the header's sort and filter glyphs). Qt sizes
+/// a header section by its text in bold.
 const HEADER_HEIGHT: f32 = 28.0;
 const ROW_HEIGHT: f32 = 28.0;
-const HEADER_EXTRA: f32 = 48.0;
+const HEADER_EXTRA: f32 = 46.0;
 const CELL_EXTRA: f32 = 18.0;
 const EMPTY_COLUMN: f32 = 100.0;
-/// A run's column when pivoted, at least.
-const PIVOT_COLUMN: f32 = 106.0;
 
 /// The open column filter drop-down.
 struct ColumnPopup {
@@ -378,11 +377,11 @@ impl App {
         let p = self.palette.clone();
         let mut panel = egui::Panel::right("explorer")
             .resizable(true)
-            .default_size(size::EXPLORER_WIDTH)
+            .default_size(size::EXPLORER_WIDTH + size::SPLITTER)
             .size_range(size::EXPLORER_MIN_WIDTH..=ui.available_width() * 0.6)
             .frame(egui::Frame::new().fill(p.panel).inner_margin(egui::Margin { left: 12, right: 12, top: 10, bottom: 12 }));
         if std::mem::take(&mut self.reset_explorer) {
-            panel = panel.exact_size(size::EXPLORER_WIDTH);
+            panel = panel.exact_size(size::EXPLORER_WIDTH + size::SPLITTER);
         }
         let shown = panel.show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = size::GROUP;
@@ -593,11 +592,12 @@ impl App {
         // room for its glyphs, or the widest cell.
         let text = egui::FontId::proportional(crate::theme::typeface::BASE);
         let mono = egui::FontId::monospace(crate::theme::typeface::BASE);
-        let measure = |s: &str, font: &egui::FontId| ui.painter().layout_no_wrap(s.to_string(), font.clone(), p.text).size().x;
+        let measure = |s: &str, font: &egui::FontId| crate::fonts::layout_width(ui, s, font, false);
+        let header_width = |c: usize| crate::fonts::layout_width(ui, COLUMNS[c].name, &text, true) + HEADER_EXTRA;
         let widths: Vec<f32> = columns
             .iter()
             .map(|&c| {
-                let header = measure(COLUMNS[c].name, &text) + HEADER_EXTRA;
+                let header = header_width(c);
                 let cells = rows
                     .iter()
                     .map(|(_, cells)| measure(&cells[c].1, if cells[c].0.is_number() { &mono } else { &text }) + CELL_EXTRA)
@@ -688,16 +688,16 @@ impl App {
         self.explorer.sections.clear();
         let text = egui::FontId::proportional(crate::theme::typeface::BASE);
         let mono = egui::FontId::monospace(crate::theme::typeface::BASE);
-        let measure = |s: &str, font: &egui::FontId| ui.painter().layout_no_wrap(s.to_string(), font.clone(), p.text).size().x;
-        let name_width = columns.iter().map(|&c| measure(COLUMNS[c].name, &text) + HEADER_EXTRA).fold(0.0, f32::max).ceil();
+        let measure = |s: &str, font: &egui::FontId| crate::fonts::layout_width(ui, s, font, false);
+        let header_width = |c: usize| crate::fonts::layout_width(ui, COLUMNS[c].name, &text, true) + HEADER_EXTRA;
+        let name_width = columns.iter().map(|&c| header_width(c)).fold(0.0, f32::max);
         let widths: Vec<f32> = rows
             .iter()
             .map(|(_, cells)| {
-                let widest = columns
+                columns
                     .iter()
                     .map(|&c| measure(&cells[c].1, if cells[c].0.is_number() { &mono } else { &text }) + CELL_EXTRA)
-                    .fold(0.0, f32::max);
-                widest.max(PIVOT_COLUMN).ceil()
+                    .fold(0.0, f32::max)
             })
             .collect();
         let height = columns.len() as f32 * ROW_HEIGHT;

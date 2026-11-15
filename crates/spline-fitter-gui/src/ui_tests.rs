@@ -345,7 +345,7 @@ fn settings_and_panels_behave_as_in_python() {
     let edge = h.state().sidebar_rect.right();
     double_click_at(&mut h, edge, 600.0);
     h.run_steps(4);
-    assert!((h.state().sidebar_rect.width() - crate::theme::size::SIDEBAR_WIDTH).abs() < 1.5, "{}", h.state().sidebar_rect.width());
+    assert_eq!(h.state().sidebar_rect.width(), crate::theme::size::SIDEBAR_WIDTH + crate::theme::size::SPLITTER);
 
     // The comb settings stay open while the plot is used.
     click_at(&mut h, 615.0, 45.0);
