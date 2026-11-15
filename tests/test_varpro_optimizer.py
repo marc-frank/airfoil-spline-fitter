@@ -26,6 +26,14 @@ def small_airfoil(noise=0.0, n=19):
     return AirfoilData(sections[0] + sections[1][1:], sections, (n - 1,), 2)
 
 
+def _airfoil():
+    from bspline_varpro.airfoil import NACA4
+
+    from spline_fitter.geometry import create_airfoil_data
+    points = [(float(x), float(y)) for x, y in np.round(NACA4("2412").points(61), 6)]
+    return create_airfoil_data(points, filename="naca2412", name="NACA 2412", precision=6)
+
+
 def test_adapter_returns_app_result_with_data_only_error():
     airfoil = small_airfoil(0.003)
     config = SplineConfig(degree=3, num_control_points=6)
@@ -74,7 +82,7 @@ def test_adapter_passes_settings_through_to_library(monkeypatch):
     assert captured["num_control_points"] == 10 and captured["degree"] == 5
     assert captured["continuity"] == "C2" and captured["fix_junctions"] is False
     assert captured["smoothing"] == 1e-4 and captured["regularization"] == 1e-12
-    assert captured["tolerance"] == 1e-10 and captured["exact_jacobian"] is True
+    assert captured["tolerance"] == 1e-8 and captured["exact_jacobian"] is True
     assert captured["verbose"] == 0
     assert captured["initial_parameters"] is t0
     assert "max_nfev" not in captured  # no limit: the fit runs until it converges
@@ -148,14 +156,58 @@ def test_projects_saved_with_fairing_still_load():
         assert "fairing" not in _encode_optimization_config(options)
 
 
-def test_subsampling_setting_round_trips_through_projects():
+def test_projects_saved_with_a_subsample_setting_still_load():
     from spline_fitter.project_io import _decode_optimization_config, _encode_optimization_config
-    options = OptimizationConfig(optimizer=OptimizerType.GN_VARPRO, max_points_per_section=150)
+    old = _decode_optimization_config({"optimizer": "gn-varpro", "max_points_per_section": 150})
+    assert old == OptimizationConfig(optimizer=OptimizerType.GN_VARPRO, min_knot_gap=1e-3)
+    assert "max_points_per_section" not in _encode_optimization_config(old)
+
+
+def test_knot_spacing_is_a_setting():
+    from spline_fitter.project_io import _decode_optimization_config, _encode_optimization_config
+    assert OptimizationConfig().min_knot_gap == 0.05
+    options = OptimizationConfig(knot_placement="free", min_knot_gap=0.02)
     assert _decode_optimization_config(_encode_optimization_config(options)) == options
-    old = _decode_optimization_config({"optimizer": "gn-varpro", "metric": "avg_point"})
-    assert old.max_points_per_section is None
-    with pytest.raises(ValueError, match="at least 2"):
-        OptimizationConfig(max_points_per_section=1)
+    # Projects from before the setting were fitted with 0.001
+    assert _decode_optimization_config({"optimizer": "gn-varpro"}).min_knot_gap == 1e-3
+    for bad in (-0.01, 0.6):
+        with pytest.raises(ValueError, match="min_knot_gap"):
+            OptimizationConfig(min_knot_gap=bad)
+
+
+def test_knot_spacing_reaches_the_library(monkeypatch):
+    import bspline_varpro
+    from spline_fitter.optimization import run_optimization
+    seen = []
+    for name in ("fit", "fit_to_tolerance"):
+        original = getattr(bspline_varpro, name)
+
+        def spy(*args, _original=original, **kwargs):
+            seen.append(kwargs["min_knot_gap"])
+            return _original(*args, **kwargs)
+        monkeypatch.setattr(bspline_varpro, name, spy)
+    airfoil = _airfoil()
+    config = SplineConfig(num_control_points=8)
+    run_optimization(config, OptimizationConfig(min_knot_gap=0.03), airfoil)
+    run_optimization(config, OptimizationConfig(min_knot_gap=0.04, tolerance=1e-3), airfoil)
+    assert seen == [0.03, 0.04]
+
+
+def test_a_tolerance_search_hands_on_every_fit():
+    from spline_fitter.optimization import run_optimization
+    result = run_optimization(
+        SplineConfig(), OptimizationConfig(tolerance=1e-5, grow_control_points=True), _airfoil())
+    assert result.success and result.fun <= 1e-5
+    # The refits before the last, in order; the result itself is the last
+    assert len(result.fits) == result.nit - 1 >= 1
+    assert [fit.nit for fit in result.fits] == list(range(1, result.nit))
+    for fit in result.fits:
+        assert fit.success == (fit.fun <= 1e-5)
+        assert fit.section_knots is not None and fit.evaluations > 0 and fit.seconds >= 0
+    evaluations = [fit.evaluations for fit in result.fits]
+    assert evaluations == sorted(evaluations)
+    # A fixed count is one fit
+    assert run_optimization(SplineConfig(), OptimizationConfig(), _airfoil()).fits == []
 
 
 def test_knot_settings_round_trip_and_old_projects_keep_their_behaviour():

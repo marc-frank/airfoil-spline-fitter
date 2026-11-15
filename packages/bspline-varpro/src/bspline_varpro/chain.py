@@ -36,18 +36,6 @@ def chain_data(sections: Sequence[np.ndarray]) -> np.ndarray:
     return np.vstack(parts)
 
 
-def section_ranges(sections: Sequence[np.ndarray]) -> List[Tuple[int, int]]:
-    """``(first, last)`` index in :func:`chain_data` of every section's points."""
-    shared = [False] + shared_junctions(sections)
-    ranges, start = [], 0
-    for sec, skip in zip(sections, shared):
-        first = start - 1 if skip else start
-        last = first + len(sec) - 1
-        ranges.append((first, last))
-        start = last + 1
-    return ranges
-
-
 def chain_parameters(t_sections: Sequence[np.ndarray], sections: Sequence[np.ndarray]) -> np.ndarray:
     """Chain parameters from local parameters in [0, 1] per section (section s adds s).
 
@@ -95,66 +83,6 @@ def evaluate_chain(curves: Sequence[BSpline], u: np.ndarray, nu: int = 0) -> np.
         if np.any(rows):
             out[rows] = curve(local[rows], nu=nu)
     return out
-
-
-def project_between(
-    data: np.ndarray, curves: Sequence[BSpline], lower: np.ndarray, upper: np.ndarray,
-    samples: int = 16, start: Optional[np.ndarray] = None,
-) -> np.ndarray:
-    """Chain parameter of the closest chain point to each point within ``[lower, upper]``.
-
-    Ordered data lie between their ordered neighbours, so the window keeps a
-    point from jumping to a distant part of the chain that passes close (the
-    other side of a thin trailing edge). The window may span a junction.
-    ``start`` (inside the window) is a candidate too, so the result is never
-    farther than the chain point there.
-    """
-    data = np.asarray(data, dtype=np.float64)
-    n = len(data)
-    lower = np.asarray(lower, dtype=np.float64)
-    upper = np.maximum(np.asarray(upper, dtype=np.float64), lower)
-    grid = lower[:, None] + (upper - lower)[:, None] * np.linspace(0.0, 1.0, samples + 1)[None, :]
-    if start is not None:
-        grid = np.concatenate([grid, np.asarray(start, dtype=np.float64)[:, None]], axis=1)
-    points = evaluate_chain(curves, grid.ravel()).reshape(n, grid.shape[1], -1)
-    rows = np.arange(n)
-    u = grid[rows, np.argmin(np.sum((points - data[:, None, :]) ** 2, axis=2), axis=1)]
-    best = np.sum((evaluate_chain(curves, u) - data) ** 2, axis=1)
-    # Newton on the squared distance, kept inside the window and only where it improves
-    for _ in range(20):
-        c0, c1, c2 = (evaluate_chain(curves, u, nu) for nu in (0, 1, 2))
-        diff = c0 - data
-        g = np.sum(diff * c1, axis=1)
-        h = np.sum(c1 * c1, axis=1) + np.sum(diff * c2, axis=1)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            trial = np.clip(np.where(h > 0, u - g / h, u), lower, upper)
-        trial = np.where(np.isfinite(trial), trial, u)
-        dist = np.sum((evaluate_chain(curves, trial) - data) ** 2, axis=1)
-        better = dist < best
-        if not np.any(better):
-            break
-        u[better], best[better] = trial[better], dist[better]
-    return u
-
-
-def project_to_chain(
-    data: np.ndarray, curves: Sequence[BSpline], chosen: np.ndarray, u_chosen: np.ndarray,
-) -> np.ndarray:
-    """Chain parameters of all points from those of an ordered subset.
-
-    Each point is projected onto the chain between the parameters of the
-    chosen points before and after it (:func:`project_between`); the result is
-    nondecreasing with the ends at 0 and S.
-    """
-    num_sections = len(curves)
-    index = np.arange(len(data))
-    last = len(chosen) - 1
-    before = np.clip(np.searchsorted(chosen, index, side="left") - 1, 0, last)
-    after = np.clip(np.searchsorted(chosen, index, side="right"), 0, last)
-    u = project_between(data, curves, u_chosen[before], u_chosen[after])
-    u = np.maximum.accumulate(np.clip(u, 0.0, num_sections))
-    u[0], u[-1] = 0.0, float(num_sections)
-    return u
 
 
 def validate_chain_parameters(

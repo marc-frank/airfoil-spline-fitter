@@ -13,6 +13,7 @@ Two modes:
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -27,8 +28,10 @@ if TYPE_CHECKING:
 
 # Tikhonov regularization of the inner solve, for numerical stability
 REGULARIZATION = 1e-12
-# Solver ftol/xtol/gtol of fixed-count fits
-LM_TOLERANCE = 1e-10
+# Solver ftol/xtol/gtol of fixed-count fits (the library's default, which the
+# refits of a tolerance search use). At 1e-10 a fit with a flat valley, such
+# as four sections at the fewest control points, never ended
+LM_TOLERANCE = 1e-8
 # Bending energy weight in tolerance mode (1e-7 gave the fewest control points
 # and curvature extrema in the bspline-varpro benchmark)
 TOLERANCE_SMOOTHING = 1e-7
@@ -122,23 +125,26 @@ class GNVarProOptimizer(AlgebraicOptimizer):
             smoothing=opt_config.smoothing_weight,
             regularization=REGULARIZATION,
             initial_parameters=opt_config.custom_parameters,
-            max_points_per_section=opt_config.max_points_per_section,
             knot_placement=opt_config.knot_placement,
             grow=opt_config.grow_control_points,
+            min_knot_gap=opt_config.min_knot_gap,
             tolerance=LM_TOLERANCE,
             exact_jacobian=True,
             verbose=0,
             callback=on_evaluation,
         )
-        # Every evaluation of the fit: growing and moving knots and dense
-        # refinement too, where result.nfev counts only the last stage
+        # Every evaluation of the fit: with growth result.nfev counts only
+        # the last refit
         return self._raw(result, result.rms_error, max(evaluations, result.nfev))
 
     def _fit_tolerance(self, spline_config, opt_config, sections, callback,
                        should_stop=None) -> RawOptimResult:
-        from ..tracking import increment_evaluation
+        from ..tracking import get_evaluation_count, increment_evaluation
 
         refits = 0
+        # Every fit the search went through: (result, deviation, evaluations, seconds)
+        fits: list[tuple] = []
+        start = time.perf_counter()
 
         def on_step(control_points: list[np.ndarray], rms_error: float,
                     knots: list[np.ndarray]) -> bool:
@@ -153,6 +159,7 @@ class GNVarProOptimizer(AlgebraicOptimizer):
         def on_refit(result: bspline_varpro.FitResult, deviation: float) -> bool:
             nonlocal refits
             refits += 1
+            fits.append((result, deviation, get_evaluation_count(), time.perf_counter() - start))
             if callback is None:
                 return False
             return bool(callback(_flat(result.control_points), deviation,
@@ -168,15 +175,24 @@ class GNVarProOptimizer(AlgebraicOptimizer):
             smoothing=TOLERANCE_SMOOTHING,
             regularization=REGULARIZATION,
             initial_parameters=opt_config.custom_parameters,
-            max_points_per_section=opt_config.max_points_per_section,
             knot_placement=opt_config.knot_placement,
             initial_control_points=(None if opt_config.grow_control_points
                                     else spline_config.num_control_points),
             callback=on_refit,
             **({"should_stop": should_stop} if should_stop is not None else {}),
             step_callback=on_step,
+            min_knot_gap=opt_config.min_knot_gap,
         )
-        return self._raw(result, result.max_deviation, max(refits, 1))
+        raw = self._raw(result, result.max_deviation, max(refits, 1))
+        # The search is a sequence of fits like a sweep of the control point
+        # count: the ones before the last are handed on too
+        for number, (fit, deviation, evaluations, seconds) in enumerate(fits, 1):
+            if fit is not result:
+                earlier = self._raw(fit, deviation, number)
+                earlier.success = deviation <= opt_config.tolerance
+                earlier.evaluations, earlier.seconds = evaluations, seconds
+                raw.fits.append(earlier)
+        return raw
 
     @staticmethod
     def _raw(result: bspline_varpro.FitResult, error: float, nit: int) -> RawOptimResult:

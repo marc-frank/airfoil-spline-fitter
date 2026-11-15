@@ -193,9 +193,9 @@ def _encode_optimization_config(config: OptimizationConfig) -> dict[str, Any]:
         "optimize_le_position": config.optimize_le_position,
         "parameterization": config.parameterization,
         "tolerance": config.tolerance,
-        "max_points_per_section": config.max_points_per_section,
         "knot_placement": config.knot_placement,
         "grow_control_points": config.grow_control_points,
+        "min_knot_gap": config.min_knot_gap,
         "custom_parameters": (None if config.custom_parameters is None else
                               [np.asarray(u, dtype=np.float64).tolist()
                                for u in config.custom_parameters]),
@@ -323,12 +323,13 @@ def _decode_optimization_config(data: dict[str, Any]) -> OptimizationConfig:
         optimize_le_position=data.get("optimize_le_position", False),
         parameterization=data.get("parameterization", "centripetal"),
         tolerance=_number(data.get("tolerance")),
-        max_points_per_section=data.get("max_points_per_section"),
         # Projects from before these settings: fixed counts used uniform knots,
         # tolerance mode grew the count with freely placed knots.
         knot_placement=data.get("knot_placement",
                                 "uniform" if data.get("tolerance") is None else "free"),
         grow_control_points=data.get("grow_control_points", data.get("tolerance") is not None),
+        # Projects from before this setting were fitted with 0.001
+        min_knot_gap=_number(data.get("min_knot_gap", 1e-3)),
         custom_parameters=(None if data.get("custom_parameters") is None else
                            [np.asarray(_numbers(u), dtype=np.float64)
                             for u in data["custom_parameters"]]),

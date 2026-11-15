@@ -88,12 +88,12 @@ def output_name(stem: str, config: SplineConfig, opt_config: OptimizationConfig,
         parts.append("tol-auto" if auto_tolerance else f"tol{_num(o.tolerance)}")
     if o.knot_placement != d_opt.knot_placement:
         parts.append(f"knots-{o.knot_placement}")
+    if o.knot_placement == "free" and o.min_knot_gap != d_opt.min_knot_gap:
+        parts.append(f"gap{_num(o.min_knot_gap)}")
     if o.grow_control_points:
         parts.append("grow")
     if o.smoothing_weight != d_opt.smoothing_weight:
         parts.append(f"smooth{_num(o.smoothing_weight)}")
-    if o.max_points_per_section is not None:
-        parts.append(f"sub{o.max_points_per_section}")
     if o.optimize_le_position:
         parts.append("free-le")
     return ".".join(parts) + ".spline.dat"

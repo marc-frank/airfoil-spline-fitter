@@ -235,7 +235,7 @@ def test_projects_with_an_evaluation_limit_still_load(tmp_path):
     assert load_project(str(path)).optimization_runs[0].optimization_config == options
 
 
-def test_direct_lsq_is_one_solve(monkeypatch):
+def test_direct_lsq_is_one_solve():
     """Direct LSQ is a single constrained linear solve at fixed parameters:
     one evaluation, nit 1, always successful, no refinement, and a cancel
     check that is accepted but never read."""
@@ -245,8 +245,6 @@ def test_direct_lsq_is_one_solve(monkeypatch):
     from spline_fitter.geometry import create_airfoil_data
     from spline_fitter.optimization.models import FitResult
 
-    monkeypatch.setattr("bspline_varpro.joint.solve_joint",
-                        lambda *a, **k: pytest.fail("Direct LSQ refined its solve"))
     airfoil = create_airfoil_data([tuple(p) for p in np.round(NACA4("2412").points(81), 6)], 2)
     config = SplineConfig(degree=5, num_control_points=25, num_sections=2,
                           continuity=ContinuityMode.G2, geometric_continuity=False)

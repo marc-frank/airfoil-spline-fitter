@@ -749,6 +749,18 @@ class WindowLayoutMixin:
             self._combo_knot_placement.findData(start.knot_placement))
         self._lbl_knot_placement = _add_row(form, "Knots", self._combo_knot_placement)
 
+        # Smallest spacing of free knots
+        self._spin_knot_gap = QDoubleSpinBox()
+        self._spin_knot_gap.setDecimals(3)
+        self._spin_knot_gap.setRange(0.0, 0.5)
+        self._spin_knot_gap.setSingleStep(0.01)
+        self._spin_knot_gap.setValue(start.min_knot_gap)
+        self._spin_knot_gap.setToolTip(
+            "Smallest spacing of free knots, as a fraction of a section.\n"
+            "Closer knots follow the data more tightly but can bend the\n"
+            "curve sharply between the points, and fits take longer.")
+        self._lbl_knot_gap = _add_row(form, "Knot spacing", self._spin_knot_gap)
+
         # Parameterization (Direct LSQ)
         self._seg_parameterization = SegmentedControl()
         self._seg_parameterization.addItem("Centripetal", userData="centripetal")
@@ -867,25 +879,6 @@ class WindowLayoutMixin:
         self._edit_junctions.setText(", ".join(start_curve.junction_continuity))
         self._lbl_junctions = _add_row(form, "Per junction", self._edit_junctions)
 
-        self._check_subsample = QCheckBox("to")
-        self._check_subsample.setChecked(start.max_points_per_section is not None)
-        self._check_subsample.setToolTip(
-            "For dense data: fit an evenly spaced subsample of each section, then\n"
-            "refine the fit on all points. Much faster for thousands of points.\n"
-            "Off: every point is used throughout."
-        )
-        self._spin_subsample = QSpinBox()
-        self._spin_subsample.setRange(20, UNLIMITED)
-        # 200 is shown while subsampling is off
-        self._spin_subsample.setValue(start.max_points_per_section or 200)
-        self._spin_subsample.setSuffix(" points")
-        self._spin_subsample.setEnabled(self._check_subsample.isChecked())
-        self._spin_subsample.setToolTip(
-            "Points per section. Sections with more points than this are subsampled.")
-        self._subsample_row = _hbox(self._check_subsample, self._spin_subsample, stretch_first=False)
-        self._subsample_row.layout().setStretch(1, 1)
-        self._lbl_subsample = _add_row(form, "Subsample", self._subsample_row)
-
         # Bending energy weight (VarPro LM fixed count, sweepable)
         self._spin_smoothing_weight = ScientificSpinBox()
         self._spin_smoothing_weight.setRange(0.0, math.inf)
@@ -915,8 +908,6 @@ class WindowLayoutMixin:
         # stay noticeable while the section is collapsed; its tooltip names them
         self._advanced_fields = (
             ("Per junction", self._edit_junctions),
-            ("Subsample", self._check_subsample),
-            ("Subsample points", self._spin_subsample),
             ("Smoothing", self._spin_smoothing_weight),
             ("Junctions", self._check_optimize_le),
         )

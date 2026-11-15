@@ -40,10 +40,15 @@ class RawOptimResult:
         section_knots: Knot vector per section (None = open uniform)
         rms_error: RMS distance of the data points to their curve points,
             whatever ``fun`` is
+        evaluations: Residual evaluations up to this fit, and ``seconds``
+            the time up to it (the fits of a tolerance search only)
+        fits: VarPro LM tolerance mode: the earlier fits of the search, in
+            order, each a result like this one (``nit`` its number among
+            the refits). The result itself is the last fit
     """
 
     __slots__ = ("x", "fun", "nit", "section_control_points", "parameters", "success",
-                 "message", "section_knots", "rms_error")
+                 "message", "section_knots", "rms_error", "evaluations", "seconds", "fits")
 
     def __init__(
         self,
@@ -56,6 +61,9 @@ class RawOptimResult:
         message: str = "",
         section_knots: list[list[float]] | None = None,
         rms_error: float | None = None,
+        evaluations: int | None = None,
+        seconds: float | None = None,
+        fits: list[RawOptimResult] | None = None,
     ) -> None:
         self.x = x
         self.fun = fun
@@ -66,6 +74,9 @@ class RawOptimResult:
         self.message = message
         self.section_knots = section_knots
         self.rms_error = fun if rms_error is None else rms_error
+        self.evaluations = evaluations
+        self.seconds = seconds
+        self.fits = fits or []
 
 
 class BaseOptimizer(ABC):

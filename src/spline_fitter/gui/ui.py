@@ -101,10 +101,10 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         # project that fails to open restores them in the same order
         self._settings_widgets = [
             self._combo_opt, self._seg_goal, self._check_auto_tolerance,
-            self._spin_tolerance, self._combo_knot_placement,
+            self._spin_tolerance, self._combo_knot_placement, self._spin_knot_gap,
             self._seg_parameterization, self._check_grow, self._spin_sections,
             self._spin_degree, self._combo_cont, self._combo_cont_kind, self._spin_ctrl,
-            self._edit_junctions, self._check_subsample, self._spin_subsample,
+            self._edit_junctions,
             self._spin_smoothing_weight, self._check_optimize_le, *self._sweep_group]
         self._settings_history = SettingsHistory(
             self._settings_widgets,
@@ -165,6 +165,7 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         show(is_gn_varpro, self._lbl_goal, self._seg_goal,
              self._lbl_tolerance, self._tolerance_row,
              self._lbl_knot_placement, self._combo_knot_placement,
+             self._lbl_knot_gap, self._spin_knot_gap,
              self._lbl_grow, self._check_grow)
         show(opt_type == OptimizerType.DIRECT_LSQ,
              self._lbl_parameterization, self._seg_parameterization)
@@ -172,6 +173,9 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._spin_tolerance.setEnabled(
             editable and tolerance_mode and not self._check_auto_tolerance.isChecked())
         self._check_auto_tolerance.setEnabled(editable and tolerance_mode)
+        free_knots = is_gn_varpro and self._combo_knot_placement.currentData() == "free"
+        enable(free_knots, self._lbl_knot_gap)
+        self._spin_knot_gap.setEnabled(editable and free_knots)
         uses_count = self._count_is_used()
         self._lbl_ctrl.setText("Start count" if tolerance_mode else "Control points")
         enable(uses_count, self._lbl_ctrl)
@@ -191,7 +195,6 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
 
         # Advanced
         show(is_gn_varpro, self._lbl_junctions, self._edit_junctions,
-             self._lbl_subsample, self._subsample_row,
              self._lbl_smoothing_weight, self._sweep_smoothing_weight)
         enable(has_junctions, self._lbl_junctions, self._edit_junctions)
         # Tolerance mode uses its own fixed smoothing weight
@@ -261,11 +264,13 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
         self._check_grow.toggled.connect(
             lambda _: self._on_optimizer_changed(self._combo_opt.currentIndex())
         )
+        self._combo_knot_placement.currentIndexChanged.connect(
+            lambda _: self._on_optimizer_changed(self._combo_opt.currentIndex())
+        )
         self._check_auto_tolerance.toggled.connect(
             lambda _: (self._update_auto_tolerance(),
                        self._on_optimizer_changed(self._combo_opt.currentIndex()))
         )
-        self._check_subsample.toggled.connect(self._spin_subsample.setEnabled)
 
         # Spline configuration
         for changed, signals in (
@@ -379,10 +384,8 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
                                   and self._spin_sections.value() > 1),
             smoothing_weight=self._spin_smoothing_weight.value(),
             tolerance=tolerance,
-            max_points_per_section=(self._spin_subsample.value()
-                                    if opt_type == OptimizerType.GN_VARPRO
-                                    and self._check_subsample.isChecked() else None),
             knot_placement=self._combo_knot_placement.currentData(),
+            min_knot_gap=self._spin_knot_gap.value(),
             parameterization=self._seg_parameterization.currentData(),
             grow_control_points=self._check_grow.isChecked(),
         )
@@ -406,6 +409,7 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
                 self._check_auto_tolerance.setChecked(False)
                 self._spin_tolerance.setValue(opt.tolerance)
             choose(self._combo_knot_placement, opt.knot_placement)
+            self._spin_knot_gap.setValue(opt.min_knot_gap)
             choose(self._seg_parameterization, opt.parameterization)
             self._check_grow.setChecked(opt.grow_control_points)
 
@@ -419,9 +423,6 @@ class SplineFitterWindow(WindowLayoutMixin, FileActionsMixin, QMainWindow):
 
             # Advanced
             self._edit_junctions.setText(", ".join(cfg.junction_continuity))
-            self._check_subsample.setChecked(opt.max_points_per_section is not None)
-            if opt.max_points_per_section is not None:
-                self._spin_subsample.setValue(opt.max_points_per_section)
             self._spin_smoothing_weight.setValue(opt.smoothing_weight)
             self._check_optimize_le.setChecked(opt.optimize_le_position)
 

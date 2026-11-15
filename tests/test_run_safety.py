@@ -387,7 +387,6 @@ def test_batch_output_names_tell_settings_apart():
         "auto tolerance": (config, replace(opt, tolerance=2e-4)),
         "free knots": (config, replace(opt, knot_placement="free")),
         "smoothing": (config, replace(opt, smoothing_weight=0.01)),
-        "subsample": (config, replace(opt, max_points_per_section=200)),
         "leading edge": (config, replace(opt, optimize_le_position=True)),
         "direct lsq": (config, replace(opt, optimizer=OptimizerType.DIRECT_LSQ)),
     }
@@ -427,14 +426,13 @@ def test_a_new_window_starts_at_the_model_defaults(monkeypatch):
     assert fresh._combo_knot_placement.currentData() == "uniform"
     assert fresh._seg_parameterization.currentData() == "centripetal"
     assert not fresh._check_grow.isChecked() and fresh._check_auto_tolerance.isChecked()
-    assert not fresh._check_subsample.isChecked() and not fresh._spin_subsample.isEnabled()
     fresh.deleteLater()
 
     monkeypatch.setattr(layout, "SplineConfig", lambda: SplineConfig(
         degree=3, num_control_points=12, num_sections=3, junction_continuity=("G2", "C1")))
     monkeypatch.setattr(layout, "OptimizationConfig", lambda: OptimizationConfig(
         knot_placement="free", grow_control_points=True, tolerance=2e-4,
-        max_points_per_section=80, smoothing_weight=0.01))
+        smoothing_weight=0.01))
     other = SplineFitterWindow()
     assert (other._spin_degree.value(), other._spin_ctrl.value(),
             other._spin_sections.value()) == (3, 12, 3)
@@ -443,8 +441,6 @@ def test_a_new_window_starts_at_the_model_defaults(monkeypatch):
     assert other._spin_tolerance.value() == 2e-4
     assert other._combo_knot_placement.currentData() == "free"
     assert other._check_grow.isChecked()
-    assert other._check_subsample.isChecked() and other._spin_subsample.value() == 80
-    assert other._spin_subsample.isEnabled()
     assert other._spin_smoothing_weight.value() == 0.01
     other.deleteLater()
 
@@ -572,6 +568,47 @@ def test_status_counts_refits_of_a_tolerance_search(window):
     window._spin_tolerance.setValue(1e-4)
     window._fitting_controller.on_fit()
     assert " refits, " in window.statusBar().currentMessage()
+
+
+def test_every_fit_of_a_tolerance_search_is_a_run(window):
+    """A tolerance search is a sequence of fits, like a sweep of the control
+    point count: each is kept as a run of its own."""
+    window._seg_goal.setCurrentIndex(window._seg_goal.findData(True))
+    window._check_auto_tolerance.setChecked(False)
+    window._spin_tolerance.setValue(1e-5)
+    window._check_grow.setChecked(True)
+    window._fitting_controller.on_fit()
+    runs = window._project_manager.project.optimization_runs
+    counts = [tuple(len(s) for s in run.result.section_control_points) for run in runs]
+    assert len(runs) > 1 and len(set(counts)) == len(runs)
+    assert len({run.optimization_config for run in runs}) == 1
+    # The last is the search's result; each is measured against the tolerance
+    assert runs[-1].result is window._fit_result and window._fit_result.converged
+    for run in runs:
+        assert run.result.report is not None
+        assert run.result.converged == (run.result.final_error <= 1e-5)
+    assert any(not run.result.converged for run in runs[:-1])
+    times = [run.result.elapsed_seconds for run in runs]
+    assert times == sorted(times)
+    assert all(run.loss_history for run in runs)
+    # The same search again replaces its fits
+    numbers = [run.number for run in runs]
+    window._fitting_controller.on_fit()
+    again = window._project_manager.project.optimization_runs
+    assert [run.number for run in again] == numbers
+
+
+def test_knot_spacing_applies_to_free_knots_only(window):
+    assert window._spin_knot_gap.value() == 0.05 and not window._spin_knot_gap.isEnabled()
+    window._combo_knot_placement.setCurrentIndex(window._combo_knot_placement.findData("free"))
+    assert window._spin_knot_gap.isEnabled()
+    window._spin_knot_gap.setValue(0.02)
+    assert window._get_optimization_config().min_knot_gap == 0.02
+    from spline_fitter.gui.batch import output_name
+    name = output_name("x", window._get_spline_config(), window._get_optimization_config())
+    assert name == "x.deg5.n10.knots-free.gap0.02.spline.dat"
+    window._combo_opt.setCurrentIndex(1)
+    assert not window._spin_knot_gap.isVisible()
 
 
 def test_run_log_names_the_continuity_as_fitted(window, monkeypatch):

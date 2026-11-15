@@ -25,11 +25,9 @@ from .constraints import (
     end_derivative_coefficients,
     parse_junctions,
 )
-from .refinement import refine
 from .fitting import ChainOptions, FitResult, fit
-from .joint import JointProblem
 from .problem import KKTSolver, VarProProblem
-from .tolerance import fit_to_tolerance, polish_knots
+from .tolerance import fit_to_tolerance, solve_free_knots
 
 __version__ = "3.0.0"
 
@@ -40,9 +38,7 @@ __all__ = [
     "export",
     "fit",
     "fit_to_tolerance",
-    "polish_knots",
-    "refine",
-    "JointProblem",
+    "solve_free_knots",
     "ChainOptions",
     "FitResult",
     "VarProProblem",

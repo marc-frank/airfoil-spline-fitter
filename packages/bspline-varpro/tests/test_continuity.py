@@ -155,12 +155,10 @@ def lopsided_sections(length=10.0):
 
 
 @pytest.mark.parametrize("continuity", ["G1", "G2"])
-def test_geometric_fit_starts_from_the_parametric_one_at_any_length_ratio(continuity):
+def test_geometric_fit_is_at_least_as_good_as_the_parametric_one_at_any_length_ratio(continuity):
     sections = lopsided_sections()
     problem = bv.ChainOptions(continuity=continuity).problem(sections, bv.open_uniform_knots(3, 6), 3)
     assert problem.constraints._length_ratio(0) > 10
-    theta = problem.constraints.theta_from_parametric(np.zeros(0))
-    assert problem.constraints.shape_values(theta)[0] == pytest.approx((1.0, 0.0, 0.0))
     # No ridge either: converged, the error is small enough for the 1e-12 ridge to
     # trade against it, and the objective, not the data error alone, decreases
     parametric = bv.fit(sections, 6, continuity="C" + continuity[1], smoothing=0.0,
@@ -177,7 +175,7 @@ def test_initial_alpha_is_the_length_ratio():
     assert alpha == pytest.approx(problem.constraints._length_ratio(0))
 
 
-def test_stop_during_the_parametric_stage_returns_a_geometric_result():
+def test_stop_early_in_a_geometric_fit_returns_a_geometric_result():
     calls = []
 
     def stop_early(control_points, rms):
@@ -188,7 +186,8 @@ def test_stop_during_the_parametric_stage_returns_a_geometric_result():
     result = bv.fit(sections, 8, 5, continuity="G2", callback=stop_early)
     assert result.message == "Stopped by callback."
     assert result.continuity == ["G2"] and len(result.theta) == 2
-    assert result.shape_parameters[0] == pytest.approx((1.0, 0.0, 0.0))
+    # The shape values are unknowns from the first step, not held at a parametric join
+    assert np.all(np.isfinite(result.shape_parameters[0])) and result.shape_parameters[0][0] > 0
     # Usable as a warm start of the same fit
     warm = bv.fit(sections, 8, 5, continuity="G2", initial_theta=result.theta, max_nfev=5)
     assert np.isfinite(warm.rms_error)

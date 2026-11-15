@@ -126,15 +126,44 @@ def test_callback_can_stop_the_fit():
     assert np.isfinite(result.rms_error)
 
 
-def test_callback_follows_knot_polishing():
+def test_callback_follows_free_knots():
     knots_seen = []
 
     def watch(control_points, rms, knots):
         knots_seen.append(np.concatenate(knots))
 
     bv.fit(two_sections(0.002), 8, 3, max_nfev=300, knot_placement="free", callback=watch)
-    # The knots move while they are polished
+    # The knots move during the fit
     assert len({k.tobytes() for k in knots_seen}) > 1
+
+
+@pytest.mark.parametrize("continuity", ["C2", "G2"])
+def test_free_knots_are_unknowns_of_the_one_loop(monkeypatch, continuity):
+    import bspline_varpro.fitting as fitting
+    import bspline_varpro.tolerance as tolerance
+
+    runs = []
+    solve = fitting.levenberg_marquardt
+
+    def counted(residual, jacobian, x0, **kwargs):
+        runs.append(len(x0))
+        return solve(residual, jacobian, x0, **kwargs)
+
+    monkeypatch.setattr(fitting, "levenberg_marquardt", counted)
+    monkeypatch.setattr(tolerance, "levenberg_marquardt", counted)
+    sections = two_sections(0.002)
+    uniform = bv.fit(sections, 8, 3, continuity=continuity)
+    stages = len(runs)
+    del runs[:]
+    free = bv.fit(sections, 8, 3, continuity=continuity, knot_placement="free")
+    # One optimization, whose unknowns include a gap per knot span (5 per section)
+    assert len(runs) == 1 and free.success
+    # Uniform knots are one optimization too, also with geometric junctions
+    assert stages == 1
+    assert free.rms_error < uniform.rms_error
+    for knots in free.knots:
+        assert not np.allclose(knots, bv.open_uniform_knots(3, 8))
+        assert np.all(np.diff(knots) >= 0)
 
 
 def test_finite_difference_jacobian_reaches_same_cost():
@@ -265,7 +294,7 @@ def test_fit_without_an_evaluation_limit_runs_to_convergence():
 
 
 @pytest.mark.parametrize("exact_jacobian", [True, False])
-def test_max_nfev_caps_both_stages_and_finite_differences(exact_jacobian):
+def test_max_nfev_caps_a_geometric_fit_and_finite_differences(exact_jacobian):
     calls = []
     result = bv.fit(two_sections(0.002), 8, 3, continuity="G2", max_nfev=5,
                     exact_jacobian=exact_jacobian, callback=lambda cp, rms: calls.append(rms))

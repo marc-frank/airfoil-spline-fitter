@@ -401,7 +401,7 @@ class ProjectManager:
             return False
         if result.cancelled and self._project is not None and any(
                 not existing.result.cancelled
-                and self._configs_match(existing, spline_config, opt_config)
+                and self._configs_match(existing, spline_config, opt_config, result)
                 for existing in self._project.optimization_runs):
             return False
 
@@ -422,7 +422,7 @@ class ProjectManager:
         # takes the number of the one it replaces
         replaced = False
         for i, existing in enumerate(self._project.optimization_runs):
-            if self._configs_match(existing, spline_config, opt_config):
+            if self._configs_match(existing, spline_config, opt_config, result):
                 run.number = existing.number
                 self._project.optimization_runs[i] = run
                 replaced = True
@@ -464,8 +464,11 @@ class ProjectManager:
         existing_run: OptimizationRun,
         spline_config: SplineConfig,
         opt_config: OptimizationConfig,
+        result: FitResult | None = None,
     ) -> bool:
-        """Check if an existing run has identical configuration."""
+        """Check if an existing run has identical configuration. The fits
+        of a tolerance search share their settings: with ``result`` they
+        match only at the same control point counts."""
         ec = existing_run.spline_config
         eo = existing_run.optimization_config
 
@@ -481,11 +484,16 @@ class ProjectManager:
             return False
 
         if (eo.tolerance != opt_config.tolerance
-                or eo.max_points_per_section != opt_config.max_points_per_section
                 or eo.knot_placement != opt_config.knot_placement
                 or eo.parameterization != opt_config.parameterization
                 or eo.optimize_le_position != opt_config.optimize_le_position
                 or eo.grow_control_points != opt_config.grow_control_points):
+            return False
+        if opt_config.knot_placement == "free" and eo.min_knot_gap != opt_config.min_knot_gap:
+            return False
+        if (opt_config.tolerance is not None and result is not None
+                and ([len(s) for s in existing_run.result.section_control_points]
+                     != [len(s) for s in result.section_control_points])):
             return False
 
         # Compare optimization config
@@ -743,6 +751,7 @@ class ProjectManager:
                     or not same_junctions
                     or (o.tolerance is None) != (opt_config.tolerance is None)
                     or o.knot_placement != opt_config.knot_placement
+                    or (o.knot_placement == "free" and o.min_knot_gap != opt_config.min_knot_gap)
                     or o.parameterization != opt_config.parameterization
                     or any(get(c, o) != get(spline_config, opt_config)
                            for name, get in fixed.items() if name not in swept)):

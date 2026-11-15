@@ -326,37 +326,6 @@ def test_gui_dialogs_save_export_and_report(monkeypatch, tmp_path):
     app.processEvents()
 
 
-def test_gui_subsampling_is_off_by_default_and_reaches_both_modes(monkeypatch):
-    from spline_fitter.optimization.optimizers import gn_varpro
-    app, window = _window(monkeypatch)
-    window._combo_opt.setCurrentIndex(window._combo_opt.findData(OptimizerType.GN_VARPRO))
-    assert not window._check_subsample.isChecked() and not window._spin_subsample.isEnabled()
-    assert window._get_optimization_config().max_points_per_section is None
-    window._check_subsample.setChecked(True)
-    assert window._spin_subsample.isEnabled()
-    window._spin_subsample.setValue(150)
-    assert window._get_optimization_config().max_points_per_section == 150
-    window._seg_goal.setCurrentIndex(window._seg_goal.findData(True))
-    assert window._get_optimization_config().max_points_per_section == 150
-    window.deleteLater()
-    app.processEvents()
-
-    captured = []
-    for name in ("fit", "fit_to_tolerance"):
-        original = getattr(bspline_varpro, name)
-
-        def capture(*args, _original=original, **kwargs):
-            captured.append(kwargs["max_points_per_section"])
-            return _original(*args, **kwargs)
-
-        monkeypatch.setattr(gn_varpro.bspline_varpro, name, capture)
-    airfoil = naca_airfoil(n=41, decimals=5)
-    config = SplineConfig(degree=5, num_control_points=9)
-    GNVarProOptimizer().fit(config, OptimizationConfig(max_points_per_section=30), airfoil)
-    GNVarProOptimizer().fit(config, OptimizationConfig(tolerance=1e-4), airfoil)
-    assert captured == [30, None]
-
-
 def test_knot_placement_and_growth_reach_both_modes(monkeypatch):
     from spline_fitter.optimization.optimizers import gn_varpro
     app, window = _window(monkeypatch)

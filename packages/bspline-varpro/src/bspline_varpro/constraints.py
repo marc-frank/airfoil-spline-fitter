@@ -256,21 +256,6 @@ class ChainConstraints:
                 theta[i] = inverse_softplus(np.array(self._section_length(index)))
         return theta
 
-    def theta_from_parametric(self, tangent_theta: np.ndarray) -> np.ndarray:
-        """Theta of the parametric join (alpha = 1, beta = gamma = 0) with given tangent magnitudes."""
-        theta = np.zeros(self.num_params)
-        tangents = iter(np.asarray(tangent_theta, dtype=np.float64))
-        for i, (kind, index, slot) in enumerate(self._layout):
-            if kind == "tangent":
-                theta[i] = next(tangents)
-            elif slot == "alpha":
-                theta[i] = _alpha_parameter(1.0, self._length_ratio(index))
-        return theta
-
-    @property
-    def has_shape_parameters(self) -> bool:
-        return any(kind == "shape" for kind, _, _ in self._layout)
-
     def alpha_deviations(self, theta: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """``ln(alpha / ratio)`` per geometric junction and its derivative w.r.t. theta.
 

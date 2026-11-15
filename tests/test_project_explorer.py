@@ -55,9 +55,9 @@ def _column(window, name):
 
 def test_every_sidebar_setting_and_fit_metric_has_a_column():
     from spline_fitter.gui.explorer import COLUMN_NAMES
-    for name in ("Optimizer", "Goal", "Tolerance", "Knots", "Parameterization", "Grow points",
+    for name in ("Optimizer", "Goal", "Tolerance", "Knots", "Knot spacing", "Parameterization", "Grow points",
                  "Degree", "Control points", "Sections", "Continuity", "Type",
-                 "Per junction", "Subsample", "Smoothing", "Optimize junctions",
+                 "Per junction", "Smoothing", "Optimize junctions",
                  "Error", "Max deviation", "RMS deviation", "Fitted control points",
                  "Iterations", "Evaluations", "Time", "Converged"):
         assert name in COLUMN_NAMES

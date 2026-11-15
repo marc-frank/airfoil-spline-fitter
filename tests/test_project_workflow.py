@@ -577,7 +577,7 @@ def test_a_failed_load_leaves_the_sections_and_the_fit(window, monkeypatch):
 def test_applying_a_run_is_one_undo_step_however_slow(window, monkeypatch):
     """The merge timer expiring between any two widget changes (a slow
     machine) still leaves exactly one step."""
-    _add(window, 14, knot_placement="free", smoothing_weight=0.01, max_points_per_section=50)
+    _add(window, 14, knot_placement="free", smoothing_weight=0.01)
     run = window._project_manager.project.optimization_runs[0]
     history = window._settings_history
     history.commit()

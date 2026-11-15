@@ -161,6 +161,9 @@ COLUMNS: tuple[Column, ...] = (
     Column("Tolerance", lambda run: _opt(run).tolerance, ".3g", log=True,
            applies=_tolerance_goal, tip="Max deviation the tolerance goal had to meet"),
     Column("Knots", lambda run: _opt(run).knot_placement.capitalize(), applies=_varpro),
+    Column("Knot spacing", lambda run: _opt(run).min_knot_gap, ".3g",
+           applies=lambda run: _varpro(run) and _opt(run).knot_placement == "free",
+           tip="Smallest spacing of the free knots, as a fraction of a section"),
     Column("Parameterization",
            lambda run: _opt(run).parameterization.replace("_", " ").capitalize(),
            applies=lambda run: _opt(run).optimizer == OptimizerType.DIRECT_LSQ),
@@ -176,8 +179,6 @@ COLUMNS: tuple[Column, ...] = (
     # Advanced
     Column("Per junction", lambda run: ", ".join(_cfg(run).junction_continuity),
            applies=_varpro),
-    Column("Subsample", lambda run: _opt(run).max_points_per_section, applies=_varpro,
-           tip="Points per section of the subsample; blank when every point is used"),
     Column("Smoothing", lambda run: _opt(run).smoothing_weight, ".3g", log=True,
            applies=lambda run: _varpro(run) and not _tolerance_goal(run)),
     Column("Optimize junctions", lambda run: _opt(run).optimize_le_position,

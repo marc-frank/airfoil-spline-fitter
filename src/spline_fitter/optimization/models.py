@@ -259,11 +259,11 @@ class OptimizationConfig:
         tolerance: Maximum orthogonal deviation for VarPro LM tolerance mode,
             which picks the number of control points and the knots itself.
             None fits the configured number of control points.
-        max_points_per_section: VarPro LM only. Sections with more points are
-            fitted on an evenly spaced subsample of this many points, then
-            refined jointly on all points. None (default) uses every point.
         knot_placement: VarPro LM only. "uniform" (default) keeps knots evenly
-            spaced; "free" moves them to where they reduce the error most.
+            spaced; "free" makes their positions unknowns of the fit.
+        min_knot_gap: VarPro LM with free knots only. The smallest spacing
+            of the knots, as a fraction of a section's parameter range
+            (0 to 0.5).
         grow_control_points: VarPro LM only. Start from the fewest control
             points and add them where the fit is worst. If False (default),
             start from the configured control-point count (in tolerance mode
@@ -275,18 +275,17 @@ class OptimizationConfig:
     custom_parameters: list[np.ndarray] | None = None
     parameterization: str = "centripetal"
     tolerance: float | None = None
-    max_points_per_section: int | None = None
     knot_placement: str = "uniform"
     grow_control_points: bool = False
+    min_knot_gap: float = 0.05
 
     def __post_init__(self):
         if self.tolerance is not None and not self.tolerance > 0:
             raise ValueError(f"tolerance must be positive, got {self.tolerance}")
-        if self.max_points_per_section is not None and self.max_points_per_section < 2:
-            raise ValueError(
-                f"max_points_per_section must be at least 2, got {self.max_points_per_section}")
         if self.knot_placement not in ("uniform", "free"):
             raise ValueError(f"knot_placement must be 'uniform' or 'free', got {self.knot_placement!r}")
+        if not 0.0 <= self.min_knot_gap <= 0.5:
+            raise ValueError(f"min_knot_gap must be between 0 and 0.5, got {self.min_knot_gap}")
         if self.parameterization not in ("centripetal", "arc_length"):
             raise ValueError(
                 "parameterization must be 'centripetal' or 'arc_length', "
