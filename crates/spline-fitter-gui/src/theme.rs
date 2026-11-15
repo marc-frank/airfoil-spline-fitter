@@ -340,6 +340,8 @@ pub enum Glyph {
     Filter,
     Range,
     Check,
+    /// The check of a checked menu entry: Windows' heavier mark.
+    MenuCheck,
     Dash,
     /// The clear button of a text field.
     Cross,
@@ -357,6 +359,7 @@ impl Glyph {
             Glyph::SortDown => &[&[(6.0, 2.0), (6.0, 10.0)], &[(3.0, 7.0), (6.0, 10.0), (9.0, 7.0)]],
             Glyph::Filter => &[&[(1.5, 2.5), (10.5, 2.5), (7.0, 6.5), (7.0, 10.0), (5.0, 9.0), (5.0, 6.5), (1.5, 2.5)]],
             Glyph::Check => &[&[(2.5, 6.2), (5.0, 8.6), (9.5, 3.6)]],
+            Glyph::MenuCheck => &[&[(4.0, 6.0), (6.0, 8.2), (10.0, 3.5)]],
             Glyph::Dash => &[&[(3.0, 6.0), (9.0, 6.0)]],
             Glyph::Cross => &[&[(3.5, 3.5), (8.5, 8.5)], &[(8.5, 3.5), (3.5, 8.5)]],
             Glyph::Range => &[
@@ -373,7 +376,8 @@ impl Glyph {
     pub fn paint(self, painter: &egui::Painter, center: egui::Pos2, side: f32, color: Color32) {
         let scale = side / 12.0;
         let origin = center - Vec2::splat(side / 2.0);
-        let stroke = Stroke::new(1.4 * scale.max(0.8), color);
+        let weight = if self == Glyph::MenuCheck { 1.9 } else { 1.4 };
+        let stroke = Stroke::new(weight * scale.max(0.8), color);
         for line in self.strokes() {
             let points: Vec<egui::Pos2> = line.iter().map(|&(x, y)| origin + Vec2::new(x, y) * scale).collect();
             painter.add(egui::Shape::line(points, stroke));

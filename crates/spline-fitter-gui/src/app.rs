@@ -57,6 +57,8 @@ pub struct App {
     /// Put the side panels back to their default widths on the next frame.
     pub reset_sidebar: bool,
     pub reset_explorer: bool,
+    /// A submenu button its access key chose: it opens on the next frame.
+    open_submenu: Option<egui::Id>,
     pub dialog: Option<Dialog>,
     pub report: Option<ReportWindow>,
     pub batch_source: String,
@@ -102,6 +104,7 @@ impl App {
             sidebar_rect: egui::Rect::NOTHING,
             reset_sidebar: false,
             reset_explorer: false,
+            open_submenu: None,
             dialog: None,
             report: None,
             batch_source: String::new(),
@@ -279,12 +282,13 @@ impl App {
     fn menu_bar(&mut self, ui: &mut Ui) {
         let fitting = self.fitting();
         let has_fit = self.fit.is_some() && !fitting;
-        // Bar items with 10 px beside and 4 px above their text; menu items
-        // 5 px above and about 22 px beside (Python: 20 left, 24 right).
+        // Bar items with 10 px beside and 4 px above their text, 6 px apart
+        // and from the edge; menu items 5 px above and about 22 px beside
+        // (Python: 20 left, 24 right).
         let bar = egui::style::StyleModifier::new(|style| {
             egui::containers::menu::menu_style(style);
             style.spacing.button_padding = egui::vec2(10.0, 4.0);
-            style.spacing.item_spacing.x = 0.0;
+            style.spacing.item_spacing.x = size::GAP;
         });
         // Menus on the field grey, 4 px above and below their items.
         let field = self.palette.field;
@@ -296,22 +300,24 @@ impl App {
             style.visuals.window_fill = field;
             style.visuals.menu_corner_radius = egui::CornerRadius::ZERO;
         });
+        let p = self.palette.clone();
+        let mut titles = Vec::new();
         egui::MenuBar::new().style(bar).config(egui::containers::menu::MenuConfig::new().style(items)).ui(ui, |ui| {
-            let p = self.palette.clone();
-            ui.menu_button("File", |ui| {
+            ui.add_space(size::GAP);
+            titles.push(bar_menu(ui, "&File", |ui| {
                 let has_project = self.projects.file.is_some();
                 let entries = [
-                    ("New NACA airfoil...", "Ctrl+N"),
-                    ("Open airfoil...", "Ctrl+O"),
-                    ("Open recent", ""),
+                    ("&New NACA airfoil...", "Ctrl+N"),
+                    ("&Open airfoil...", "Ctrl+O"),
+                    ("Open &recent", ""),
                     ("Save fitted airfoil (.dat)...", ""),
                     ("Save spline (.spline.dat)...", ""),
                     ("Export CAD (STEP, IGES, DXF)...", "Ctrl+E"),
-                    ("Open project...", "Ctrl+Shift+O"),
-                    ("Save project", "Ctrl+S"),
-                    ("Save project as...", ""),
-                    ("Batch convert...", ""),
-                    ("Exit", "Alt+F4"),
+                    ("Open &project...", "Ctrl+Shift+O"),
+                    ("&Save project", "Ctrl+S"),
+                    ("Save project &as...", ""),
+                    ("&Batch convert...", ""),
+                    ("E&xit", "Alt+F4"),
                 ];
                 let m = MenuLayout::of(ui, &entries, false);
                 if m.item(ui, &p, entries[0], !fitting, None) {
@@ -322,7 +328,30 @@ impl App {
                 }
                 ui.add_enabled_ui(!fitting, |ui| {
                     ui.spacing_mut().button_padding.x = m.text_x;
-                    ui.menu_button("Open recent", |ui| self.recent_menu(ui));
+                    let id = ui.next_auto_id();
+                    if self.open_submenu == Some(id) {
+                        // Chosen by its access key: as if Enter were pressed on it.
+                        self.open_submenu = None;
+                        ui.memory_mut(|m| m.request_focus(id));
+                        ui.input_mut(|i| {
+                            i.events.push(egui::Event::Key {
+                                key: Key::Enter,
+                                physical_key: None,
+                                pressed: true,
+                                repeat: false,
+                                modifiers: Modifiers::NONE,
+                            })
+                        });
+                    }
+                    let text = access_key(entries[2].0).0;
+                    let (button, _) =
+                        egui::containers::menu::SubMenuButton::from_button(egui::Button::new(text)).ui(ui, |ui| self.recent_menu(ui));
+                    underline_button(ui, &button, entries[2].0, false);
+                    submenu_arrow(ui, &p, button.rect);
+                    if ui.is_enabled() && access_key_pressed(ui, entries[2].0) {
+                        self.open_submenu = Some(button.id);
+                        ui.ctx().request_repaint();
+                    }
                 });
                 menu_separator(ui);
                 if m.item(ui, &p, entries[3], has_fit, None) {
@@ -352,9 +381,9 @@ impl App {
                 if m.item(ui, &p, entries[10], true, None) {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
-            });
-            ui.menu_button("Edit", |ui| {
-                let entries = [("Undo", "Ctrl+Z"), ("Redo", "Ctrl+Y"), ("Restore deleted runs", ""), ("Paste airfoil", "Ctrl+V")];
+            }));
+            titles.push(bar_menu(ui, "&Edit", |ui| {
+                let entries = [("&Undo", "Ctrl+Z"), ("&Redo", "Ctrl+Y"), ("Restore &deleted runs", ""), ("&Paste airfoil", "Ctrl+V")];
                 let m = MenuLayout::of(ui, &entries, false);
                 if m.item(ui, &p, entries[0], !fitting && self.history.can_undo(), None) {
                     self.undo();
@@ -369,10 +398,10 @@ impl App {
                 if m.item(ui, &p, entries[3], !fitting, None) {
                     self.on_paste();
                 }
-            });
-            ui.menu_button("View", |ui| {
+            }));
+            titles.push(bar_menu(ui, "&View", |ui| {
                 let entries =
-                    [("Fit report...", "Ctrl+R"), ("Project explorer", "Ctrl+Shift+E"), ("Theme...", ""), ("Scrolling and zooming...", "")];
+                    [("&Fit report...", "Ctrl+R"), ("Project &explorer", "Ctrl+Shift+E"), ("&Theme...", ""), ("&Scrolling and zooming...", "")];
                 let m = MenuLayout::of(ui, &entries, true);
                 if m.item(ui, &p, entries[0], has_fit, None) {
                     self.on_report();
@@ -388,15 +417,23 @@ impl App {
                 if m.item(ui, &p, entries[3], true, None) {
                     self.dialog = Some(Dialog::motion(self));
                 }
-            });
-            ui.menu_button("Help", |ui| {
-                let entries = [("About", "")];
+            }));
+            titles.push(bar_menu(ui, "&Help", |ui| {
+                let entries = [("&About", "")];
                 let m = MenuLayout::of(ui, &entries, false);
                 if m.item(ui, &p, entries[0], true, None) {
                     self.set_status(format!("{} {}", spline_fitter::APP_NAME, spline_fitter::VERSION));
                 }
-            });
+            }));
         });
+        // Alt and a menu's access key opens the menu.
+        for (title, button) in titles {
+            let pressed = access_key_code(title).is_some_and(|key| ui.input_mut(|i| i.consume_key(Modifiers::ALT, key)));
+            if pressed {
+                egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&button));
+                ui.ctx().request_repaint();
+            }
+        }
     }
 
     fn recent_menu(&mut self, ui: &mut Ui) {
@@ -407,8 +444,13 @@ impl App {
         }
         for (i, file) in files.iter().enumerate() {
             let name = std::path::Path::new(file).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-            let text = if i < 9 { format!("{} {name}", i + 1) } else { name };
-            if ui.button(text).on_hover_text(file).clicked() {
+            // The first nine are numbered, the number their access key.
+            let name = name.replace('&', "&&");
+            let text = if i < 9 { format!("&{} {name}", i + 1) } else { name };
+            let button = ui.button(access_key(&text).0).on_hover_text(file);
+            underline_button(ui, &button, &text, false);
+            if button.clicked() || access_key_pressed(ui, &text) {
+                ui.close();
                 self.open_path(std::path::Path::new(file));
             }
         }
@@ -549,19 +591,26 @@ struct MenuLayout {
 impl MenuLayout {
     const PAD_LEFT: f32 = 20.0;
     const PAD_RIGHT: f32 = 24.0;
+    /// The check column moves the text 14 px and widens the menu 18 px.
     const CHECK_COLUMN: f32 = 14.0;
-    /// Between an item's text and the shortcut column.
-    const TAB: f32 = 11.0;
+    const CHECK_WIDTH: f32 = 18.0;
+    /// An entry with a shortcut is this much wider (Qt's tab).
+    const TAB: f32 = 12.0;
     const ROW: f32 = 26.0;
 
+    /// Qt's rule: the widest entry (its text, padding, and the tab when it
+    /// has a shortcut) and the widest shortcut.
     fn of(ui: &Ui, entries: &[(&str, &str)], checkable: bool) -> Self {
         let font = egui::FontId::proportional(typeface::BASE);
-        let width = |t: &str| ui.painter().layout_no_wrap(t.to_string(), font.clone(), ui.visuals().text_color()).size().x.ceil();
-        let text_x = Self::PAD_LEFT + if checkable { Self::CHECK_COLUMN } else { 0.0 };
-        let text = entries.iter().map(|(t, _)| width(t)).fold(0.0, f32::max);
+        let width = |t: &str| crate::fonts::layout_width(ui, &access_key(t).0, &font, false);
+        let check = if checkable { Self::CHECK_WIDTH } else { 0.0 };
+        let entry = entries
+            .iter()
+            .map(|(t, s)| Self::PAD_LEFT + width(t) + Self::PAD_RIGHT + check + if s.is_empty() { 0.0 } else { Self::TAB })
+            .fold(0.0, f32::max);
         let shortcut = entries.iter().map(|(_, s)| width(s)).fold(0.0, f32::max);
-        let tab = if shortcut > 0.0 { Self::TAB + shortcut } else { 0.0 };
-        let width = text_x + text + tab + Self::PAD_RIGHT;
+        let width = entry + shortcut;
+        let text_x = Self::PAD_LEFT + if checkable { Self::CHECK_COLUMN } else { 0.0 };
         MenuLayout { text_x, shortcut_x: width - Self::PAD_RIGHT - shortcut, width }
     }
 
@@ -576,18 +625,108 @@ impl MenuLayout {
         let color = if enabled { p.text } else { p.text_3 };
         let font = egui::FontId::proportional(typeface::BASE);
         if check == Some(true) {
-            crate::theme::Glyph::Check.paint(ui.painter(), egui::pos2(rect.left() + 10.0, rect.center().y), size::GLYPH, color);
+            crate::theme::Glyph::MenuCheck.paint(ui.painter(), egui::pos2(rect.left() + 7.0, rect.center().y + 0.5), 12.0, color);
         }
-        ui.painter().text(egui::pos2(rect.left() + self.text_x, rect.center().y), egui::Align2::LEFT_CENTER, text, font.clone(), color);
+        paint_access_text(ui, egui::pos2(rect.left() + self.text_x, rect.center().y), text, color);
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, access_key(text).0));
         if !shortcut.is_empty() {
             ui.painter().text(egui::pos2(rect.left() + self.shortcut_x, rect.center().y), egui::Align2::LEFT_CENTER, shortcut, font, color);
         }
-        let clicked = enabled && response.clicked();
+        let clicked = enabled && (response.clicked() || access_key_pressed(ui, text));
         if clicked {
             ui.close();
         }
         clicked
     }
+}
+
+/// A menu text with its access key marked by `&` ("E&xit"; "&&" is an
+/// ampersand): the text without the marks, and the access key with its
+/// index among the text's characters.
+fn access_key(text: &str) -> (String, Option<(usize, char)>) {
+    let mut plain = String::new();
+    let mut key = None;
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c != '&' {
+            plain.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('&') => plain.push('&'),
+            Some(k) => {
+                key = key.or(Some((plain.chars().count(), k)));
+                plain.push(k);
+            }
+            None => {}
+        }
+    }
+    (plain, key)
+}
+
+/// The key that presses an entry's access key.
+fn access_key_code(text: &str) -> Option<Key> {
+    access_key(text).1.and_then(|(_, c)| Key::from_name(&c.to_uppercase().to_string()))
+}
+
+/// Underlines the access key of a menu text laid out from `left_center`,
+/// 1 px below the baseline as Qt draws it (always, in this window's style).
+fn underline_access_key(ui: &Ui, left_center: egui::Pos2, text: &str, color: egui::Color32) {
+    let (plain, Some((index, _))) = access_key(text) else { return };
+    let galley = ui.painter().layout_no_wrap(plain, egui::FontId::proportional(typeface::BASE), color);
+    let Some(row) = galley.rows.first() else { return };
+    let Some(glyph) = row.glyphs.get(index) else { return };
+    let top = left_center.y - galley.size().y / 2.0;
+    let baseline = (top + row.pos.y + glyph.pos.y).round();
+    let left = (left_center.x + row.pos.x + glyph.pos.x).round();
+    let line = egui::Rect::from_min_size(egui::pos2(left, baseline + 1.0), egui::vec2(glyph.advance_width.round(), 1.0));
+    ui.painter().rect_filled(line, 0.0, color);
+}
+
+/// Paints a menu text from `left_center`, its access key underlined.
+fn paint_access_text(ui: &Ui, left_center: egui::Pos2, text: &str, color: egui::Color32) {
+    let font = egui::FontId::proportional(typeface::BASE);
+    ui.painter().text(left_center, egui::Align2::LEFT_CENTER, access_key(text).0, font, color);
+    underline_access_key(ui, left_center, text, color);
+}
+
+/// A menu button (or submenu or entry button) showing `text` without its
+/// marks: the access key's underline goes on top, the label to assistive
+/// technology.
+fn underline_button(ui: &Ui, response: &egui::Response, text: &str, centered: bool) {
+    let plain = access_key(text).0;
+    let color = if ui.is_enabled() { ui.visuals().text_color() } else { ui.visuals().weak_text_color() };
+    let width = ui.painter().layout_no_wrap(plain.clone(), egui::FontId::proportional(typeface::BASE), color).size().x;
+    let rect = response.rect;
+    let left = if centered { rect.center().x - width / 2.0 } else { rect.left() + ui.spacing().button_padding.x };
+    underline_access_key(ui, egui::pos2(left, rect.center().y), text, color);
+}
+
+/// Whether the access key of an entry of the open menu was pressed (alone
+/// or with Alt); the key press is used up.
+fn access_key_pressed(ui: &Ui, text: &str) -> bool {
+    let Some(key) = access_key_code(text) else { return false };
+    ui.input_mut(|i| i.consume_key(Modifiers::NONE, key) || i.consume_key(Modifiers::ALT, key))
+}
+
+/// A menu of the menu bar: its title (the access key marked) as wide as Qt
+/// makes it; the title and the title's response.
+fn bar_menu<'t>(ui: &mut Ui, title: &'t str, content: impl FnOnce(&mut Ui)) -> (&'t str, egui::Response) {
+    let font = egui::FontId::proportional(typeface::BASE);
+    let plain = access_key(title).0;
+    let width = crate::fonts::layout_width(ui, &plain, &font, false) + 2.0 * ui.spacing().button_padding.x;
+    let button = egui::Button::new(plain).min_size(egui::vec2(width, 0.0));
+    let (response, _) = egui::containers::menu::MenuButton::from_button(button).ui(ui, content);
+    underline_button(ui, &response, title, true);
+    (title, response)
+}
+
+/// The arrow of a submenu entry: a small triangle near the menu's edge.
+fn submenu_arrow(ui: &Ui, p: &crate::theme::Palette, rect: egui::Rect) {
+    let color = if ui.is_enabled() { p.text_2 } else { p.text_3 };
+    let tip = egui::pos2(rect.right() - 5.5, rect.center().y);
+    let points = vec![tip + egui::vec2(-4.5, -4.5), tip + egui::vec2(-4.5, 4.5), tip];
+    ui.painter().add(egui::Shape::convex_polygon(points, color, egui::Stroke::NONE));
 }
 
 /// A menu separator: a 1 px rule across the menu, 4 px above and below.

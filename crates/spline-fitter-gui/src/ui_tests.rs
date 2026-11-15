@@ -263,6 +263,33 @@ fn popups() {
 }
 
 /// Presses a key with modifiers.
+/// Alt and a menu's underlined letter opens the menu; an entry's letter
+/// chooses it, a submenu's opens the submenu (Qt's access keys).
+#[test]
+fn menus_answer_their_access_keys() {
+    use crate::dialogs::Dialog;
+    use egui_kittest::kittest::Queryable;
+    let mut h = harness();
+    h.run_steps(2);
+    key(&mut h, egui::Key::V, egui::Modifiers::ALT);
+    h.run_steps(2);
+    shot(&mut h, "p_view_by_key");
+    assert!(h.query_by_label("Theme...").is_some(), "Alt+V opens the View menu");
+    key(&mut h, egui::Key::T, egui::Modifiers::NONE);
+    h.run_steps(2);
+    assert!(matches!(h.state().dialog, Some(Dialog::Theme { .. })), "T chooses Theme...");
+    assert!(h.query_by_label("Theme...").is_none(), "the menu closed");
+    h.state_mut().dialog = None;
+    h.state_mut().store.set_recent_files(&["C:/airfoils/naca0012.dat".into()]);
+    h.run_steps(2);
+    key(&mut h, egui::Key::F, egui::Modifiers::ALT);
+    h.run_steps(2);
+    key(&mut h, egui::Key::R, egui::Modifiers::NONE);
+    h.run_steps(4);
+    shot(&mut h, "p_recent_by_key");
+    assert!(h.query_by_label("1 naca0012.dat").is_some(), "R opens Open recent");
+}
+
 fn key(h: &mut Harness<'static, App>, key: egui::Key, modifiers: egui::Modifiers) {
     for pressed in [true, false] {
         h.input_mut().events.push(egui::Event::Key { key, physical_key: None, pressed, repeat: false, modifiers });
