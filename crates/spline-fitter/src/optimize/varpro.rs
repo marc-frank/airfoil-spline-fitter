@@ -1,6 +1,8 @@
 //! Variable projection fits through `bspline-varpro`: a fixed number of
 //! control points per section, or the fewest within a tolerance.
 
+use std::time::Instant;
+
 use bspline_varpro::{fit_to_tolerance, ChainOptions, Continuity, FitOptions, FitResult, Junction, Observer, Progress, ToleranceOptions};
 
 use super::{Monitor, RawResult, Update, UpdateKind};
@@ -12,12 +14,23 @@ use crate::{Result, Vec2};
 const TOLERANCE_SMOOTHING: f64 = 1e-7;
 const REGULARIZATION: f64 = 1e-12;
 
-/// Forwards library progress to an application monitor, counting evaluations.
+/// A finished refit of a tolerance search with its deviation, the
+/// evaluations so far and the seconds since the search began.
+struct Refit {
+    result: FitResult,
+    deviation: f64,
+    evaluations: usize,
+    seconds: f64,
+}
+
+/// Forwards library progress to an application monitor, counting
+/// evaluations and keeping the refits of a search.
 struct Relay<'a> {
     monitor: &'a mut dyn Monitor,
     degree: usize,
     evaluations: usize,
-    refits: usize,
+    refits: Vec<Refit>,
+    start: Instant,
 }
 
 impl Observer for Relay<'_> {
@@ -34,7 +47,12 @@ impl Observer for Relay<'_> {
     }
 
     fn refit(&mut self, result: &FitResult, max_deviation: f64) -> bool {
-        self.refits += 1;
+        self.refits.push(Refit {
+            result: result.clone(),
+            deviation: max_deviation,
+            evaluations: self.evaluations,
+            seconds: self.start.elapsed().as_secs_f64(),
+        });
         self.monitor.update(&Update {
             kind: UpdateKind::Refit,
             control_points: &result.control_points,
@@ -57,44 +75,62 @@ fn chain_options(config: &SplineConfig, options: &OptimizationConfig, smoothing:
     })
 }
 
-pub fn fit(config: &SplineConfig, options: &OptimizationConfig, sections: &[Vec<Vec2>], monitor: &mut dyn Monitor) -> Result<RawResult> {
-    let mut relay = Relay { monitor, degree: config.degree, evaluations: 0, refits: 0 };
-    let (result, error, iterations) = match options.tolerance {
-        None => {
-            let fit_options = FitOptions {
-                chain: chain_options(config, options, options.smoothing_weight)?,
-                max_points_per_section: options.max_points_per_section,
-                knot_placement: options.knot_placement,
-                grow: options.grow_control_points,
-                ..FitOptions::default()
-            };
-            let counts = vec![config.num_control_points; sections.len()];
-            let result = bspline_varpro::fit(sections, &counts, config.degree, &fit_options, &mut relay)?;
-            let iterations = relay.evaluations.max(result.nfev);
-            let error = result.rms_error;
-            (result, error, iterations)
-        }
-        Some(tolerance) => {
-            let tolerance_options = ToleranceOptions {
-                chain: chain_options(config, options, TOLERANCE_SMOOTHING)?,
-                initial_control_points: (!options.grow_control_points).then_some(config.num_control_points),
-                max_points_per_section: options.max_points_per_section,
-                knot_placement: options.knot_placement,
-                ..ToleranceOptions::default()
-            };
-            let result = fit_to_tolerance(sections, tolerance, config.degree, &tolerance_options, &mut relay)?;
-            let error = result.max_deviation.unwrap_or(result.rms_error);
-            (result, error, relay.refits.max(1))
-        }
-    };
-    Ok(RawResult {
+fn raw(result: FitResult, error: f64, iterations: usize, evaluations: usize) -> RawResult {
+    RawResult {
         section_control_points: result.control_points,
         section_knots: Some(result.knots),
         error,
         rms_error: result.rms_error,
         iterations,
-        evaluations: relay.evaluations,
+        evaluations,
         success: result.success,
         message: result.message,
-    })
+        seconds: None,
+        earlier: vec![],
+    }
+}
+
+pub fn fit(config: &SplineConfig, options: &OptimizationConfig, sections: &[Vec<Vec2>], monitor: &mut dyn Monitor) -> Result<RawResult> {
+    let mut relay = Relay { monitor, degree: config.degree, evaluations: 0, refits: vec![], start: Instant::now() };
+    let Some(tolerance) = options.tolerance else {
+        let fit_options = FitOptions {
+            chain: chain_options(config, options, options.smoothing_weight)?,
+            knot_placement: options.knot_placement,
+            grow: options.grow_control_points,
+            min_knot_gap: options.min_knot_gap,
+            ..FitOptions::default()
+        };
+        let counts = vec![config.num_control_points; sections.len()];
+        let result = bspline_varpro::fit(sections, &counts, config.degree, &fit_options, &mut relay)?;
+        let iterations = relay.evaluations.max(result.nfev);
+        let (error, evaluations) = (result.rms_error, relay.evaluations);
+        return Ok(raw(result, error, iterations, evaluations));
+    };
+    let tolerance_options = ToleranceOptions {
+        chain: chain_options(config, options, TOLERANCE_SMOOTHING)?,
+        initial_control_points: (!options.grow_control_points).then_some(config.num_control_points),
+        knot_placement: options.knot_placement,
+        min_knot_gap: options.min_knot_gap,
+        ..ToleranceOptions::default()
+    };
+    let result = fit_to_tolerance(sections, tolerance, config.degree, &tolerance_options, &mut relay)?;
+    let error = result.max_deviation.unwrap_or(result.rms_error);
+    let mut refits = std::mem::take(&mut relay.refits);
+    let count = refits.len().max(1);
+    // The search ends on one of its refits; the others are fits of their own.
+    if refits.last().is_some_and(|r| r.result.control_points == result.control_points && r.result.knots == result.knots) {
+        refits.pop();
+    }
+    let mut final_fit = raw(result, error, count, relay.evaluations);
+    final_fit.earlier = refits
+        .into_iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let mut fit = raw(r.result, r.deviation, i + 1, r.evaluations);
+            fit.success = r.deviation <= tolerance;
+            fit.seconds = Some(r.seconds);
+            fit
+        })
+        .collect();
+    Ok(final_fit)
 }

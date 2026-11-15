@@ -1,20 +1,47 @@
 # Airfoil Spline Fitter: Reimplementation Specification
 
-> **Note.** This specification describes the Python version (PyQt6, NumPy,
-> SciPy) that the Rust workspace in `crates/` replaces. Algorithms,
-> constants, file formats and texts still hold; names of Python modules,
-> Qt widgets and the verification scripts refer to that version. The README
-> lists where the Rust version deliberately differs.
+> **Note.** This specification was written for the Python version (PyQt6,
+> NumPy, SciPy) that the Rust workspace in `crates/` replaces. Algorithms,
+> constants, file formats and texts hold, including the design changes
+> `[D1]` to `[D24]` of revision 3, which the Rust version implements; names
+> of Python modules, Qt widgets and the verification scripts refer to the
+> Python version. The README lists where the Rust version deliberately
+> differs.
 
 Product: `spline-fitter` 2.0.0 (Python package `spline_fitter`, window title "Airfoil Spline Fitter"), with its fitting library `bspline-varpro` 3.0.0 (`packages/bspline-varpro`).
-Baseline: source tree at commit `2febd13` on `main`, plus the exit fix in `src/spline_fitter/__main__.py` (section 1.1 step 5).
+Baseline: source tree at commit `6db8ad3` on `main` (commit `2febd13` plus the exit fix in `src/spline_fitter/__main__.py`, section 1.1 step 5, and a test-fixture fix that changes no behaviour).
 The specification is this file plus Appendix B, `spec-appendix-icons.md` (the two icon files, base64).
+Revision: 3 (2026-11-10). **From this revision on the specification leads the code.** Revisions 1 and 2 described the source as it was. Revision 3 also corrects the design where the described behaviour was wrong, wasteful or inconsistent with itself: 24 design changes, `[D1]` to `[D24]`. A rule tagged `[Dk]` in the text states the behaviour the system is to have; the source at `6db8ad3` does not behave so yet. Section 24 lists every design change with its reason, the old behaviour and the code it touches, and is the work list for bringing the code up to this document. Untagged rules still describe the source at `6db8ad3`. The verification record `spec-verification.md` was run against revision 1 and does not cover the tagged rules (23.5).
 
-This document lets an engineer who has never seen the source rebuild the system with the same behaviour: every algorithm, constant, default, file format, message text and user-visible rule that the code implements is stated as a number, a formula, an ordered procedure or a literal string. Where the code contradicts its own comments or README, section 22 states which behaviour this spec requires.
+This document lets an engineer who has never seen the source build the system: the algorithms, constants, defaults, file formats, message texts and user-visible rules are stated as numbers, formulas, ordered procedures or literal strings. Where the code contradicts its own comments or README, section 22 states which behaviour this spec requires.
+
+Contents:
+
+| Sections | Subject |
+|---|---|
+| 0-1 | Scope, conformance, platform, startup, architecture |
+| 2 | B-spline mathematics |
+| 3-4 | Reading airfoil files; airfoil data and the section split |
+| 5-6 | Configuration and result models; the application curve class |
+| 7-9 | Library: junction constraints, the VarPro core, free knots, growth, tolerance search |
+| 10-11 | Direct LSQ; optimizer dispatch and adapters |
+| 12-13 | Measuring a fit; airfoil geometry of a fit |
+| 14-17 | File formats: `.dat`, `.spline.dat`, STEP, IGES, DXF, `.asfproj`, batch names, CSV logs |
+| 18 | Display formatting |
+| 19 | Graphical user interface (19.1-19.23) |
+| 20 | Error handling summary |
+| 21 | Acceptance examples |
+| 22 | Known inconsistencies and their resolution |
+| 23 | Review and verification record (informative) |
+| 24 | Design changes of revision 3: the work list for the code |
+| Appendix A, B | Application stylesheet; icon files (`spec-appendix-icons.md`) |
+
+Normative and informative parts: sections 0 to 20, section 22 and the appendices are requirements. Section 21 is the conformance test (0.3 says which of its items are exact). Section 23 is informative: it records how this document was reviewed and checked and requires nothing. Section 24 adds no rule of its own: it indexes the `[Dk]` rules of the other sections. The "reference implementation" and "reference build" of sections 0.3 and 21 mean the source at `6db8ad3` with every change of section 24 applied; until then, the values of section 21 marked "to be re-measured" are predictions.
 
 Conventions:
 
 - `p` degree, `n` control points of one section, `S` number of sections, `N` number of data points, `dim` coordinate dimension (2 in the application).
+- A few letters are reused locally, always with a definition beside them, and the local meaning holds only in that section: `S` and `S_b` are also bending-energy matrices (2.3, 8.4); `N(u)` is also the basis matrix of 8.4 and 10; `T` is the total control-point count (7.4, 8.4), the theme temperature (19.19) and a count of files or fits in status texts (19.13, 19.18); in 13.1 `m`, `p`, `t` are the NACA camber, camber position and thickness; `u` is a curve or chain parameter and `t` a knot vector, except in 8.1 where `t` also names local data parameters.
 - Points are `(x, y)` pairs of IEEE double (`float64`). Arrays are row-major; "point-major flattening" of an `(m, dim)` array means `[r0x, r0y, r1x, r1y, ...]`.
 - "Selig order": points run from the upper trailing edge (TE), over the leading edge (LE), to the lower trailing edge (counterclockwise for a normal airfoil).
 - "Chain": the sections joined end to end. "Junction": where section `j` ends and section `j+1` starts (`S - 1` junctions).
@@ -33,7 +60,7 @@ Conventions:
 2. Splitting an airfoil into `S` sections.
 3. Fitting a chain of clamped B-spline sections by two methods:
    - **VarPro LM**: Levenberg-Marquardt variable projection with free data parameters, optional free knots, knot growth, a tolerance-driven search and geometric G1-G3 or parametric C0-C3 junction continuity (library `bspline-varpro`);
-   - **Direct LSQ**: one constrained linear least-squares solve followed by joint parameter refinement.
+   - **Direct LSQ**: one constrained linear least-squares solve on data parameters taken from the point spacing.
 4. Measuring a fit: orthogonal deviation, curvature fairness, junction continuity, leading-edge radius, thickness and camber.
 5. Writing `.spline.dat`, resampled `.dat`, STEP AP214, IGES 5.3, DXF R2000 and CSV optimizer logs.
 6. Project files (`.asfproj`).
@@ -43,19 +70,22 @@ Conventions:
 ### 0.2 Out of scope
 
 - `scripts/`, `packages/bspline-varpro/benchmarks/` (developer tools) and the test suites (their role is in section 21).
-- Packaging and publishing.
+- Publishing and distribution (building and uploading releases, installers). The package layout, dependencies and entry points that the behaviour depends on are in scope (section 1).
 - Platform-native rendering details that Qt's "Fusion" style decides (anti-aliasing, exact text metrics). Everything the application itself sets (colours, sizes, stylesheet) is specified (section 19.19 and Appendix A).
 
 ### 0.3 Conformance
 
 An implementation conforms when:
 
-1. every numbered rule holds;
-2. the acceptance examples of section 21 give the stated outputs (exactly where no tolerance is given);
-3. files it writes can be read by this application and vice versa, and its text files equal the reference output byte for byte except for timestamps;
+1. every rule of the normative sections (0 to 20, 22, the appendices) holds;
+2. the acceptance examples of section 21 give the stated outputs: exactly for the items without a fit (1 to 10, 13 to 16, 18), and for the items that run a fit (11, 12, 17) as the next paragraph says;
+3. files it writes can be read by this application and vice versa, and every writer of sections 14 to 17 produces the same bytes as the reference writer when given the same values. The values that differ from run to run or from machine to machine are excluded: timestamps, elapsed times, `run_id` and the `platform` field;
 4. the GUI exposes every control, label, default, message and interaction listed in section 19.
 
-A reimplementation in another language must reproduce the numerics of the named SciPy/NumPy routines (B-spline evaluation by de Boor, LU with partial pivoting, Cholesky, SVD, pseudo-inverse, Gauss-Legendre nodes, bounded Brent minimization). Bitwise identity of iterates is not required; the regression values of section 21 item 10 are.
+A reimplementation in another language must reproduce the numerics of the named SciPy/NumPy routines (B-spline evaluation by de Boor, LU with partial pivoting, Cholesky, SVD, pseudo-inverse, Gauss-Legendre nodes, bounded Brent minimization). Bitwise identity of iterates is not required, so two levels apply to anything computed by an iterative fit:
+
+- **Reference build** (the versions named in section 21): every number, count and status text of items 11, 12 and 17 is reproduced as written.
+- **Any other build or language**: errors and deviations of item 11 agree within the stated relative tolerance of 1e-3; the control-point counts of the fixed-count fits (`[25, 25]`) and everything in items 12 and 17 that does not come out of an iteration are exact. The evaluation and refit counts (`nit = 33`, 9 refits), the counts found by the tolerance search (`[11, 11]`) and the digits of fit results inside status texts (item 17) may differ, because rounding in the last bits can move a stopping test by one step; an implementation whose tolerance search meets the tolerance with at most one control point more per section than the reference conforms.
 
 ---
 
@@ -67,19 +97,19 @@ A reimplementation in another language must reproduce the numerics of the named 
 | Dependencies | `numpy>=1.20`, `scipy>=1.8`, `bspline-varpro>=3.0`, `PyQt6>=6.2`, `pyqtgraph>=0.13`, `chime>=0.7`. The library needs only NumPy (>= 1.22) and SciPy. |
 | SciPy routines used | `interpolate.BSpline` (evaluation, `.derivative`, `.design_matrix`), `linalg.lu_factor/lu_solve`, `linalg.cho_factor/cho_solve`, `linalg.solve`, `linalg.block_diag`, `optimize.minimize_scalar(method="bounded")`. NumPy: `linalg.cholesky/eigh/svd/lstsq/pinv/solve`, `polynomial.legendre.leggauss`, `trapezoid` (NumPy 2; `trapz` in NumPy 1, same rule). |
 | Build | Hatchling. Wheel contains `src/spline_fitter`. The library is a separate distribution. |
-| Console script | `spline-fitter` -> `spline_fitter.__main__:main`. |
-| GUI script | `spline-fitter-gui` -> `spline_fitter.__main__:main`. |
+| Console script | `spline-fitter` -> `spline_fitter.__main__:cli_entry` `[D4]`. |
+| GUI script | `spline-fitter-gui` -> `spline_fitter.__main__:cli_entry` `[D4]`. |
 | Module run | `python -m spline_fitter`; from a checkout `python -m src.spline_fitter`. |
-| Library path | On import, `spline_fitter/__init__.py` computes `<checkout> = parents[2]` of its own file. If `<checkout>/packages/bspline-varpro/src` is a directory and not already in `sys.path`, it is inserted at position 0. |
+| Library path | On import, `spline_fitter/__init__.py` computes `<checkout> = parents[2]` of its own file. Only when `bspline_varpro` cannot be found as an installed module (`importlib.util.find_spec("bspline_varpro") is None`) and `<checkout>/packages/bspline-varpro/src` is a directory, that directory is appended to `sys.path` `[D4]`. An installed library is never shadowed. |
 | Lazy GUI | The attribute `spline_fitter.SplineFitterWindow` imports the GUI on first access (module `__getattr__`), so all non-GUI APIs work without Qt. Any other unknown attribute raises `AttributeError("module 'spline_fitter' has no attribute '<name>'")`. |
 | Versions | `spline_fitter.__version__ = "2.0.0"`, `__author__ = "Airfoil Library Project"`; `bspline_varpro.__version__ = "3.0.0"`. |
-| Text files | Written UTF-8 with `\n` line ends, except CAD files (ASCII, `\n`). |
+| Text files | Every writer writes `\n` line ends on every platform `[D1]`: the application's (`.dat` 14.1, `.spline.dat` 14.2, `.asfproj` 15.3, CSV logs 17; UTF-8) and the library's (CAD files 14.3 to 14.6, `write_dat` 13.6; ASCII). The glyph SVG files (19.21 item 12) contain no line break. All readers accept `\n`, `\r\n` and `\r`, so files written by earlier versions on Windows (`\r\n`) keep loading. |
 
 ### 1.1 Startup
 
 `cli_entry()` (used by `python -m`): parse arguments with argparse (`prog="spline_fitter"`, description `"Interactive B-spline fitting tool for airfoil coordinates."`, epilog listing `python -m spline_fitter`). There are no options: `--help` prints help and exits 0; any argument exits 2 with a usage error. Then `sys.exit(main())`.
 
-The installed scripts call `main()` directly; command-line arguments are ignored.
+The installed scripts call `cli_entry()` too `[D4]`, so `spline-fitter --help` prints help under every way of starting the program. (Qt still receives `sys.argv` in step 2; because any argument is a usage error, no Qt option such as `-platform` can be passed on the command line, and the platform is chosen through `QT_QPA_PLATFORM`.)
 
 `main()`:
 
@@ -93,7 +123,7 @@ The installed scripts call `main()` directly; command-line arguments are ignored
 
 | Variable | Effect |
 |---|---|
-| `SPLINE_FITTER_LOG_DIR` | Directory for optimizer CSV logs (section 17); read when each logger is created. |
+| `SPLINE_FITTER_LOG_DIR` | Directory for optimizer CSV logs (section 17); read when each logger is created. Unset or empty: no log files are written `[D11]`. |
 
 ### 1.3 Architecture
 
@@ -104,9 +134,8 @@ The installed scripts call `main()` directly; command-line arguments are ignored
 | `bspline_varpro.chain` | Chain data, chain parameters, projection onto a chain. |
 | `bspline_varpro.constraints` | Junction and end constraints `C(θ) P = d(θ)`. |
 | `bspline_varpro.problem` | Variable-projection residual and exact Jacobian; KKT solver. |
-| `bspline_varpro.fitting` | `fit()`, Levenberg-Marquardt, continuation, `FitResult`. |
-| `bspline_varpro.tolerance` | `fit_to_tolerance()`, knot growth, knot polishing, subsampling. |
-| `bspline_varpro.joint`, `.refinement` | Joint (parameters + control points) Gauss-Newton/LM with Schur complement. |
+| `bspline_varpro.fitting` | `fit()`, Levenberg-Marquardt, `FitResult`. |
+| `bspline_varpro.tolerance` | `fit_to_tolerance()`, knot growth, free knots (`solve_free_knots`). |
 | `bspline_varpro.diagnostics` | Orthogonal projection, curvature, fairness, junction measures. |
 | `bspline_varpro.airfoil` | NACA 4-digit generator, default tolerance, leading edge, thickness/camber, resampling, TE segment. |
 | `bspline_varpro.export` | STEP, IGES, DXF writers, merge, sampling, arc length. |
@@ -129,9 +158,9 @@ Threading: fits run on one worker thread (section 19.12). The worker never touch
 
 A knot vector for `n` control points of degree `p` has `n + p + 1` entries. All knot vectors in the system are clamped on `[0, 1]`: `p + 1` zeros, interior knots, `p + 1` ones.
 
-**`open_uniform_knots(p, n)`** (library `basis.open_uniform_knots`; application `spline.create_open_uniform_knots`, identical output):
+**`open_uniform_knots(p, n)`** (library `basis.open_uniform_knots`). It is the only implementation `[D8]`: the application calls it and has no `create_open_uniform_knots` of its own.
 
-1. Library: if `p < 1` raise `ValueError("Degree must be at least 1, got {p}.")`. Both: if `n <= p` raise `ValueError("Number of control points ({n}) must be greater than degree ({p}).")` (the application's message has no final period).
+1. If `p < 1` raise `ValueError("Degree must be at least 1, got {p}.")`. If `n <= p` raise `ValueError("Number of control points ({n}) must be greater than degree ({p}).")`.
 2. `k = n - p - 1` interior knots `i / (n - p)` for `i = 1..k` (computed as `i * (1.0 / (n - p))`).
 3. Result: `[0]*(p+1) + interior + [1]*(p+1)`.
 
@@ -151,7 +180,7 @@ Example: `open_uniform_knots(3, 5) = [0, 0, 0, 0, 0.5, 1, 1, 1, 1]`.
 | interior knots exist and first `<= 0` or last `>= 1` | `"Interior knots must lie strictly inside (0, 1)."` |
 | an interior value repeated more than `p` times | `"Interior knot multiplicity must not exceed the degree."` |
 
-**Application check** `validate_knot_vector(t, p, n)` (used only by `BSplineCurve2D`): true iff `len(t) == n + p + 1`, `diff(t) >= 0` everywhere, `t[:p+1]` all close (NumPy `allclose`, rtol 1e-5, atol 1e-8) to `t[0]` and `t[-(p+1):]` all close to `t[-1]`.
+There is one knot check `[D8]`: `BSplineCurve2D` (6.1) uses `validate_knots` too, plus the length test `len(t) == n + p + 1`. The application has no separate, weaker `validate_knot_vector`.
 
 **`averaged_knots(t, n, p)`** (exported, not used by the application): `m = len(t)`; if `n <= p` raise `ValueError("Control-point count must exceed the degree.")`; with `k = n - p - 1`, if `k == 0` return `clamped_knots(p)`. `ratio = m / (n - p)`; for `j = 1..k`: `i = floor(j·ratio)`, `α = j·ratio - i`, `i = clip(i, 1, m-1)`, value `(1-α) t[i-1] + α t[i]`. Clip values to `[1e-9, 1 - 1e-9]`, apply running maximum, then `_limit_multiplicity`: for every distinct value occurring more than `p` times (with sorted distinct values `v` and the run at index `r`), `low = (v[r-1]+v[r])/2` (or 0 for the first), `high = (v[r]+v[r+1])/2` (or 1 for the last), and the run's `c` entries become `low + (high-low)·i/(c+1)` for `i = 1..c`.
 
@@ -193,12 +222,12 @@ Guards differ per caller and are part of the behaviour:
 
 ### 2.5 Gauss-Legendre quadrature
 
-Nodes and weights of `numpy.polynomial.legendre.leggauss(order)` on `[-1, 1]`, mapped to `[a, b]` by `u = (a+b)/2 + (b-a)/2·ξ`, weight `(b-a)/2·w`. Orders: 8 (bending energy, roughness), 5 (application `compute_curve_energy`), 16 (export arc length).
+Nodes and weights of `numpy.polynomial.legendre.leggauss(order)` on `[-1, 1]`, mapped to `[a, b]` by `u = (a+b)/2 + (b-a)/2·ξ`, weight `(b-a)/2·w`. Orders: 8 (bending energy, roughness), 16 (export arc length).
 
 ### 2.6 Parameterizations of a polyline
 
 - **Centripetal** (library `centripetal_parameters(P, α=0.5)`): fewer than 2 points -> zeros of the same length. `t_0 = 0`, `t_i = Σ_{k<=i} |P_k - P_{k-1}|^α`; if `t_last <= 0` return `linspace(0, 1, N)`, else `t / t_last`. `α = 1` is chord length, `α = 0` uniform.
-- **Application** `geometry.centripetal_parametrize(points, alpha=0.5)`: same, returning a list; empty input -> `[]`; one point -> `[0.0]`.
+- The application uses the library function `[D8]`; it has no `centripetal_parametrize` of its own.
 - **Arc length** `geometry.compute_arc_length_parameters(points)`: empty -> `[]`; one point -> `[0.0]`; cumulative Euclidean segment lengths divided by the total; if the total is `<= 0`, `[i/(N-1)]`.
 
 ---
@@ -230,14 +259,14 @@ Entry points: `parse_airfoil_data(path)` reads the file (3.1) and calls `parse_a
 
 ### 3.4 Rows
 
-For each kept line `i` (0-based), `parts = _number_fields(content)`. If `parts` has at least two entries and both `float(parts[0])` and `float(parts[1])` succeed (Python `float` syntax, which also accepts `inf`/`nan`), the line is a **row** `(x, y, x_text, y_text)`; if `i == 0`, set `first_is_row = True`. Otherwise, if `i == 0`, `content_name = _name_of_line(name_line)`; other non-rows are skipped.
+For each kept line `i` (0-based), `parts = _number_fields(content)`. If `parts` has at least two entries, both `float(parts[0])` and `float(parts[1])` succeed (Python `float` syntax) and both values are finite `[D3]`, the line is a **row** `(x, y, x_text, y_text)` (`inf`, `nan` and overflowing texts such as `1e400` parse as floats but are not coordinates, so such a line is not a row); if `i == 0`, set `first_is_row = True`. Otherwise, if `i == 0`, `content_name = _name_of_line(name_line)`; other non-rows are skipped.
 
 ### 3.5 Lednicer and numeric names
 
 Definitions on the list `rows`:
 
-- `is_point_counts(x, y)`: evaluated left to right with short-circuit: `x >= 2`, then `y >= 2`, then `x == int(x)`, then `y == int(y)`. Comparisons with NaN are false (IEEE). `int()` of an infinite value raises `OverflowError`, which is not caught: a first line whose two numbers are both `>= 2` with one of them infinite (for example `inf 5`, `5 inf`, `1e400 3`) makes `parse_airfoil_text` raise `OverflowError("cannot convert float infinity to integer")`; the window then shows `Failed to load: cannot convert float infinity to integer` (19.11.1).
-- `is_lednicer(rows)`: `len(rows) > 4`, `is_point_counts(rows[0])`, `|rows[0].x + rows[0].y - (len(rows)-1)| <= max(2, (len(rows)-1) // 10)`, and with `xs` = x of `rows[1:]`: `xs[0] - min(xs) < max(xs) - xs[0]`.
+- `is_point_counts(x, y)`: `x >= 2` and `y >= 2` and both are whole numbers (`x == floor(x)`, `y == floor(y)`). Rows are finite (3.4), so no case raises `[D3]`.
+- `is_lednicer(rows)`: `len(rows) > 4`, `is_point_counts` of `rows[0]`, `|rows[0].x + rows[0].y - (len(rows)-1)| <= max(2, (len(rows)-1) // 10)`, and with `xs` = x of `rows[1:]`: `xs[0] - min(xs) < max(xs) - xs[0]`.
 - `is_stray_first_row(rows)`: `len(rows) > 4` and `rows[0]` lies outside the box `[min-m, max+m]` in x or y of `rows[1:]`, where `m = 0.5·max(x range, y range)` of `rows[1:]` (bounds inclusive: inside means `min-m <= v <= max+m` in both axes).
 
 Procedure:
@@ -279,7 +308,14 @@ Procedure:
 
 ### 3.9 Library reader
 
-`bspline_varpro.airfoil.read_dat` is a simpler reader the application never calls (section 22). For completeness: it reads UTF-8 (`errors="replace"`), splits each line after replacing `,` by space, rows where two floats parse; the first non-row line 0 is the name (default file stem); Lednicer when `len > 4`, `min(counts) >= 2`, integer first row and the rest starts nearer min x; otherwise an integer first row far outside the rest (margin = largest extent) is a numeric name. Raises `ValueError("No coordinates found in {path}.")` with no rows.
+`bspline_varpro.airfoil.read_dat(path)` is a simpler reader the application never calls (section 22 item 5). It returns `(name, points)` with `points` an `(m, 2)` array; it does not strip comments, filter outliers or normalize.
+
+1. Decode the file as UTF-8 with `errors="replace"`; split into lines (Python `splitlines`). `name` = the file name without its last suffix.
+2. For each line `i` (0-based, counting every line, empty ones too): `parts = line.replace(",", " ").split()`; if `float(parts[0])` and `float(parts[1])` both succeed, it is a row (and if `i == 0`, `first_is_row = True`); otherwise, if `i == 0`, `name = line.strip()`.
+3. No rows: `ValueError("No coordinates found in {path}.")`.
+4. `(n_upper, n_lower)` = row 0; `integer_first` = both equal their rounded value; with `x` = the x of rows `1..`, `starts_at_le` = `x` is non-empty and `x[0] - min(x) < max(x) - x[0]`.
+5. Lednicer, when there are more than 4 rows, `min(n_upper, n_lower) >= 2`, `integer_first` and `starts_at_le`: drop row 0; if `n_upper + n_lower` differs from the number of rows left, `n_upper = (index of the first minimum of diff(x)) + 1`; `upper` = the first `int(n_upper)` rows, `lower` = the rest; if `lower[0]` is close to `upper[0]` (NumPy `allclose` defaults, rtol 1e-5, atol 1e-8; the application's reader in 3.5 compares exactly), drop `lower[0]`; result `reversed(upper) + lower`.
+6. Otherwise, when `first_is_row`, `integer_first` and there are more than 4 rows: with `lo`, `hi` the per-axis minimum and maximum of rows `1..` and `margin` = the larger of the two ranges `hi - lo`, if row 0 is below `lo - margin` or above `hi + margin` in either axis, `name` = line 0 stripped and row 0 is dropped (a numeric title).
 
 ---
 
@@ -334,14 +370,16 @@ Library version per section: `ends = [start, *junction orders, end]` where a jun
 
 ### 5.3 `OptimizerType`
 
-| Member | Value | `display_name` | `is_algebraic` |
-|---|---|---|---|
-| `DIRECT_LSQ` | `"direct-lsq"` | `Direct LSQ` | true |
-| `GN_VARPRO` | `"gn-varpro"` | `VarPro LM` | false (`is_iterative_algebraic` true) |
+| Member | Value | `display_name` |
+|---|---|---|
+| `DIRECT_LSQ` | `"direct-lsq"` | `Direct LSQ` |
+| `GN_VARPRO` | `"gn-varpro"` | `VarPro LM` |
+
+The members have no `is_algebraic` or `is_iterative_algebraic` property `[D6]` (nothing read them).
 
 Tooltips (shown on the optimizer segments, lines separated by `\n`):
 
-- Direct LSQ: `Direct LSQ (single-step, no iteration).` / `One constrained least-squares solve, with fixed trailing-edge` / `end points and junctions fixed or free (Advanced).` / `Fastest option (~1ms), moderate accuracy (~1e-4).` / `Ideal for dense data or real-time preview.`
+- Direct LSQ `[D10]`: `Direct LSQ: a single solve, no iteration.` / `One constrained least-squares solve on uniform knots, with the` / `data parameters taken from the point spacing (Parameterization).` / `Parametric continuity; junctions fixed or free (Advanced).` / `Fastest, but less accurate than VarPro LM.`
 - VarPro LM: `Levenberg-Marquardt Variable Projection (bspline-varpro).` / `Tolerance mode: fewest control points within a maximum` / `orthogonal deviation, non-uniform knots.` / `Geometric (G) or parametric (C) continuity per junction.` / `Recommended for CAD-quality results.`
 
 ### 5.4 `SplineConfig` (immutable)
@@ -351,9 +389,11 @@ Tooltips (shown on the optimizer segments, lines separated by `\n`):
 | `degree` | 5 |
 | `num_control_points` | 25 |
 | `num_sections` | 2 |
-| `continuity` | `G1` |
-| `geometric_continuity` | `False` |
+| `continuity` | `G3` `[D7]` |
+| `geometric_continuity` | `True` `[D7]` |
 | `junction_continuity` | `()` |
+
+The model defaults, the window's start values (19.4) and the batch reference settings (16) are one set of values `[D7]`, and the models are where it is written down: the window reads its start values from a default-constructed `SplineConfig()` and `OptimizationConfig()` (19.4) and the batch module uses the same two objects (16). Neither repeats a value, so changing a model default changes all three.
 
 Construction (in this order):
 
@@ -370,19 +410,18 @@ Construction (in this order):
 | Field | Default | Meaning |
 |---|---|---|
 | `optimizer` | `GN_VARPRO` | method |
-| `smoothing_factor` | `None` | retired; only in batch naming |
-| `early_stop_patience` | 50 | retired; only in batch naming |
-| `relative_tolerance` | `1e-6` | retired; only in batch naming |
 | `optimize_le_position` | `False` | junction positions free (all junctions) |
 | `smoothing_weight` | `1e-3` | bending-energy weight, VarPro fixed-count fits |
 | `custom_parameters` | `None` | fixed data parameters (Direct LSQ) / initial parameters (VarPro); never set by the GUI |
-| `parameterization` | `"centripetal"` | Direct LSQ start: `"centripetal"` or `"arc_length"` |
+| `parameterization` | `"centripetal"` | Direct LSQ data parameters: `"centripetal"` or `"arc_length"` |
 | `tolerance` | `None` | maximum deviation; `None` = fixed count |
-| `max_points_per_section` | `None` | VarPro subsampling |
-| `knot_placement` | `"free"` | `"uniform"` or `"free"` |
-| `grow_control_points` | `True` | start from the fewest control points |
+| `knot_placement` | `"uniform"` `[D7]` | `"uniform"` or `"free"` |
+| `grow_control_points` | `False` `[D7]` | start from the fewest control points |
+| `min_knot_gap` | `0.05` `[D22]` | smallest spacing of free knots, as a fraction of a section's parameter range; must satisfy `0 <= min_knot_gap <= 0.5`, else `ValueError` naming `min_knot_gap` |
 
-Validation: tolerance not `None` and not `> 0`: `ValueError("tolerance must be positive, got {t}")`; `max_points_per_section < 2`: `ValueError("max_points_per_section must be at least 2, got {v}")`; bad placement: `ValueError("knot_placement must be 'uniform' or 'free', got {v!r}")`; bad parameterization: `ValueError("parameterization must be 'centripetal' or 'arc_length', got {v!r}")`.
+The retired fields `smoothing_factor`, `early_stop_patience` and `relative_tolerance` do not exist `[D6]`: no optimizer read them, yet they changed batch file names (16). Passing one raises `TypeError` like any unknown argument.
+
+Validation: tolerance not `None` and not `> 0`: `ValueError("tolerance must be positive, got {t}")`; bad placement: `ValueError("knot_placement must be 'uniform' or 'free', got {v!r}")`; bad parameterization: `ValueError("parameterization must be 'centripetal' or 'arc_length', got {v!r}")`.
 
 ### 5.6 `FitResult` (application)
 
@@ -395,7 +434,7 @@ Fields: `section_control_points` (list of lists of `(x, y)`; tuples converted to
 
 ### 5.7 Other records
 
-- `IterationRecord(iteration_number, error_value, elapsed_seconds=0.0)`; alias `EvaluationRecord`.
+- `IterationRecord(iteration_number, error_value, elapsed_seconds=0.0)` (no `EvaluationRecord` alias `[D6]`).
 - `ProjectMetadata(format_version="1.0.0", created="", modified="", app_version="", platform="")`.
 - `OptimizationRun(run_id, timestamp, spline_config, optimization_config, result, loss_history, section_control_points, number=0)`.
 - `ProjectFile(metadata, airfoil, optimization_runs=[])`.
@@ -406,7 +445,7 @@ Fields: `section_control_points` (list of lists of `(x, y)`; tuples converted to
 
 ### 6.1 `BSplineCurve2D(degree, control_points, knot_vector=None)`
 
-- Control points stored as float tuples. Without knots: `open_uniform_knots(p, n)`. With knots: `validate_knot_vector` (2.1) must pass, else `ValueError("Invalid knot vector for given degree and control points")`.
+- Control points stored as float tuples. Without knots: `open_uniform_knots(p, n)`. With knots `[D8]`: `len(t) == n + p + 1`, else `ValueError("Knot vector length must be control points + degree + 1.")` (the text 14.2 uses); then `validate_knots(t, p)` (2.1), whose `ValueError` passes through.
 - `parameter_range = (t[p], t[-p-1])`.
 - `evaluate(u)` -> `(x, y)`; `evaluate_array(u)` -> `(xs, ys)`; evaluation does not extrapolate (outside the domain gives NaN).
 - `sample(m=100)`: `evaluate_array(linspace(0, 1, m))`.
@@ -414,20 +453,13 @@ Fields: `section_control_points` (list of lists of `(x, y)`; tuples converted to
 - `evaluate_derivatives(u, max_order=2, min_order=0)`: dict with keys `x,y` (order 0), `dx,dy`, `d2x,d2y`, `d3x,d3y` for orders `min_order..min(max_order, 3)`; orders above `p` are zero arrays.
 - `compute_arc_length(curve, m=1000)`: trapezoid rule on `|C'(u)|` at `linspace(0, 1, m)` with step `1/(m-1)`.
 
-### 6.2 `compute_polygon_metrics(P)`
+### 6.2 Removed: `compute_polygon_metrics`
 
-All four 0 for fewer than 2 points. `l_i = |P_{i+1} - P_i|` (finite ones only; none -> zeros). `m = mean(l)`; if `m < 1e-12` or not finite, `m = 1`.
+Removed in revision 3 `[D6]`. The four control-polygon metrics were computed by nothing and shown nowhere.
 
-- `length_variance = (std(l) / m)²` (population std);
-- `anti_bunching = mean(max(0, 0.5 - l_i/m)²)`;
-- `polygon_bend = mean(|P_i - 2P_{i+1} + P_{i+2}|²) / m²` over finite values (0 for fewer than 3 points);
-- `end_handles = 0.5·((l_0/m - 1)² + (l_last/m - 1)²)`.
+### 6.3 Removed: `compute_curve_energy`
 
-### 6.3 `compute_curve_energy(curve, quadrature_order=5)`
-
-Returns `{length, curvature_squared, curvature_gradient}` (zeros for `None`, fewer than 2 knots, or non-finite knots). Gauss order is `max(2, order)`. For every consecutive knot pair `(a, b)` of the full knot vector with `b > a + 1e-12`: nodes on `[a, b]`; `v = max(|C'|, 1e-12)`; `L += Σ w v`; if `p >= 2`: `κ = (v × C'') / v³`, accumulate `Σ w κ² v`; jerk `C'''` (zero if `p < 3`); `dκ/ds` by 2.4 with `v` floored; accumulate `Σ w (dκ/ds)² v`. If `L <= 1e-12` or not finite return zeros; `curvature_squared = I_κ / L` (0 if `I_κ <= 0`), `curvature_gradient = I_g / L` (0 if `I_g <= 0`).
-
-These metrics are a public API; the GUI does not show them.
+Removed in revision 3 `[D6]`, for the same reason. The fairness measures the application shows are those of 12.2.
 
 ---
 
@@ -462,8 +494,7 @@ A geometric junction of order `k >= 1` links the derivatives of ending section `
 
 Parameter vector `θ` layout, in order: for each junction `j` in order that is geometric with order `>= 1`: `α`-parameter, then `β` if order `>= 2`, then `γ` if order 3; then one raw magnitude per tangent condition (start tangent: node 0 side "start"; each junction with a tangent: node `j+1` side "start", plus node `j` side "end" when the junction order is 0; end tangent: last node side "end").
 
-- `initial_params()`: each `α`-parameter = `alpha_parameter(ratio_j)` (alpha starts at the length ratio); `β = γ = 0`; tangent raw = `inverse_softplus(L_node)`.
-- `theta_from_parametric(tangent_theta)`: `α`-parameters at `alpha_parameter(1.0)`, `β = γ = 0`, tangents from the given values in order.
+- `initial_params()`: each `α`-parameter = `alpha_parameter(ratio_j)` (alpha starts at the length ratio); `β = γ = 0`; tangent raw = `inverse_softplus(L_node)`, where a tangent condition's "node" is the index of the section it acts on and `L_node` is that section's polyline length as defined above (1 if zero).
 - `shape_values(θ)`: `(α, β, γ)` per junction; `(1, 0, 0)` for parametric or order-0 junctions.
 - `alpha_deviations(θ)`: per `α` slot, `ln(α/ratio)` and its row derivative `dα/da / α` in the slot's column.
 
@@ -490,7 +521,7 @@ Construction checks: `len(junctions) == S - 1` (`ValueError("Need one junction p
 
 ### 7.5 Direct LSQ coefficients
 
-Direct LSQ (section 10) uses hand-derived closed forms for orders 1-3 on open uniform knots. They equal `end_derivative_coefficients` for every `(p, n, r)` with `r <= p` (verified for `p = 1..8`, `n = p+1..p+11`); an implementation may use 7.1.
+Direct LSQ (section 10) calls `end_derivative_coefficients` (7.1) `[D8]`. The hand-derived closed forms for orders 1-3 that the application carried (`compute_derivative_constraint_coeffs`) gave the same numbers for every `(p, n, r)` with `r <= p` (verified for `p = 1..8`, `n = p+1..p+11`) and are removed.
 
 ---
 
@@ -502,12 +533,11 @@ Sections are arrays `(n_s, dim)`.
 
 - `shared_junctions(sections)`: for each `s >= 1`, true when `max|last point of s-1 - first point of s| <= 1e-12 · max(E, 1e-300)`, where `E` is the largest per-axis range (ptp) of all section points stacked.
 - `chain_data(sections)`: section 0, then each later section without its first point when shared. Result `D` with `N` rows.
-- `section_ranges(sections)`: `(first, last)` row of each section in `D` (a shared junction row belongs to both neighbours).
 - A chain parameter `u` lies in `[0, S]`. `locate(u, S)`: clip `u` to `[0, S]`; `section = min(floor(u), S-1)`; local parameter `u - section`. A point at an integer `u = s < S` is on section `s` at local 0; `u = S` is on section `S-1` at local 1.
 - `groups(u, S)`: per section, the row indices and local parameters of the points located on it.
 - `chain_parameters(t_sections, sections)`: for each section `s` with local parameters `t` (0..1): if it shares its first point with the previous section, drop `t[0]`; else if `s > 0` and `len(t) > 1`, set `t[0] = t[1]/2`; add `s`; concatenate.
 - `initial_chain_parameters(None, sections) = chain_parameters([centripetal_parameters(sec) for each sec], sections)`; with a value, `validate_chain_parameters`.
-- `validate_chain_parameters(params, sections)`: if `params[0]` is a scalar, `params` must be 1-D, of length `N`, finite, nondecreasing, with `isclose(u[0], 0)` and `isclose(u[-1], S)` (NumPy `isclose` defaults), else `ValueError("Chain parameters need one value per point, increasing from 0 to the section count.")`. Otherwise it is one array per section (`S` of them), each 1-D, of the section's length, finite, nondecreasing, `isclose` to 0 and 1 at its ends, else `ValueError("Parameters must match each section and increase from 0 to 1.")`; converted with `chain_parameters`.
+- `validate_chain_parameters(params, sections, data=None)` (`data` is `chain_data(sections)`, computed when not passed; passing it changes nothing but the work): if `params` is non-empty and `params[0]` is a scalar, `params` must be 1-D, of length `N`, finite, nondecreasing, with `isclose(u[0], 0)` and `isclose(u[-1], S)` (NumPy `isclose` defaults), else `ValueError("Chain parameters need one value per point, increasing from 0 to the section count.")`. Otherwise it is one array per section (`S` of them), each 1-D, of the section's length, finite, nondecreasing, `isclose` to 0 and 1 at its ends, else `ValueError("Parameters must match each section and increase from 0 to 1.")`; converted with `chain_parameters`.
 - `evaluate_chain(curves, u, nu=0)`: each point evaluated (or its `nu`-th derivative) on its located section.
 - `chain_deviations(D, curves, samples_per_span=32) = distance_to_curves` (section 12.1).
 
@@ -524,7 +554,9 @@ Sections are arrays `(n_s, dim)`.
 
 `KKTSolver(A, C, reg)`: `K = [[A + reg·I, Cᵀ], [C, 0]]`, LU-factored with partial pivoting. Let `piv = |diag(U)|`. If any pivot is non-finite or `min(piv) <= size · eps · max(piv)` (`size` = order of `K`, `eps` = double machine epsilon; `min` and `max` of an empty set are 1), every later solve uses `pinv(K, rcond=1e-12)` instead (minimum-norm solution). `solve_full(rhs, d=None)` solves `K [x; μ] = [rhs; d]` (`d = None` means zeros) for any number of right-hand-side columns and returns `(x, μ)`; `solve` returns `x`.
 
-### 8.4 `VarProProblem(sections, knots, p, continuity="G1", fix_junctions=True, smoothing=1e-3, regularization=1e-12, start=End(), end=End())`
+### 8.4 `VarProProblem`
+
+Signature: `VarProProblem(sections, knots, p, continuity="G1", fix_junctions=True, smoothing=1e-3, regularization=1e-12, start=End(), end=End())`.
 
 Setup:
 
@@ -584,9 +616,11 @@ A point at an integer chain parameter takes the derivative of the section starti
 
 Result: `x`, `cost`, `fun = r`, `nfev`, `status`, `success = status > 0`, message: -1 `"The residual or Jacobian is not finite."`, 0 `"The maximum number of function evaluations is exceeded."`, 1 ``"`gtol` termination condition is satisfied."``, 2 ``"`ftol` termination condition is satisfied."``, 3 ``"`xtol` termination condition is satisfied."`` (the backticks are part of the text).
 
-`levenberg_marquardt(residual, jacobian, x0, *, max_nfev=None, tolerance=1e-10, verbose=0, max_restarts=8)`: `max_nfev < 1` -> `ValueError("max_nfev must be at least 1 or None.")`; `not tolerance > 0` -> `ValueError("tolerance must be positive.")`. Up to `1 + max_restarts` runs; each starts from the previous run's `x` with the remaining budget (`max_nfev - used`). After each run: `used += nfev`; `improved = run.cost < 0.99 · best` (`best` starts at +∞); `best = min(best, run.cost)`; continue only if the run ended with status 3, improved, and (`max_nfev` is `None` or `used < max_nfev`). Return the last run's result with `nfev = used`.
+`levenberg_marquardt(residual, jacobian, x0, *, max_nfev=None, tolerance=1e-8, verbose=0, max_restarts=8)`: `max_nfev < 1` -> `ValueError("max_nfev must be at least 1 or None.")`; `not tolerance > 0` -> `ValueError("tolerance must be positive.")`. Up to `1 + max_restarts` runs; each starts from the previous run's `x` with the remaining budget (`max_nfev - used`). After each run: `used += nfev`; `improved = run.cost < 0.99 · best` (`best` starts at +∞); `best = min(best, run.cost)`; continue only if the run ended with status 3, improved, and (`max_nfev` is `None` or `used < max_nfev`). Return the last run's result with `nfev = used`.
 
-### 8.6 `solve_problem(problem, u0, θ0, *, max_nfev=None, tolerance=1e-10, exact_jacobian=True, verbose=0, callback=None)`
+### 8.6 `solve_problem`
+
+Signature: `solve_problem(problem, u0, θ0, *, max_nfev=None, tolerance=1e-8, exact_jacobian=True, verbose=0, callback=None)`.
 
 1. Unknowns `x = [η, θ]`, `η = t_to_eta(u0)` (`N - 1` entries); `unpack(x) = (eta_to_t(x[:N-1], S), x[N-1:])`.
 2. Residual function: `r = problem.residual(unpack(x))`, `nfev += 1`; keep `best_x` = the `x` with the smallest `rᵀr` so far; then `report(callback, split_control_points(last_control_points), last_rms_error, problem.knots)` (8.8); true -> stop.
@@ -606,46 +640,60 @@ Result: `x`, `cost`, `fun = r`, `nfev`, `status`, `success = status > 0`, messag
 
 `report(callback, control_points, rms, knots)`: `None` -> false. If the callback's signature has a parameter named `knots` or a `**kwargs` parameter, call `callback(control_points, rms, knots=knots)`, else `callback(control_points, rms)`; a callable whose signature cannot be inspected counts as not taking `knots`. Returns the truth value of the result; true requests a stop.
 
-### 8.9 Continuation for geometric junctions
+### 8.9 Geometric junctions in the loop `[D19]`
 
-`solve_with_continuation(problem, options, u0, **kw)`:
+A fit with geometric junctions is one optimization, like any other: `solve_problem(problem, u0, θ0)` (8.6) with `θ0 = problem.theta`, the `initial_params()` of 7.3 (each `α` at the ratio of the section lengths, `β = γ = 0`), unless the caller gives `initial_theta`. Every point the optimizer visits satisfies the junctions exactly, because the control points come from the constrained inner solve (8.2); the shape values `θ` are ordinary unknowns and need no stage of their own.
 
-1. No shape parameters: `solve_problem(problem, u0, problem.theta, **kw)`.
-2. Else build the same problem with every junction replaced by `Junction(order, geometric=False, fixed, tangent)` and solve it from `u0` and its initial `θ` (stage 1).
-3. `θ0 = theta_from_parametric(stage1.theta)`; `remaining = max_nfev - stage1.nfev` (`None` if unlimited).
-4. If stage 1 stopped or `remaining < 1`: return `result_from_problem(problem, stage1.parameters, θ0, stage1.nfev, False, message)` with message `STOPPED` if stopped, else the status-0 message.
-5. Else solve the geometric problem from `(stage1.parameters, θ0)` with `max_nfev = remaining`, then add `stage1.nfev` to its `nfev`.
+The source ran `solve_with_continuation` here: the same chain with every junction made parametric, solved to convergence, then the geometric problem started from that result with `α = 1`, both under one evaluation budget. There is no such function `[D19]`.
 
-### 8.10 `fit(points, num_control_points=None, degree=3, *, knots=None, continuity="G1", fix_junctions=True, fix_ends=True, start_tangent=None, end_tangent=None, smoothing=1e-3, regularization=1e-12, initial_parameters=None, initial_theta=None, max_points_per_section=None, max_nfev=None, tolerance=1e-10, exact_jacobian=True, verbose=0, callback=None, knot_placement="uniform", grow=False)`
+Measured on the reference build (degree 5, uniform knots, two sections, NACA 2412, 0012, 4415, 6409, 0006 and 9520 at 10 to 40 control points, each with G1, G2 and G3; 60 fits, one run against the source's two): with smoothing 1e-3 all 30 fits ended at the same RMS deviation to four digits, 29 of them in fewer evaluations (the reference fit of section 21 in 34, was 40). With smoothing 0 all 30 converged; 18 ended at the same RMS deviation, 8 lower and 4 higher (by 3 to 27 percent, at 1e-7 and below, the rounding of the data), and the largest fits took a sixth of the evaluations (3525, was 22752).
+
+### 8.10 `fit`
+
+Signature: `fit(points, num_control_points=None, degree=3, *, knots=None, continuity="G1", fix_junctions=True, fix_ends=True, start_tangent=None, end_tangent=None, smoothing=1e-3, regularization=1e-12, initial_parameters=None, initial_theta=None, max_nfev=None, tolerance=1e-8, exact_jacobian=True, verbose=0, callback=None, knot_placement="uniform", grow=False)`.
 
 1. `sections = as_sections(points)`: a 2-D array is one section; a sequence whose first item is 1-D is one section; otherwise each item is a section. Each must be 2-D with `>= 2` rows, all finite, else `ValueError("Each section needs at least two finite points shaped (n, dim).")`; all of one `dim`, else `ValueError("All sections must have the same dimension.")`.
 2. Knots. `knots is None`: `num_control_points` required (`ValueError("Give num_control_points or knots.")`); scalar -> that count for every section; sequence -> one per section (`ValueError("Need one control-point count per section.")`); any count `< p + 1` -> `ValueError("Control-point count must be at least degree + 1.")`; knots `open_uniform_knots(p, n_s)`. Otherwise `knots` is one shared 1-D vector or one per section.
 3. Validation (`ValueError`): smoothing finite and `>= 0` (`"Smoothing weight must be finite and nonnegative."`); regularization finite and `>= 0` (`"Regularization must be finite and nonnegative."`); `max_nfev` `None` or `>= 1` (`"max_nfev must be at least 1 or None."`); tolerance finite and `> 0` (`"tolerance must be finite and positive."`); placement (`"knot_placement must be 'uniform' or 'free'."`); `grow` with explicit knots (`"Growing the control-point count needs num_control_points, not knots."`).
 4. `u0 = initial_chain_parameters(initial_parameters, sections)`; `options = ChainOptions(continuity, fix_junctions, fix_ends, start_tangent, end_tangent, smoothing, regularization)`.
-5. `max_points_per_section` given and `< 2`: `ValueError("max_points_per_section must be at least 2.")`. `dense` = given and some section has more points.
-6. Dispatch: `grow` -> `grow_to_counts(sections, counts, p, options, u0, initial_theta, max_nfev, max_points_per_section, callback, knot_placement)` (9.4); else `dense` -> `fit_subsampled(sections, knots, p, options, u0, initial_theta, max_nfev, max_points_per_section, callback)` (9.2); else `_fit_once`: with `initial_theta` (must have `num_params` entries, else `ValueError("initial_theta must have {k} entries.")`) `solve_problem`, otherwise `solve_with_continuation`.
-7. `result.options = options`.
-8. If `knot_placement == "free"`, not `grow`, not `dense`, and the result is not stopped: `polished = polish_knots(sections, result, options, callback=callback)`. A stopped `polished` is returned. Else if `polished.rms_error <= result.rms_error`: `polished.nfev += result.nfev`, `polished.success, polished.message = result's`, `polished.options = options`, return `polished`; otherwise return `result`.
+5. Dispatch: `grow` -> `grow_to_counts(sections, counts, p, options, u0, initial_theta, max_nfev, callback, knot_placement)` (9.4); else one loop `[D18]`, with `θ0 = initial_theta` if given (it must have `num_params` entries, else `ValueError("initial_theta must have {k} entries.")`) and the problem's `theta` otherwise:
+   - `knot_placement == "free"`: `solve_free_knots(sections, knots, p, options, u0, θ0, max_nfev=, tolerance=, exact_jacobian=, verbose=, callback=)` (8.11). The interior knots are unknowns of this one optimization from its first step. Geometric junctions are solved in the same run (8.9);
+   - `"uniform"`: `solve_problem(problem, u0, θ0, ...)` with the same keyword arguments (8.6, 8.9) `[D19]`.
+6. `result.options = options`.
+7. Return the result. There is no stage after the loop `[D18]`: the source ran `polish_knots` here (a second optimization of at most 60 evaluations, started from the finished uniform-knot fit, and kept only when its error was not larger). There is no `max_points_per_section` argument and no subsampling `[D21]`: every fit uses every point.
 
 ---
 
-## 9. VarPro procedures (`bspline_varpro.tolerance`, `joint`, `refinement`)
+### 8.11 Free knots in the loop (`tolerance.solve_free_knots`) `[D18]`
+
+Signature: `solve_free_knots(sections, knots, degree, options, params, theta0, *, max_nfev=None, tolerance=1e-8, exact_jacobian=True, verbose=0, callback=None, min_knot_gap=0.05)`, exported from the package. It is `solve_problem` (8.6) with the interior knot positions added to the unknowns: the knot setting decides only whether they are in the vector `x`, nothing else about the loop.
+
+1. Gap parameters from the starting `knots` and `params`:
+   - per section, `r_s` = number of interior knots if they are strictly increasing, else 0 (that section keeps its knots, so a repeated knot stays repeated);
+   - floor of each section with `r_s > 0`: `ts = unique([0, local parameters of the points `params` locates on it, 1])`; `floor_s = elementwise min(max(min(diff(ts)), min_knot_gap), 0.999 · diff([0, interior, 1]))` (`r_s + 1` values); then `floor_s *= min(1, 0.5 / Σ floor_s)`;
+   - `ξ_s = inverse_softplus(max(diff([0, interior, 1]) - floor_s, 1e-12))`. Knots of `ξ`: `free = softplus(ξ_s)`, gaps `floor_s + (1 - Σ floor_s) · free / Σ free`, interior knots `cumsum(gaps)[:-1]`, `clamped_knots`. Only the room above the floors is shared out, so every gap is at least its floor. (The source normalized `softplus(ξ_s) + floor_s` by its sum, which let one growing gap shrink the others below their floors without limit, and a fit could creep along that direction for hours; the 60-evaluation cut-off of `polish_knots` hid it.)
+
+   `Σ r_s == 0` (no movable knot): return `solve_problem(options.problem(sections, knots, degree), params, theta0, ...)` with the same keyword arguments.
+2. Unknowns `x = [η, θ, ξ]`, start `[t_to_eta(params), theta0, ξ of the starting knots]`.
+3. Residual: the problem for the current `ξ` (cache of one entry); `r = problem.residual(eta_to_t(η, S), θ)`; `nfev += 1`; remember the `x` of lowest `rᵀr`; `report(callback, control points, rms, problem.knots)` (8.8), true -> stop.
+4. Jacobian: `base` = the residual at `x` (computed without counting or reporting); columns of `[η, θ]` from `reduced_jacobian`; each knot column `(residual of a freshly built problem with ξ_i + h, same u and θ, − base) / h`, `h = 1e-7·(1 + |ξ_i|)`. With `exact_jacobian` false the whole Jacobian is `"2-point"`.
+5. `levenberg_marquardt(residual, jacobian, x0, max_nfev=, tolerance=, verbose=)` (8.5). Stop -> the remembered best `x`, `success = False`, message `STOPPED`. `ValueError` or `LinAlgError` -> `ValueError("VarPro fit failed: {message}")`.
+6. `result_from_problem` on the problem of the final knots, with `nfev` (step 3's count), `success`, `message`.
+
+Measured on the reference build (degree 5, smoothing 1e-3, two sections, 18 fits: NACA 2412, 0012, 4415, 6409 at 8 to 25 control points, each with C2, G2 and G3): every fit ended on the optimizer's own test after 70 to 696 evaluations (1.5 to 22 s; the uniform fits took 13 to 62 evaluations and under half a second), with an RMS deviation between 2 and 50 times smaller than with uniform knots. A symmetric airfoil does not get mirror-symmetric knots or control points.
+
+
+## 9. VarPro procedures (`bspline_varpro.tolerance`)
 
 ### 9.1 Refit helper
 
-`_refit(sections, knots, p, options, u, θ, max_nfev, max_points=None, callback=None)`: if `max_points` is given and some section is longer: `fit_subsampled(..., max_points, callback)`. Else build the problem; if `θ is None` or `len(θ) != num_params`: `solve_with_continuation(problem, options, u, max_nfev=max_nfev, callback=callback)`; else `solve_problem(problem, u, θ, max_nfev=max_nfev, callback=callback)`.
+`_refit(sections, knots, p, options, u, θ, max_nfev, callback=None, free=False, min_knot_gap=0.05)` is the one fit every procedure of this section repeats `[D20]`: build the problem; if `θ is None` or `len(θ) != num_params`: `θ = problem.theta` `[D19]`; then, with `free`, `solve_free_knots(sections, knots, p, options, u, θ, max_nfev=max_nfev, callback=callback, min_knot_gap=min_knot_gap)` (8.11: `knots` are where the knots start, and they are unknowns of the fit), else `solve_problem(problem, u, θ, max_nfev=max_nfev, callback=callback)` (8.6).
 
-### 9.2 Subsampling (`fit_subsampled(sections, knots, p, options, u, θ, max_nfev, max_points, callback=None)`)
+A procedure that refits with `free` continues from `result.knots`, where the fit left the knots, not from the knots it passed in.
 
-1. `subsample_indices(n, m)`: `arange(n)` if `n <= m`; else `unique(round(linspace(0, n-1, m)))` as integers (both ends kept).
-2. With `D = chain_data(sections)` and `(first, last)` from `section_ranges`: indices of section `s` = `first + subsample_indices(last - first + 1, m)`; `chosen = unique(all indices)`; subsets `D[indices_s]` (shared junction rows stay shared).
-3. `coarse = _refit(subsets, knots, p, options, u[chosen], θ, max_nfev, callback=callback)` (no `max_points`).
-4. `coarse.parameters = project_to_chain(D, coarse.curves(), chosen, coarse.parameters)`; `coarse.options = options`. If stopped, return `coarse`.
-5. `refined = refine(sections, coarse, options, callback=callback)`; `refined.nfev += coarse.nfev`; return `refined`.
+### 9.2 Removed: subsampling `[D21]`
 
-`project_between(D, curves, lower, upper, samples=16, start=None)`: per point a grid `lower + (upper - lower)·linspace(0, 1, 17)` (after `upper = max(upper, lower)`), plus `start` as an extra candidate when given; take the candidate of least squared distance. Then up to 20 Newton steps for all points together: `g = (C(u) - q)·C'(u)`, `h = |C'|² + (C - q)·C''`; trial `clip(u - g/h, lower, upper)` where `h > 0`, else `u`; non-finite trials stay `u`; a point accepts its trial only if its squared distance decreases; stop when no point improves.
-
-`project_to_chain(D, curves, chosen, u_chosen)`: for each row `i`: `before = clip(searchsorted(chosen, i, "left") - 1, 0, last)`, `after = clip(searchsorted(chosen, i, "right"), 0, last)` (`last = len(chosen) - 1`); `u = project_between(D, curves, u_chosen[before], u_chosen[after])`; `u = maximum.accumulate(clip(u, 0, S))`; `u[0] = 0`; `u[-1] = S`.
+There is no `fit_subsampled`, `subsample_indices`, `project_between`, `project_to_chain` or `section_ranges`, and no `max_points_per_section` argument anywhere. The source fitted an evenly spaced subsample of each long section, projected the other points onto that curve and then ran a joint refinement on all points (9.7); the Knots setting was ignored on that path. Every fit now uses every point, in one optimization.
 
 ### 9.3 Knot insertion and removal helpers
 
@@ -655,84 +703,54 @@ Result: `x`, `cost`, `fun = r`, `nfev`, `status`, `success = status > 0`, messag
 
 `removal_order(t, p, u, dev, tol)`: for each distinct interior knot `k` (ascending): `i = searchsorted(breaks, k)` (left); score = (the largest `dev` of the points in spans `i-1` and `i`, or 0 when they hold no points) / `tol`. Return the knots ordered by `(score, k)` ascending.
 
-### 9.4 Growing to counts (`grow_to_counts(sections, counts, p, options, u, θ, max_nfev, max_points=None, callback=None, knot_placement="free")`)
+### 9.4 Growing to counts (`grow_to_counts`)
+
+Signature: `grow_to_counts(sections, counts, p, options, u, θ, max_nfev, callback=None, knot_placement="free", min_knot_gap=0.05)`. `min_span = 1e-4` with uniform placement; with free placement `max(1e-4, min(min_knot_gap, 0.5 / max(max(counts) - p, 1)))` `[D22]`: free knots are not inserted closer than they may move, unless the counts asked for need it (then half the uniform spacing of the largest count is the limit). Every `_refit` of the procedure gets `min_knot_gap`.
 
 1. `need` per section (library rule of 5.2 with the options' junctions and ends). Start knots `open_uniform_knots(p, min(need_s, count_s))`.
 2. Loop:
-   1. `result = _refit(sections, knots, p, options, u, θ, max_nfev, max_points, callback)`; stopped -> return it; `u, θ ← result.parameters, result.theta`.
+   1. `result = _refit(sections, knots, p, options, u, θ, max_nfev, callback, free = placement is free)`; stopped -> return it; `u, θ, knots ← result.parameters, result.theta, result.knots` `[D20]`.
    2. `missing_s = count_s - current count_s`; all `<= 0` -> leave the loop.
-   3. `dev = chain_deviations(D, result.curves())`. For each section with `room = missing_s > 0`, over the points located on it: `new = new_knots(t_s, local, dev_s, 0.5·max(dev_s, initial 0), 1e-4)[:room]`; if empty, `new = new_knots(t_s, local, dev_s, -1.0, 1e-4)[:room]`. Uniform placement: `t_s = open_uniform_knots(p, current + max(len(new), 1))` (counts as inserted). Free placement: if `new` is non-empty, `t_s = clamped_knots(p, interior(t_s) ∪ new)` (inserted).
+   3. `dev = chain_deviations(D, result.curves())`. For each section with `room = missing_s > 0`, over the points located on it: `new = new_knots(t_s, local, dev_s, 0.5·max(dev_s, initial 0), min_span)[:room]`; if empty, `new = new_knots(t_s, local, dev_s, -1.0, 1e-4)[:room]`. Uniform placement: `t_s = open_uniform_knots(p, current + max(len(new), 1))` (counts as inserted). Free placement: if `new` is non-empty, `t_s = clamped_knots(p, interior(t_s) ∪ new)` (inserted).
    4. Nothing inserted: leave the loop.
-3. If free and (`max_points is None` or every section has `<= max_points` points): `polished = polish_knots(sections, result, options, callback=callback)`; stopped -> return it; if `polished.rms_error <= result.rms_error`: add `result.nfev`, copy `success` and `message`, use it.
-4. Return the result.
+3. Return the result. Nothing follows the loop `[D20]`: with free placement the knots were unknowns of every refit, the last one included, so the returned fit is already converged in them.
 
-### 9.5 Knot polishing (`polish_knots(points, result, options=None, max_nfev=60, min_gap=1e-3, should_stop=None, callback=None)`)
+### 9.5 Removed: knot polishing `[D20]`
 
-1. `options = options or result.options or ChainOptions(continuity=result.continuity or "G1")`.
-2. Per section, `r_s` = number of interior knots if they are strictly increasing, else 0 (that section keeps its knots). `Σ r_s == 0`: return `result`.
-3. Floor of each polished section: `ts = unique([0, local parameters of its located points, 1])`; `floor_s = elementwise min(max(min(diff(ts)), min_gap), 0.999 · diff([0, interior, 1]))` (`r_s + 1` values); then `floor_s *= min(1, 0.5 / Σ floor_s)`.
-4. Gap parameters: `ξ_s = inverse_softplus(max(diff([0, interior, 1]) - floor_s, 1e-12))`. Knots of `ξ`: gaps `softplus(ξ_s) + floor_s`, interior knots `cumsum(gaps)[:-1] / Σ gaps`, `clamped_knots`.
-5. Unknowns `[η, θ, ξ]` (`θ` = `result.theta`). Residual: if `should_stop` is given and returns true, stop; the problem for the current `ξ` (cache of one entry); `problem.residual(eta_to_t(η, S), θ)`; then `report(callback, ...)` with the moving knots (8.8); true -> stop.
-6. Jacobian: exact `reduced_jacobian` for `[η, θ]`; each knot column by forward difference with `h = 1e-7·(1 + |ξ_i|)` on a freshly built problem, at the same `u`, `θ`.
-7. `levenberg_marquardt(residual, jacobian, x0, max_nfev=max_nfev)` (tolerance 1e-10). Stop -> copy of `result` with `success = False`, message `STOPPED`. `ValueError` or `LinAlgError` -> `result` unchanged. Else `result_from_problem` on the polished knots with the solution's `nfev`, `success`, `message`.
+There is no `polish_knots`. The source ran it after a fit: a second optimization over `[η, θ, ξ]` started from the finished fit, cut off after 60 residual evaluations, whose result the callers kept only when it was not worse, and which returned the unpolished fit silently when its solve failed. Free knots are unknowns of the fit itself (8.11); its gap parameterization is the one polishing used.
 
-### 9.6 Tolerance search (`fit_to_tolerance(points, tolerance, degree=5, *, continuity="G2", fix_junctions=True, fix_ends=True, start_tangent=None, end_tangent=None, smoothing=1e-7, regularization=1e-12, initial_knots=None, initial_control_points=None, initial_parameters=None, max_control_points=None, optimize_knots=True, remove_knots=True, max_points_per_section=200, max_nfev=None, max_iterations=40, callback=None, knot_placement="free", should_stop=None, step_callback=None)`)
+### 9.6 Tolerance search (`fit_to_tolerance`)
+
+Signature: `fit_to_tolerance(points, tolerance, degree=5, *, continuity="G2", fix_junctions=True, fix_ends=True, start_tangent=None, end_tangent=None, smoothing=1e-7, regularization=1e-12, initial_knots=None, initial_control_points=None, initial_parameters=None, max_control_points=None, remove_knots=True, max_nfev=None, max_iterations=40, callback=None, knot_placement="free", should_stop=None, step_callback=None)`.
 
 Validation (`ValueError`): tolerance finite and `> 0` (`"Tolerance must be positive."`); placement (`"knot_placement must be 'free' or 'uniform'."`); `max_iterations >= 1` (`"max_iterations must be at least 1."`); sections as in 8.10.
 
 1. `need_s` (library rule). Start knots: `initial_knots` if given; else, from `initial_control_points` (scalar or one per section; count mismatch `ValueError("Need one initial control-point count per section.")`), `open_uniform_knots(p, max(n_s, need_s))`; else `open_uniform_knots(p, need_s)`.
 2. `limit_s = min(len(section_s) - 1, max_control_points or len(section_s))`; any `need_s > limit_s`: `ValueError("Sections have too few points for the requested end conditions.")`.
 3. `u = initial_chain_parameters(initial_parameters, sections)`, `θ = None`, `history = []`.
-4. `step` (defined only when `should_stop` or `step_callback` is given): called on every residual evaluation of every refit and polish; returns true, and records that a stop happened, when `should_stop()` is true or `report(step_callback, control_points, rms, knots)` is true.
+4. `step` (defined only when `should_stop` or `step_callback` is given): called on every residual evaluation of every refit; returns true when `should_stop()` is true or `report(step_callback, control_points, rms, knots)` is true.
 5. `record(stage, result, dev)`: append `{"stage", "control_points": result.num_control_points, "max_deviation": dev, "rms_error": result.rms_error}`; return the truth of `callback(result, dev)` (false without callback).
 6. `finish(result, dev, success, message)`: set `max_deviation = dev`, `history`, `options`, `success`, `message`; return it.
 7. Insertion, at most `max_iterations` rounds:
-   1. `result = _refit(sections, knots, p, options, u, θ, max_nfev, max_points_per_section, step)`; `u, θ ← result's`; `devs = chain_deviations(D, result.curves())`; `dev = max(devs)`.
+   1. `result = _refit(sections, knots, p, options, u, θ, max_nfev, step, free = placement is free)`; `u, θ, knots ← result's` `[D20]`; `devs = chain_deviations(D, result.curves())`; `dev = max(devs)`.
    2. Stopped, or `record("insert", result, dev)` true: `finish(result, dev, False, STOPPED)`.
    3. `dev <= tolerance`: leave the loop.
-   4. For each section whose located points have `max dev > tolerance`: `count` = its control points, `room = limit_s - count`; `new = new_knots(t_s, local, devs_s, tolerance, 1e-4)[:max(room, 0)]`; uniform with `room > 0`: `t_s = open_uniform_knots(p, count + max(len(new), 1))` (inserted); free with `new` non-empty: insert them.
+   4. For each section whose located points have `max dev > tolerance`: `count` = its control points, `room = limit_s - count`; `new = new_knots(t_s, local, devs_s, tolerance, min_span)[:max(room, 0)]` with `min_span = 1e-4` for uniform placement and `max(1e-4, min_knot_gap)` for free placement `[D22]`; uniform with `room > 0`: `t_s = open_uniform_knots(p, count + max(len(new), 1))` (inserted); free with `new` non-empty: insert them.
    5. Nothing inserted: `finish(result, dev, False, "Tolerance not reached: no knot span can be refined further.")`.
 
    All rounds used without meeting the tolerance: `finish(result, dev, False, "Tolerance not reached within max_iterations.")`.
 8. Uniform placement: for each section `s`, while its count `> need_s`: trial knots with `t_s = open_uniform_knots(p, count - 1)`; `trial = _refit(..., result.parameters, result.theta, ...)`; stopped -> `finish(result, dev, False, STOPPED)`; trial max deviation `> tolerance` -> stop for this section; else `result, dev = trial, its deviation` and `record("remove")` (true -> stopped finish). Then `finish(result, dev, True, "Within tolerance {tolerance:g}.")`.
-9. Free placement: `dense` as in 8.10; `polish = optimize_knots and not dense`. `polished(result, dev)`: `candidate = polish_knots(sections, result, options, callback=step)`; stopped candidate -> keep `result`; accept when its max deviation `<= tolerance` and its RMS `<= result.rms_error`.
-   1. If `polish`: apply `polished`; if accepted and `record("polish")` is true, or a stop was requested (a recorded stop, or `should_stop()` true): stopped finish.
-   2. If `remove_knots`: for each section `s`, repeat while the last pass removed a knot and the count `> need_s`: compute deviations of the current result; for each `k` in `removal_order(t_s, p, local, devs_s, tolerance)`: trial knots = interior of `t_s` without the entry nearest `k` (one entry); refit from the current `u`, `θ` (stopped -> stopped finish); if its max deviation `> tolerance` and `polish`: polish the trial (stopped -> stopped finish) and measure again; if `<= tolerance`: accept, `record("remove")` (true -> stopped finish), and restart the scan for this section.
-   3. If `polish`, at least one knot was removed and no stop was requested: apply `polished` once more; if accepted, `record("polish")` (its return value is ignored).
-   4. `finish(result, dev, True, "Within tolerance {tolerance:g}.")`.
+9. Free placement `[D20]`:
+   1. If `remove_knots`: for each section `s`, repeat while the last pass removed a knot and the count `> need_s`: compute deviations of the current result; for each `k` in `removal_order(t_s, p, local, devs_s, tolerance)`: trial knots = interior of `t_s` without the entry nearest `k` (one entry); `trial = _refit(..., trial knots, result.parameters, result.theta, max_nfev, step, free = True)` (stopped -> stopped finish); if its max deviation `<= tolerance`: accept, `record("remove")` (true -> stopped finish), and restart the scan for this section.
+   2. `finish(result, dev, True, "Within tolerance {tolerance:g}.")`.
+
+   The history holds the stages `insert` and `remove` only. The source had a third, `polish`: it ran `polish_knots` (9.5) once the tolerance was met, again on every removal trial that missed the tolerance, and once more at the end, each capped at 60 evaluations. There is no `optimize_knots` argument: free placement means the knots are unknowns of every refit.
 
 `{tolerance:g}` is Python's general format with 6 significant digits (`1e-05`, `0.0001`).
 
-### 9.7 Joint refinement
+### 9.7 Removed: joint refinement `[D21]`
 
-`JointProblem(sections, knots, p, C, d, smoothing=0.0, regularization=1e-12)`:
-
-- `D = chain_data(sections)`. If `C` has rows: SVD `C = U Σ Vᵀ`; `rank = #{σ > 1e-10 · max(σ_0, 1)}`; null space `Z = (rows rank.. of Vᵀ)ᵀ`; `P0 = lstsq(C, d)` (minimum norm). Else `Z = I_T`, `P0 = 0`.
-- `Q = reg·I + smoothing·S_b` (bending term only if `smoothing > 0`); `R = matrix_root(Q)`; `c = mean(D)`; `RZ = R Z`; `RP0 = R (P0 - 1cᵀ)`; `evaluations = 0`.
-- Unknowns: `z` (`num_z × dim`, flattened row-major) with `P = P0 + Z z`, and the chain parameters of rows `1..N-2` (the first and last stay at 0 and `S`).
-- `evaluate(u, z, with_jacobian=False)`: `evaluations += 1`; residual `[N(u)P - D ; RP0 + RZ z]` point-major; with the Jacobian also `tangent = dN(u) P` and `Jz = [kron(N Z, I_dim) ; kron(RZ, I_dim)]`.
-- `z_from(P) = Zᵀ(P - P0)` flattened.
-
-`solve_joint(problem, u, z, max_iterations=None, tolerance=1e-12, on_step=None)` returns `(u, z, iterations, converged, message)`:
-
-1. `max_iterations` not `None` and `< 1`: `ValueError("max_iterations must be at least 1 or None.")`; `not tolerance > 0`: `ValueError("tolerance must be positive.")`.
-2. `u = clip(maximum.accumulate(u), 0, S)`; evaluate with Jacobian; `cost = ½ rᵀr`; `μ` unset; `ν = 2`; message `"Maximum iterations reached."`, `converged = False`.
-3. For `it = 1, 2, ...` (up to `max_iterations` when given):
-   1. `Tf = tangent[free]`; `rd` = data residual rows of the free points; `g_t = Σ_k Tf·rd`; `U = Σ_k Tf²`; `W[i, :] = Σ_k Tf[i,k] · Jz[row of (free_i, k)]`; `V = JzᵀJz`; `g_z = Jzᵀr`.
-   2. Gradient cosine `= max |[g_t, g_z]| / (sqrt(max([U, diag V], 0)) · sqrt(2 cost))` (0 where a norm is 0, and 0 when `cost == 0`). `<= tolerance`: `converged = True`, `"Gradient below tolerance."`, stop.
-   3. `dV = max(diag V, 1e-12 · max(max(diag V, initial 0), 1e-300))`; `Uf = max(U, 1e-12 · max(max(U, initial 1), 1e-300))`; `μ = 1e-3` if unset.
-   4. Inner loop: `Ud = U + μ·Uf`; `Vd = V + μ·diag(dV)`; `Sc = Vd - Wᵀ(W / Ud)`; `rhs = -g_z + Wᵀ(g_t / Ud)`; `dz = solve(Sc, rhs)`; on `LinAlgError`: `μ ← μν`, `ν ← 2ν`, if `μ > 1e16` return `(u, z, it, False, "Singular normal equations.")`, else retry. `dt = -(g_t + W dz)/Ud`; `u'[free] = clip(PAV(u[free] + dt), 0, S)`; `dt = u'[free] - u[free]`; `z' = z + dz`; `cost' = ½|r(u', z')|²`; `pred = -(g_t·dt + g_z·dz) - ½(dt·(U⊙dt) + 2 dt·(W dz) + dz·(V dz))`; `ρ = (cost - cost')/pred` if `pred > 0` else -1. If `ρ > 0`: `μ ← μ·max(1/3, 1 - (2ρ - 1)³)`, `ν = 2`, accept. Else `μ ← μν`, `ν ← 2ν`; if `μ > 1e16`: return `(u, z, it, cos <= sqrt(tolerance), "No further decrease possible.")` with `cos` the gradient cosine of 3.2.
-   5. Accepted: `decrease = cost - cost'`; `u, z ← u', z'`; re-evaluate with Jacobian; `cost = cost'`; if `on_step` returns true: return `(u, z, it, False, "Stopped by callback.")`; if `decrease <= tolerance · cost`: `converged = True`, `"Relative decrease below tolerance."`, stop.
-4. Return `(u, z, it, converged, message)` (`it` = last iteration number, 0 if none ran).
-
-PAV (pool adjacent violators, least-squares nondecreasing projection): keep a stack of blocks `(mean, count)`; push each value as `(v, 1)`; while the top two blocks have `mean_below > mean_top`, merge them into `((m1 c1 + m2 c2)/(c1 + c2), c1 + c2)`; finally expand each block mean `count` times.
-
-`refine(points, result, options=None, max_iterations=None, callback=None)`:
-
-1. Options: the argument, else `result.options`, else `ChainOptions(continuity=result.continuity or "G1")`.
-2. `(C, d) = options.problem(sections, result.knots, p).constraints.build(θ)` with `θ = result.theta` if its length equals `num_params`, else `initial_params()`; `JointProblem(sections, result.knots, p, C, d, smoothing=options.smoothing, regularization=options.regularization)`.
-3. Start `u = result.parameters`, `z = z_from(vstack(result.control_points))`. `on_step` (only with a callback) reports each accepted step's control points, RMS and knots (8.8).
-4. Result: per-section control points, `parameters = u`, knots and degree of `result`, `rms_error = sqrt(mean_i |N_i P - D_i|²)`, `max_residual = max_i |N_i P - D_i|`, `nfev = evaluations`, `success = converged`, `message`, `continuity`, `shape_parameters`, `theta` copied from `result`, `options`, and `max_deviation = max chain_deviations(D, curves)`.
+There is no `refinement` or `joint` module: no `refine`, `JointProblem`, `solve_joint` or PAV projection. Their one use was the second stage of a subsampled fit (9.2); before `[D10]` Direct LSQ used them too.
 
 ### 9.8 Library constants
 
@@ -745,40 +763,38 @@ PAV (pool adjacent violators, least-squares nondecreasing projection): keep a st
 | `ETA_LIMIT` | 700 |
 | `MIN_RELATIVE_GAP` | 1e-3 |
 | `STOPPED` | `"Stopped by callback."` |
-| LM damping start, limit | 1e-3, 1e20 (joint refinement: 1e-3, 1e16) |
+| LM damping start, limit | 1e-3, 1e20 |
 | LM restarts | 8 |
-| knot polish budget | 60 residual evaluations |
-| knot polish finite-difference step | `1e-7·(1 + |ξ|)` |
-| minimum knot span | 1e-4 |
+| free-knot finite-difference step | `1e-7·(1 + |ξ|)` |
+| free-knot minimum gap (`min_knot_gap`, `fitting.MIN_KNOT_GAP`), the default of the setting `[D22]` | 0.05 |
+| minimum knot span of an insertion (uniform knots; free knots use `min_knot_gap` if larger, 9.4 and 9.6) | 1e-4 |
 | tolerance-search rounds | 40 |
-| projection grid, Newton steps (`project_between`) | 16 intervals, 20 |
 
 ---
 
 ## 10. Direct LSQ (`optimization/optimizers/constrained_lsq.py`, `ConstrainedLSQOptimizer`, name `"Direct LSQ"`)
 
-Always parametric continuity; reads `config.degree`, `config.num_control_points`, `config.continuity` (its order only), the airfoil sections, and `opt_config.custom_parameters`, `parameterization`, `optimize_le_position`. `geometric_continuity`, `junction_continuity`, `smoothing_weight`, `tolerance`, `knot_placement`, `grow_control_points` and `max_points_per_section` are ignored. `MAX_ITERATIONS = 100`.
+Always parametric continuity; reads `config.degree`, `config.num_control_points`, `config.continuity` (its order only), the airfoil sections, and `opt_config.custom_parameters`, `parameterization`, `optimize_le_position`. `geometric_continuity`, `junction_continuity`, `smoothing_weight`, `tolerance`, `knot_placement` and `grow_control_points` are ignored.
 
-`fit(config, opt_config, airfoil, callback=None)`:
+Direct LSQ is a single linear solve `[D10]`: the data parameters are taken from the point spacing (or given) and stay as they are, and the control points are the constrained least-squares solution for them. Nothing iterates, so there is no iteration budget, no convergence test, no stop message and nothing to cancel. The source followed the solve with up to 100 joint refinement steps per stage, which made the method a second, truncated implementation of the problem VarPro LM solves: with smoothing 0 both reach the same minimum (measured on `6db8ad3`, NACA 2412 at 25 control points: RMS `1.58e-7` for VarPro and for 10000 refinement steps, `2.94e-7` after the 100 the source ran). The single solve is less accurate (RMS `1.90e-5` on that fit) and that is its place: the fast, predictable method next to VarPro LM.
+
+`fit(config, opt_config, airfoil, callback=None, should_stop=None)`:
 
 1. `sections` = the airfoil sections; `p`, `n = num_control_points`; `S` = number of sections; shared knots `t = open_uniform_knots(p, n)`; `D = chain_data(sections)`.
 2. Parameters `u`:
-   - `custom_parameters` given: `validate_chain_parameters(custom_parameters, sections, D)`; fixed (`fixed = True`);
-   - else `"centripetal"`: `chain_parameters([centripetal_parametrize(sec, 0.5)], sections)`;
+   - `custom_parameters` given: `validate_chain_parameters(custom_parameters, sections, D)`;
+   - else `"centripetal"`: `chain_parameters([centripetal_parameters(sec, 0.5)], sections)` (the library function, 2.6);
    - else (`"arc_length"`): `chain_parameters([compute_arc_length_parameters(sec)], sections)`.
 3. `free = optimize_le_position and S > 1`. `(C, d) = constraints(free)` (10.1).
 4. Basis `N(u)`: `(N, S·n)`, block of section `s` in columns `s·n .. (s+1)·n - 1` filled with the design matrix of the local parameters of the points located on `s`.
 5. `solve(N, D, C, d)`: `K = [[NᵀN + 1e-10·I, Cᵀ], [C, 0]]`, right-hand side `[NᵀD ; d]`, solved as a symmetric indefinite system (`scipy.linalg.solve`, LAPACK `dsysv`, see 23.3); `P` = first `S·n` rows.
-6. If `fixed`: `P = solve(N(u), D, C, d)`; one evaluation counted (`increment_evaluation`, 11.4).
-7. Else:
-   1. stages = `[constraints(False)]` if `free` else `[]`; `(C0, d0)` = the first stage if `free` else `(C, d)`;
-   2. `P = solve(N(u), D, C0, d0)`; count one evaluation;
-   3. for each `(Cs, ds)` in `stages + [(C, d)]`: `JointProblem(sections, [t]*S, p, Cs, ds, regularization=0.0)` (smoothing 0); `(u, z, ...) = solve_joint(problem, u, z_from(P), 100)`; `P = control_points(z)`; count one evaluation.
+6. `P = solve(N(u), D, C, d)`; one evaluation counted (`increment_evaluation`, 11.4). With free junctions the junction control point is simply not tied to a data point; the parameters still place the junction at the split of the sections.
+7. There is no refinement `[D10]`: `u` is returned as step 2 made it, and no joint refinement exists any more (9.7). `should_stop` is accepted so that both optimizers are called alike (11.2) and is never read.
 8. `section_control_points[s]` = rows `s·n .. (s+1)·n - 1` of `P` as float tuples.
 9. `final_error = sqrt(mean_i |evaluate_chain(curves, u)_i - D_i|²)` with `curves` = `BSpline(t, ctrl_s, p)`.
 10. `x` = all control points flattened section by section, `[x0, y0, x1, y1, ...]`.
-11. If a callback is given: if it accepts a `preview` keyword (11.3), call `callback(x, final_error, preview=([arrays of ctrl_s], [t]*S, p))`, else `callback(x, final_error)`. The return value is ignored.
-12. Return `RawOptimResult(x, fun=final_error, nit=1, section_control_points, parameters=u)` (`success = True`, `message = ""`, `section_knots = None`, `rms_error = final_error`).
+11. If a callback is given: `callback(x, final_error, preview=([arrays of ctrl_s], [t]*S, p), step=False)` (the one callback form of 11.3 `[D9]`). The return value is ignored.
+12. Return `RawOptimResult(x, fun=final_error, nit=1, section_control_points, parameters=u, success=True, message="")` with `section_knots = None` and `rms_error = final_error` `[D10]`. A singular system raises from step 5 (23.3); there is no unsuccessful result.
 
 ### 10.1 Constraint rows (`constraints(free)`)
 
@@ -793,7 +809,7 @@ Columns: `S·n` stacked control points; values `(x, y)` per row. In order:
    4. if order `>= 2` and `n >= 3`: the same with order-2 coefficients on `P_{e-2..e}` and `P_{b..b+2}`;
    5. if order 3 and `n >= 4`: order-3 coefficients on `P_{e-3..e}` and `P_{b..b+3}`;
 
-where `(ce_r, cs_r) = end_derivative_coefficients(t, p, r)` (7.1/7.5). Orders are cumulative: G2 adds orders 1 and 2.
+where `(ce_r, cs_r) = end_derivative_coefficients(t, p, r)` (7.1/7.5). Orders are cumulative: continuity level 2 (stored as `ContinuityMode.G2`, shown as `C2` for this optimizer, section 22 item 7) adds the rows of orders 1 and 2. The `n >= 3` and `n >= 4` guards of rows 4 and 5 never take effect: `SplineConfig` requires `degree >=` the order (5.4) and the knots require `n >= p + 1` (2.1).
 
 ---
 
@@ -801,33 +817,33 @@ where `(ce_r, cs_r) = end_derivative_coefficients(t, p, r)` (7.1/7.5). Orders ar
 
 ### 11.1 `RawOptimResult`
 
-`x` (flat control points), `fun` (error), `nit`, `section_control_points = None`, `parameters = None`, `success = True`, `message = ""`, `section_knots = None`, `rms_error` (defaults to `fun` when not given).
+`x` (flat control points), `fun` (error), `nit`, `section_control_points = None`, `parameters = None`, `success = True`, `message = ""`, `section_knots = None`, `rms_error` (defaults to `fun` when not given), `evaluations = None`, `seconds = None`, `fits = []` (the last three: tolerance mode, see there `[D23]`).
 
 ### 11.2 `run_optimization(config, opt_config, airfoil, callback=None, should_stop=None)`
 
-`get_optimizer(type)` returns a new `ConstrainedLSQOptimizer` or `GNVarProOptimizer` (unknown: `ValueError("Unknown optimizer type: {type}")`). For VarPro: `optimizer.config.smoothing_weight = opt_config.smoothing_weight`, then `fit(config, opt_config, airfoil, callback=callback, should_stop=should_stop)`. For Direct LSQ: `fit(config, opt_config, airfoil, callback=callback)`.
+`get_optimizer(type)` returns a new `ConstrainedLSQOptimizer` or `GNVarProOptimizer` (unknown: `ValueError("Unknown optimizer type: {type}")`). Both are called the same way: `fit(config, opt_config, airfoil, callback=callback, should_stop=should_stop)` `[D10]`. Nothing is copied onto the optimizer first `[D6]`: the VarPro adapter reads `opt_config.smoothing_weight` itself.
 
 ### 11.3 `GNVarProOptimizer` (name `"VarPro LM"`)
 
-`GNVarProConfig`: `regularization = 1e-12`, `smoothing_weight = 1e-3`, `use_exact_jacobian = True`, `verbose = 0`, `tolerance = 1e-10`, `tolerance_smoothing = 1e-7`.
+Constants `[D6]`: `REGULARIZATION = 1e-12`, `LM_TOLERANCE = 1e-8` `[D24]`, `TOLERANCE_SMOOTHING = 1e-7`. There is no `GNVarProConfig` object: its other fields either repeated `OptimizationConfig.smoothing_weight` or were never changed (`use_exact_jacobian = True`, `verbose = 0`).
 
-Keyword detection: `accepts(cb, name)` is true when `cb` is not `None` and its signature has a parameter named `name` (inspection failure: false). `accepts_preview(cb) = accepts(cb, "preview")`.
+Callback form `[D9]`: an application callback is always called as `callback(x, error, preview=(control points per section, knots per section or None, degree), step=<bool>)` and returns true to stop. Both optimizers use this one form; neither inspects the callback's signature. (The library's own `report`, 8.8, still inspects signatures, because its callbacks are a public interface with two historical forms.)
 
 `continuity_arg(config)`: `specs = junction_specs()`; `len(specs) > 1` -> the list; one spec -> that string; none (one section) -> `"G1"`.
 
 `fit(...)`: sections as float arrays; tolerance given -> tolerance mode, else fixed mode.
 
-**Fixed mode**: callback `on_evaluation(control_points, rms, knots=None)`: `evaluations += 1`; `increment_evaluation()`; no app callback -> false; with preview -> `callback(flat(control_points), rms, preview=(control_points, knots, p))`, else `callback(flat, rms)`; returns its truth value. Call `bspline_varpro.fit(sections, num_control_points=n, degree=p, continuity=continuity_arg, fix_junctions=not optimize_le_position, smoothing=config.smoothing_weight, regularization=1e-12, initial_parameters=custom_parameters, max_points_per_section, knot_placement, grow=grow_control_points, tolerance=1e-10, exact_jacobian=True, verbose=0, callback=on_evaluation)`. Result: `fun = rms_error`, `nit = max(evaluations, result.nfev)`.
+**Fixed mode**: callback `on_evaluation(control_points, rms, knots=None)`: `evaluations += 1`; `increment_evaluation()`; no app callback -> false; else `callback(flat(control_points), rms, preview=(control_points, knots, p), step=False)`; returns its truth value. Call `bspline_varpro.fit(sections, num_control_points=n, degree=p, continuity=continuity_arg, fix_junctions=not optimize_le_position, smoothing=opt_config.smoothing_weight, regularization=1e-12, initial_parameters=custom_parameters, knot_placement, grow=grow_control_points, tolerance=1e-10, exact_jacobian=True, verbose=0, callback=on_evaluation)`. Result: `fun = rms_error`, `nit = max(evaluations, result.nfev)`.
 
-**Tolerance mode**: `with_steps = accepts(callback, "step")`. `on_step(control_points, rms, knots)`: `increment_evaluation()`; return `callback(flat, rms, preview=(control_points, knots, p) if preview accepted else None, step=True)`. `on_refit(result, deviation)`: `refits += 1`; if not `with_steps`, `increment_evaluation()`; no callback -> false; with preview `callback(flat, deviation, preview=(result.control_points, result.knots, result.degree))`, else `callback(flat, deviation)`. Call `fit_to_tolerance(sections, tolerance, p, continuity=continuity_arg, fix_junctions=not optimize_le_position, smoothing=1e-7, regularization=1e-12, initial_parameters=custom_parameters, max_points_per_section, knot_placement, initial_control_points=None if grow_control_points else n, callback=on_refit, should_stop=should_stop (only when given), step_callback=on_step (only when with_steps))`. Result: `fun = max_deviation`, `nit = max(refits, 1)`.
+**Tolerance mode** `[D9]`: `on_step(control_points, rms, knots)`: `increment_evaluation()`; no callback -> false; else return `callback(flat, rms, preview=(control_points, knots, p), step=True)`. `on_refit(result, deviation)`: `refits += 1`; append `(result, deviation, get_evaluation_count(), seconds since the call began)` to the list of fits `[D23]`; no callback -> false; else `callback(flat, deviation, preview=(result.control_points, result.knots, result.degree), step=False)`. Evaluations are counted in `on_step` only, with or without a callback. Call `fit_to_tolerance(sections, tolerance, p, continuity=continuity_arg, fix_junctions=not optimize_le_position, smoothing=1e-7, regularization=1e-12, initial_parameters=custom_parameters, knot_placement, initial_control_points=None if grow_control_points else n, callback=on_refit, should_stop=should_stop (only when given), step_callback=on_step, min_knot_gap=min_knot_gap)`. Result: `fun = max_deviation`, `nit = max(refits, 1)`. `fits` `[D23]`: for every recorded fit, in order and numbered from 1, that is not the returned result object: a result like the main one with `fun` = its deviation, `nit` = its number, `success = deviation <= tolerance`, `evaluations` and `seconds` as recorded. The fixed mode passes `min_knot_gap=min_knot_gap` to `fit` and leaves `fits` empty.
 
 Both modes return `RawOptimResult(x = flat control points, fun, nit, section_control_points as float tuples, parameters, success, message, section_knots as lists, rms_error)`.
 
-Tolerance mode never reads `smoothing_weight` (fixed 1e-7) and passes `fit_to_tolerance` defaults for `max_iterations` (40), `optimize_knots`, `remove_knots`, `max_control_points`, `max_nfev`.
+Tolerance mode never reads `smoothing_weight` (fixed 1e-7) and passes `fit_to_tolerance` defaults for `max_iterations` (40), `remove_knots`, `max_control_points`, `max_nfev`.
 
 ### 11.4 Counters (`optimization/tracking.py`)
 
-Two process-global integers. `reset_iteration_tracking()` (alias `reset_evaluation_tracking`) sets both to 0. `increment_evaluation()` and `increment_iteration()` add 1 and return the new value; `get_evaluation_count()` reads the evaluation count. Evaluations are counted by the adapters (11.3, 10), iterations by the live preview (19.12).
+Two process-global integers. `reset_iteration_tracking()` sets both to 0 (no `reset_evaluation_tracking` alias `[D6]`). `increment_evaluation()` and `increment_iteration()` add 1 and return the new value; `get_evaluation_count()` reads the evaluation count. Evaluations are counted by the adapters (11.3, 10), iterations by the live preview (19.12).
 
 ---
 
@@ -967,7 +983,9 @@ Returns `x`, `thickness`, `camber` (at the stations), `chord`, `max_thickness`, 
 
 `trailing_edge_gap(points_or_curves)`: for an array, `|first - last|`; for curves, `|chain start - chain end|`.
 
-### 13.6 `fit_airfoil(points, tolerance=None, degree=5, *, le_continuity="G2", fix_leading_edge=True, sections=None, **kw)` (library convenience, unused by the application)
+### 13.6 `fit_airfoil` (library convenience, unused by the application)
+
+Signature: `fit_airfoil(points, tolerance=None, degree=5, *, le_continuity="G2", fix_leading_edge=True, sections=None, **kw)`.
 
 `tolerance` defaults to `default_tolerance(points)`; if `tolerance < precision_floor(points)`, issue a warning `"Tolerance {tol:g} is below the rounding error of the data ({floor:g})."`; sections default to `split_at_leading_edge`; returns `fit_to_tolerance(sections, tolerance, degree, continuity=le_continuity, fix_junctions=fix_leading_edge, **kw)`.
 
@@ -979,9 +997,11 @@ Returns `x`, `thickness`, `camber` (at the stations), `chord`, `max_thickness`, 
 
 ### 14.1 Airfoil `.dat` (`io.export_airfoil_data(path, coords, name=None, precision=None)`)
 
-Empty `coords`: `ValueError("No coordinates to export.")`. `precision` defaults to 8, then `max(0, min(int(precision), 16))`. Create missing parent directories. UTF-8. If `name` is truthy, first line `_name_line(name)`. Then one line per point `f"{x:.{d}f} {y:.{d}f}"`. Every line ends with `\n`.
+Empty `coords`: `ValueError("No coordinates to export.")`. `precision` defaults to 8, then `max(0, min(int(precision), 16))`. Create missing parent directories. UTF-8. If `name` is truthy, first line `_name_line(name)`. Then one line per point `f"{x:.{d}f} {y:.{d}f}"`. Every line, the last included, ends with `\n` `[D1]`.
 
-### 14.2 Spline `.spline.dat` (`io.export_spline_data(path, degree, section_control_points, name=None, precision=None, section_knots=None, continuity=None)`)
+### 14.2 Spline `.spline.dat` (`io.export_spline_data`)
+
+Signature: `io.export_spline_data(path, degree, section_control_points, name=None, precision=None, section_knots=None, continuity=None)`.
 
 1. Empty list or all sections empty: `ValueError("No control points to export.")`. Precision as 14.1.
 2. `section_knots` default: open uniform per section. Count mismatch: `ValueError("Need one knot vector per section.")`. Any `len(knots) != len(ctrl) + degree + 1`: `ValueError("Knot vector length must be control points + degree + 1.")`.
@@ -1001,7 +1021,7 @@ Empty `coords`: `ValueError("No coordinates to export.")`. `precision` defaults 
 <x y>                                      (each later section: all but its first point)
 ```
 
-Points use `f"{x:.{d}f} {y:.{d}f}"`.
+In this block, `<...>` is a value to fill in and the parenthesized text at the right of a line is a note, not file content; nothing follows the last value on a line. The lines of one section (`# section i ...`, then `# knots i ...`) are written for every section in order. Points use `f"{x:.{d}f} {y:.{d}f}"`. Every line, the last included, ends with `\n` `[D1]`.
 
 **Reading** (`parse_spline_data(path)`, text via 3.1):
 
@@ -1120,12 +1140,24 @@ Run, in key order:
   "number": 1,
   "timestamp": "<ISO local, microseconds>",
   "spline_config": {"degree": 5, "num_control_points": 25, "num_sections": 2, "continuity": "G3", "geometric_continuity": true, "junction_continuity": []},
-  "optimization_config": {"optimizer": "gn-varpro", "smoothing_weight": 0.001, "optimize_le_position": false, "parameterization": "centripetal", "tolerance": null, "max_points_per_section": null, "knot_placement": "uniform", "grow_control_points": false, "custom_parameters": null},
+  "optimization_config": {"optimizer": "gn-varpro", "smoothing_weight": 0.001, "optimize_le_position": false, "parameterization": "centripetal", "tolerance": null, "knot_placement": "uniform", "grow_control_points": false, "min_knot_gap": 0.05, "custom_parameters": null},
   "result": {"degree": 5, "final_error": 0.0, "num_iterations": 0, "num_evaluations": 0, "elapsed_seconds": 0.0, "converged": true, "cancelled": false, "section_knots": null, "report": null, "rms_error": null},
   "loss_history": [{"iter": 1, "error": 0.0, "time": 0.0}],
   "section_control_points": [[[x, y], ...], ...]
 }
 ```
+
+The two blocks above show the keys, their order and example values; they are not literal file content (the real file is laid out as Python's `json.dumps(..., indent=2)` writes it: 2 spaces per level, every object member and array element on its own line, `,` directly at the end of a line, `": "` between key and value, empty arrays as `[]`). The file does not end with a line end.
+
+The file is standard JSON `[D2]`. A non-finite number is written as one of the strings `"NaN"`, `"Infinity"`, `"-Infinity"` (the encoder runs with `allow_nan=False` after replacing such values, so a bare token can never be written). They occur in practice: `report.leading_edge_radius` is infinite for a straight leading edge (13.2). On loading, a string equal to one of the three becomes the float wherever a number is read: the `result` fields, every value of `report` (at any depth), `loss_history`, `tolerance`, `smoothing_weight`, `custom_parameters`, the control points and the airfoil coordinates. For files of earlier versions the reader also accepts the bare tokens `NaN`, `Infinity` and `-Infinity` (Python's `json` reads them by default).
+
+Redundant fields `[D17]`. The format stores some facts more than once; one copy is authoritative and the others are written for readers of format 1.0.0 and ignored on loading, so two copies can never disagree inside the application:
+
+| Fact | Authoritative | Written, ignored on loading |
+|---|---|---|
+| format version | top-level `format_version` | `metadata.format_version` (written equal) |
+| the section split | `airfoil.coordinates` and `airfoil.junction_indices` | `airfoil.sections`, `airfoil.num_sections` |
+| degree of a run | `spline_config.degree` | `result.degree` (written equal) |
 
 `continuity` is the enum name. `custom_parameters` is a list of number lists or `null`. Timestamps use `datetime.now().isoformat()` (local time without zone, microseconds when non-zero). `platform` is `f"{platform.system()} {platform.release()}"`.
 
@@ -1165,28 +1197,32 @@ Decoding rules:
 | `smoothing_weight` | default `1e-3` |
 | `optimize_le_position` | default false |
 | `parameterization` | default `"centripetal"` |
-| `tolerance`, `max_points_per_section` | default `null` |
+| `tolerance` | default `null` |
+| `max_points_per_section` (files written before `[D21]`) | ignored |
 | `knot_placement` | default `"uniform"` when the run has no tolerance, else `"free"` |
 | `grow_control_points` | default: the run has a tolerance |
+| `min_knot_gap` | default `0.001`, the value fits used before the setting existed `[D22]` |
 | `custom_parameters` | `null` or list of float arrays |
-| result `degree`, `final_error`, `num_iterations`, `num_evaluations`, `elapsed_seconds` | required |
+| result `final_error`, `num_iterations`, `num_evaluations`, `elapsed_seconds` | required |
 | result `converged` / `cancelled` | default true / false |
 | result `section_knots`, `report`, `rms_error` | default `null` |
 | loss record | `iter`, `error` required; `time` default 0.0 |
 | `run_id`, `timestamp` | required |
 | `number` | `int(data.get("number", 0))` |
 | metadata fields | defaults `"1.0.0"`, `""` ... |
-| airfoil `coordinates`, `sections`, `junction_indices`, `num_sections` | required; `filename`, `name` default `""`, `precision` default 6 |
+| airfoil `coordinates`, `junction_indices` | required; `filename`, `name` default `""`, `precision` default 6 |
+| airfoil sections `[D17]` | rebuilt, not read: with `J` = the junction indices as integers and `N` points, `J` must be strictly increasing with `1 <= J_k <= N - 2`, else `ValueError("the junction indices do not split the coordinates")` (shown as `Airfoil: the junction indices do not split the coordinates.`); sections = `coordinates[J_{k-1} : J_k + 1]` with `J_0 = 0` and the last `coordinates[J_last:]` (4.2); `num_sections = len(J) + 1`. Stored `sections` and `num_sections` are ignored |
+| result `degree` `[D17]` | ignored: the run's result takes `spline_config.degree` |
 
 Unknown keys are ignored (older projects carry `fairing`, `metric`, `seed`, `smoothing_factor`, `early_stop_patience`, `relative_tolerance`, `max_iterations`, `early_stopped`, `continuity_type`, `eval`).
 
-`get_run_summary(run)`: lines `Run ID: {run_id[:8]}...`, `Time: {timestamp}`, `Optimizer: {display_name}`, `Degree: {p}, Control Points: {n} per section, {fitted} fitted`, `Continuity: {", ".join(specs) or continuity name}`, `Tolerance: {tol:.3e}` (only when truthy), `Final Error: {final_error:.6e}`, `Iterations: {nit}, Evaluations: {nev}`, `Elapsed: {s:.2f}s`, `Converged: {True/False}`, joined by `\n`.
+There is no `get_run_summary` `[D6]`: nothing called it, and the explorer's run details (19.16.6) show the same facts.
 
 ---
 
 ## 16. Batch output naming (`gui/batch.py`)
 
-Reference settings: `DEFAULT_SPLINE = SplineConfig(continuity=G3, geometric_continuity=True)` (degree 5, 25 control points, 2 sections) and `DEFAULT_OPTIMIZATION = OptimizationConfig(knot_placement="uniform", grow_control_points=False)` (VarPro, centripetal, smoothing 1e-3, no tolerance, no subsampling, junctions pinned).
+Reference settings `[D7]`: the model defaults, `SplineConfig()` (degree 5, 25 control points, 2 sections, G3 geometric) and `OptimizationConfig()` (VarPro, uniform knots, no growth, centripetal, smoothing 1e-3, no tolerance, junctions pinned). A setting appears in a name exactly when it differs from its default; the rules below spell that out.
 
 `num(v)`: if `v != 0` and `|v| < 1e-2`: `mantissa, exponent = f"{v:.2e}".split("e")`; result `mantissa.rstrip("0").rstrip(".") + "e" + str(int(exponent))`; else `f"{v:.3g}"`. Examples: `1e-4`, `2.5e-5`, `1e-3`, `3.33e-7`, `0.0123`, `0.5`.
 
@@ -1198,10 +1234,10 @@ Reference settings: `DEFAULT_SPLINE = SplineConfig(continuity=G3, geometric_cont
 4. `specs = junction_specs()`; when non-empty and not all equal to `"G3"`: `"-".join(specs)` if they are not all equal, else the single spec.
 5. When the optimizer differs from VarPro: `lsq` for Direct LSQ (else the value); then, still only in that case, the parameterization with `_` -> `-` when it is not `centripetal`.
 6. When `tolerance` is not `None`: `tol-auto` if `auto_tolerance` else `tol{num(tolerance)}`.
-7. `knots-{placement}` when not `uniform`.
-8. `grow` / `no-grow` when it differs from false (so only `grow`).
+7. `knots-{placement}` when not `uniform`; then `gap{num(min_knot_gap)}` when the placement is `free` and `min_knot_gap != 0.05` `[D22]`.
+8. `grow` when `grow_control_points` is true.
 9. `smooth{num(w)}` when `w != 1e-3`.
-10. `sfactor{num}` when `smoothing_factor` is not `None`; `sub{m}` when `max_points_per_section` is not `None`; `free-le` when junctions are free; `patience{k}` when `!= 50`; `rtol{num}` when `!= 1e-6`.
+10. `free-le` when junctions are free. (No parts for the retired fields `[D6]`, and no `sub{m}` part `[D21]`.)
 
 Examples: section 21 item 8.
 
@@ -1209,16 +1245,18 @@ Examples: section 21 item 8.
 
 ## 17. Optimizer logs (`optimization/run_log.py`)
 
-`OptimizerErrorLogger(run_name="unnamed", log_dir=None)`: `start_time = now`; `log_dir = log_dir or OptimizerErrorLogger.DEFAULT_LOG_DIR (class attribute, None) or default_log_dir()`. `log(iteration, evaluation, error, elapsed=0.0)` appends to four lists.
+Log files are opt-in `[D11]`. The loss history of every run is already kept in the project (15.1) and shown in the loss plot; the source also wrote a CSV file for every fit into the checkout or the home directory, with no limit and no way to turn it off.
 
-`default_log_dir()`: `SPLINE_FITTER_LOG_DIR` if non-empty; else if `pyproject.toml` exists in the directory four levels above `run_log.py` (`src/spline_fitter/optimization/run_log.py` -> checkout root), `<root>/optimizer_logs`; else `~/.spline_fitter/optimizer_logs`.
+`OptimizerErrorLogger(run_name="unnamed", log_dir=None)`: `start_time = now`; `log_dir = log_dir or default_log_dir()` (may be `None`). `log(iteration, evaluation, error, elapsed=0.0)` appends to four lists; the lists feed the loss plot and the run's loss history whether or not a file is written.
+
+`default_log_dir()`: `SPLINE_FITTER_LOG_DIR` if set and non-empty, else `None`. There is no fallback directory and no `DEFAULT_LOG_DIR` class attribute.
 
 `save(optimizer_key="unknown", extra_info="")`:
 
-1. No records: return `None`.
+1. No records, or `log_dir` is `None`: return `None`.
 2. Create the directory (`exist_ok`); an `OSError` prints `Failed to save optimizer log: {e}` and returns `None`.
 3. Stem `"{start:%Y%m%d_%H%M%S}_{sanitize_filename(run_name)}_{optimizer_key}"`; path `<stem>.csv`, else `<stem>_2.csv`, `_3`, ... (first not existing); open with exclusive creation, UTF-8.
-4. Content, each line ending `\n`: `# Optimizer Error Log`, `# Run: {run_name}`, `# Optimizer: {key}`, `# Start Time: {start ISO}`, `# Info: {extra}` (only if non-empty), `# Total Iterations: {count}`, `# Total Evaluations: {last evaluation}`, `# Final Error: {last:.12e}`, `# Min Error: {min:.12e}`, `# Total Time: {last elapsed:.3f}s`, `#`, `iteration,evaluation,error,elapsed_s`, then rows `{it},{ev},{err:.12e},{t:.3f}`.
+4. Content, each line ending with `\n` `[D1]`: `# Optimizer Error Log`, `# Run: {run_name}`, `# Optimizer: {key}`, `# Start Time: {start ISO}`, `# Info: {extra}` (only if non-empty), `# Total Iterations: {count}`, `# Total Evaluations: {last evaluation}`, `# Final Error: {last:.12e}`, `# Min Error: {min:.12e}`, `# Total Time: {last elapsed:.3f}s`, `#`, `iteration,evaluation,error,elapsed_s`, then rows `{it},{ev},{err:.12e},{t:.3f}`.
 5. Any exception: print `Failed to save optimizer log: {e}`, return `None`. Success returns the path (also `file_path`).
 
 ---
@@ -1248,7 +1286,7 @@ In this order:
 2. State: `airfoil = None`, `fit_result = None`, `is_fitting = False`, `cancel_requested = False`; `QSettings("MSFra", "AirfoilSplineFitter")`; empty sweep group.
 3. Build the menu bar (19.3) and the layout (19.2); status bar text `Ready`.
 4. Create the plot manager (19.14), the project manager (19.16), the fitting controller (19.12) and the batch controller (19.18); connect signals; take the Advanced baseline (19.9).
-5. Create the settings history (19.8) over these widgets, in this order: optimizer, goal, Auto tolerance, tolerance, knot placement, parameterization, grow points, sections, degree, continuity level, continuity type, control points, per-junction text, subsample check, subsample count, smoothing weight, optimize junctions, then the sweep widgets in creation order (degree, control points, sections, smoothing). Undo/Redo actions follow its `changed` signal.
+5. Create the settings history (19.8) over these widgets, in this order: optimizer, goal, Auto tolerance, tolerance, knot placement, parameterization, grow points, sections, degree, continuity level, continuity type, control points, per-junction text, smoothing weight, optimize junctions, then the sweep widgets in creation order (degree, control points, sections, smoothing). Undo/Redo actions follow its `changed` signal.
 6. Accept drops (19.11).
 
 On the first show, `size_sidebar()` runs (19.2). On every resize, while no splitter handle has been dragged, the sidebar and explorer are reset to their default widths. On close: if the project manager's `confirm_discard()` (19.16) is false the close is ignored; if a fit runs, the cancel flag is set; then the window closes.
@@ -1296,7 +1334,7 @@ Central widget, left to right: a horizontal splitter `[sidebar | centre | explor
 | | separator | | | |
 | | `&Theme...` | | enabled | 19.19.4 |
 | | `&Scrolling and zooming...` | | enabled | 19.20.3 |
-| `&Help` | `&About` | | enabled | status bar `Airfoil Spline Fitter v1.0` (no dialog) |
+| `&Help` | `&About` | | enabled | status bar `Airfoil Spline Fitter {__version__}` `[D5]`, that is `Airfoil Spline Fitter 2.0.0` (no dialog) |
 
 The paste shortcut reaches the action only when the focused widget does not consume it (a focused text field pastes text instead).
 
@@ -1312,6 +1350,7 @@ The paste shortcut reaches the action only when the focused widget does not cons
 | `Goal` | segmented | `Fixed count` (false), `Tolerance` (true) | Fixed count | `Fit the given number of control points per section.`; `Find the fewest control points that keep` / `every data point within the tolerance.` |
 | `Max deviation` | scientific spin box + check box `Auto` | spin `1e-9 .. +∞`, step `1e-6` | spin `1e-5`, Auto checked | spin: `Maximum orthogonal distance of any data point to the curve.`; Auto: `Derive the tolerance from the decimal precision of the file and` / `the estimated noise of the points.` |
 | `Knots` | segmented | `Uniform` (`"uniform"`), `Free` (`"free"`) | Uniform | `Knots stay evenly spaced in the curve parameter.`; `Knots move to where they reduce the error most.` |
+| `Knot spacing` `[D22]` | `QDoubleSpinBox`, 3 decimals, range 0 to 0.5, step 0.01 | | 0.05 | `Smallest spacing of free knots, as a fraction of a section.` / `Closer knots follow the data more tightly but can bend the` / `curve sharply between the points, and fits take longer.` |
 | `Parameterization` | segmented | `Centripetal` (`"centripetal"`), `Arc length` (`"arc_length"`) | Centripetal | `Space the data parameters by the square root of the point distances.` / `Follows tight curvature, such as the leading edge, more closely.`; `Space the data parameters by the distance along the data.` |
 | `Grow points` | check box `Add where the fit is worst` | | unchecked | `On: start from the fewest control points and add them where the` / `fit is worst, refitting after each step.` / `Off: start from the Control points setting (Curve). With a tolerance` / `goal the count can still grow or shrink from there to meet it.` |
 
@@ -1332,11 +1371,29 @@ The tolerance spin box and Auto share one row (spin stretches, spacing 6).
 | Label | Widget | Range | Default | Tooltip |
 |---|---|---|---|---|
 | `Per junction` | line edit, placeholder `G2, C1  (blank = same everywhere)` (two spaces before the parenthesis) | | empty | `Continuity of each junction in order, overriding the Continuity` / `setting. One entry per junction (sections - 1), each G0-G3 or C0-C3.` / `VarPro LM only.` |
-| `Subsample` | check box `to` + spin box with suffix ` points` | spin 20 .. UNLIMITED | unchecked; 200; the spin is enabled only while the check box is checked | check: `For dense data: fit an evenly spaced subsample of each section, then` / `refine the fit on all points. Much faster for thousands of points.` / `Off: every point is used throughout.`; spin: `Points per section. Sections with more points than this are subsampled.` |
 | `Smoothing` | scientific spin box with sweep (19.21 item 4) | 0 .. +∞, step 0.001 | 0.001 | `Bending energy weight for VarPro LM (0 turns it off; default 0.001).` |
 | `Junctions` | check box `Optimize positions` | | unchecked | `Optimize the position of every junction, instead of keeping the` / `section split points fixed. The split points are where the junctions` / `start; the data is fitted by the whole curve, so points move between` / `sections with them.` |
 
 (` / ` in tooltips marks a line break.)
+
+Start values come from the models `[D7]`. The `Default` columns above show the values for the model defaults of 5.4 and 5.5; the window does not hold them as literals but sets each widget from `SplineConfig()` and `OptimizationConfig()`:
+
+| Widget | Start value |
+|---|---|
+| `Optimizer` | `optimizer` |
+| `Goal` | `Tolerance` when `tolerance` is not `None`, else `Fixed count` |
+| `Max deviation` spin | `tolerance` when not `None`, else `1e-5` |
+| `Knots` | `knot_placement` |
+| `Parameterization` | `parameterization` |
+| `Grow points` | `grow_control_points` |
+| `Knot spacing` | `min_knot_gap` |
+| `Degree`, `Control points`, `Sections` | `degree`, `num_control_points`, `num_sections` |
+| `Continuity`, `Type` | `continuity`, `geometric_continuity` |
+| `Per junction` | `", ".join(junction_continuity)` |
+| `Smoothing` | `smoothing_weight` |
+| `Junctions` | `optimize_le_position` |
+
+Only what no model field carries is a literal of the window: `Auto` checked, the `1e-5` and `200` shown while their setting is off, and the collapsed state of Advanced.
 
 ### 19.5 Run bar
 
@@ -1349,10 +1406,10 @@ Fixed below the sidebar (`RunBar`), margins and spacing 12:
 
 ### 19.6 Visibility and enabling (`on_optimizer_changed`)
 
-Runs when the optimizer, goal, Grow points, Auto, or section count changes, after undo/redo, after applying a run, and from `set_fitting_ui`. Let `varpro` = optimizer is VarPro, `tolerance_mode = varpro and goal is Tolerance`, `has_junctions = sections > 1`, `editable = not is_fitting`, `count_used = not tolerance_mode or not Grow points`.
+Runs when the optimizer, goal, Knots, Grow points, Auto, or section count changes, after undo/redo, after applying a run, and from `set_fitting_ui`. Let `varpro` = optimizer is VarPro, `tolerance_mode = varpro and goal is Tolerance`, `has_junctions = sections > 1`, `editable = not is_fitting`, `count_used = not tolerance_mode or not Grow points`.
 
-1. Shown only for VarPro: Goal, Max deviation row, Knots, Grow points, Type, Per junction, Subsample row, Smoothing. Shown only for Direct LSQ: Parameterization.
-2. `Max deviation` label enabled iff `tolerance_mode`; tolerance spin enabled iff `editable and tolerance_mode and not Auto`; Auto enabled iff `editable and tolerance_mode`.
+1. Shown only for VarPro: Goal, Max deviation row, Knots, Knot spacing, Grow points, Type, Per junction, Smoothing. Shown only for Direct LSQ: Parameterization.
+2. `Max deviation` label enabled iff `tolerance_mode`; tolerance spin enabled iff `editable and tolerance_mode and not Auto`; Auto enabled iff `editable and tolerance_mode`. `Knot spacing` label enabled iff `varpro and Knots is Free`; its spin box iff that and `editable` `[D22]`.
 3. Control points label text `Start count` if `tolerance_mode` else `Control points`; label enabled iff `count_used`. In tolerance mode, each of the control-point and smoothing sweeps that is on is turned off (`stop_sweep`, which emits its `sweep_changed` and so runs the curve rule with `"count"` for the control-point sweep); a sweep that is already off is left alone, with no signal. Only after that is the control-point sweep toggle's allowed state set (19.21 item 3: disallowing turns a sweep that is on off). Control-point sweep widget enabled iff `editable and count_used`; its sweep toggle is allowed only when not `tolerance_mode`.
 4. Continuity and Type labels enabled iff `has_junctions`; their controls enabled iff `editable and has_junctions`. Continuity item texts are `G{i}` when VarPro and Type is Geometric, else `C{i}` (also updated when Type changes).
 5. Per junction label and field enabled iff `has_junctions`; Smoothing label and widget enabled iff not `tolerance_mode`; Junctions label and check box enabled iff `has_junctions`. While a fit runs, the whole Advanced content widget is disabled (`set_fitting_ui`), so every widget inside it then reports disabled regardless of these rules.
@@ -1385,6 +1442,7 @@ State: list of states (tuples of all values) starting with the initial one, curr
 - `can_undo = index > 0 or (timer active and not pending_quiet)`; `can_redo = index < last and timer not active`.
 - `undo`: commit; if `index > 0`: `index -= 1`, restore. `redo`: commit; if `index < last`: `index += 1`, restore.
 - `restore`: with `restoring` set, set every widget in list order, call `after_restore` (`on_optimizer_changed`), then store the widgets' actual values as the current state (limits may clamp); emit `changed`.
+- `group()` (a scope) `[D14]`: on entry `commit()`; while inside, `on_change` only emits `changed` (no timer, no step); on exit, `settle(capture(), quiet=False)` and emit `changed`. Everything changed inside a group is one undo step however long it takes. Groups do not nest (an inner group is part of the outer one). Used wherever the application sets several widgets as one action: applying a run's settings (19.10) and applying a sweep's best values (19.13.1).
 - `checkpoint()`: commit, return a copy of `(states, index)`. `rollback(cp)`: stop the timer, clear pending, restore `(states, index)` (widgets untouched), emit `changed`.
 - Keyboard: an application event filter consumes the shortcut-override event of the Undo or Redo key sequence when the focus widget is one of the settings widgets or inside one, so the Edit actions receive the key instead of the field.
 
@@ -1392,22 +1450,22 @@ Quiet changes: the automatic tolerance set when an airfoil loads, `size_sidebar`
 
 ### 19.9 Advanced badge
 
-Tracked fields: `("Per junction", text)`, `("Subsample", check)`, `("Subsample points", spin)`, `("Smoothing", spin)`, `("Junctions", check)`. The baseline (value and display text of each) is taken after the section is built and again once the window is constructed. A field counts as changed when it is visible within the Advanced content (regardless of collapse) and its value (text stripped; checked; index; numeric value) differs from its baseline. Badge text `"{k} changed"` (empty when none); tooltip `Changed this session:` followed by one line per field `"{name}: {old} → {new}"` (texts: check boxes `on`/`off`; spin boxes their displayed text; empty text `(blank)`). Updated on every change of these fields and from 19.6.
+Tracked fields: `("Per junction", text)`, `("Smoothing", spin)`, `("Junctions", check)`. The baseline (value and display text of each) is taken after the section is built and again once the window is constructed. A field counts as changed when it is visible within the Advanced content (regardless of collapse) and its value (text stripped; checked; index; numeric value) differs from its baseline. Badge text `"{k} changed"` (empty when none); tooltip `Changed this session:` followed by one line per field `"{name}: {old} → {new}"` (texts: check boxes `on`/`off`; spin boxes their displayed text; empty text `(blank)`). Updated on every change of these fields and from 19.6.
 
 ### 19.10 Building configurations from the sidebar
 
 `spline_config()`: `junctions` = for VarPro, the Per junction text with `,` and `;` replaced by spaces, split on whitespace (as given, upper-cased by `SplineConfig`); else `()`. `SplineConfig(degree, control points, sections, Continuity data, geometric = VarPro and Type is Geometric, junctions)`. Its `ValueError`s reach the user (19.12).
 
-`optimization_config()`: tolerance = `None` unless VarPro and goal Tolerance; then, if Auto and an airfoil is loaded, the spin box is first set to `default_tolerance(coords, precision)` (any exception ignored), and the tolerance is the spin value. `OptimizationConfig(optimizer, optimize_le_position = checked and sections > 1, smoothing_weight = spin, tolerance, max_points_per_section = subsample count if VarPro and checked else None, knot_placement, parameterization, grow_control_points = checked)`.
+`optimization_config()`: tolerance = `None` unless VarPro and goal Tolerance; then, if Auto and an airfoil is loaded, the spin box is first set to `default_tolerance(coords, precision)` (any exception ignored), and the tolerance is the spin value. `OptimizationConfig(optimizer, optimize_le_position = checked and sections > 1, smoothing_weight = spin, tolerance, knot_placement, min_knot_gap = spin, parameterization, grow_control_points = checked)`.
 
 `apply_run_settings(run)` (explorer double-click, Load settings, opening a project), each `choose` selects the item with that data if present:
 
-1. optimizer; goal (`tolerance is not None`); if a tolerance: uncheck Auto and set the tolerance; knot placement; parameterization; Grow points;
+1. optimizer; goal (`tolerance is not None`); if a tolerance: uncheck Auto and set the tolerance; knot placement; knot spacing; parameterization; Grow points;
 2. sections value; Continuity; degree; Type (geometric flag); control points;
-3. Per junction text `", ".join(junction_continuity)`; Subsample check (`max_points is not None`) and, when set, its count; smoothing weight; Optimize positions;
+3. Per junction text `", ".join(junction_continuity)`; smoothing weight; Optimize positions;
 4. `on_optimizer_changed`.
 
-All changes fall within 500 ms and form one undo step.
+Steps 1 to 4 run inside one history group (19.8), so they are one undo step `[D14]`. (The source relied on all changes arriving within the 500 ms merge window, which a slow machine can miss.)
 
 ### 19.11 Opening and creating airfoils
 
@@ -1423,8 +1481,8 @@ Open dialog: title `Open airfoil`, home directory, filter `Airfoil data (*.dat)`
 `set_airfoil(coords, filename, name, precision, path="", verb="Loaded")`:
 
 1. `confirm_discard()` false: status `Cancelled: the project stays open`; return false.
-2. Set the Sections maximum to `max(1, len(coords) - 1)` (this may lower the Sections value, which re-splits the previous airfoil, 19.11.6).
-3. `create_airfoil_data(coords, filename, name, precision, Sections value)`.
+2. `S = min(Sections value, max(1, len(coords) - 1))`; `airfoil = create_airfoil_data(coords, filename, name, precision, S)`. No widget and no state has changed yet, so a failure here leaves the window exactly as it was `[D13]`.
+3. Set the Sections maximum to `max(1, len(coords) - 1)` (which lowers the value to `S` when needed; a Sections change has no effect of its own, 19.11.6); the window's airfoil becomes `airfoil`.
 4. Clear the fit, `set_save_enabled(False)`, reset the project (19.16.1), show the file card, `plot_airfoil(coords)` (clears fit items and the loss trace, sets the data points, auto-ranges).
 5. Quietly (19.8) update the automatic tolerance (if Auto is checked).
 6. Status `"{verb}: {name or filename} ({len(coords)} points, {S} sections: {sizes})"`, where `sizes` is the Python list text of point counts per section (e.g. `[81, 81]`). Return true.
@@ -1457,7 +1515,7 @@ On Create: save the three values to QSettings, then `new_naca_airfoil(code, n, c
 
 #### 19.11.6 Section count changes
 
-When the Sections value changes and an airfoil is loaded: re-split with `create_airfoil_data(coords, filename, name, precision, S)`; clear the fit; `set_save_enabled(False)`; status `"Re-split: {name or filename} ({N} points, {S} sections: {sizes})"`; `plot_airfoil(coords)`. An exception: status `Failed to re-split airfoil: {e}`, error chime (the previous split stays). The project is not reset.
+Changing the Sections value runs the sidebar rules (19.6, 19.7) and nothing else `[D13]`: the airfoil keeps its split, the shown fit stays, nothing is replotted and no status appears. The split belongs to a fit, not to the data on screen (the data plot, the deviation and the report use all coordinates whatever the split), so it is applied when a fit starts (19.12.1 step 4), as a sweep already does for each of its fits (19.13). The project is not reset.
 
 ### 19.12 Fitting
 
@@ -1466,13 +1524,13 @@ When the Sections value changes and an airfoil is loaded: re-split with `create_
 1. No airfoil: status `Load an airfoil first.`.
 2. Build both configurations (19.10); a `ValueError`: status = its message.
 3. If any sweep widget is sweeping: run a sweep (19.13) instead.
-4. Clear the sweep state. Status `"Preparing {size}, degree {p}, {mode} continuity..."` where `size` = `"tolerance {number(tol, '.2e')}"` if a tolerance, else `"{n} control points"`, and `mode = ", ".join(junction_specs()) or continuity name`; process events.
+4. Split `[D13]`: if the airfoil's section count differs from the configuration's, `create_airfoil_data(coords, filename, name, precision, S)` replaces the window's airfoil; a `ValueError`: status = its message, stop (nothing else has changed). Clear the sweep state. Status `"Preparing {size}, degree {p}, {mode} continuity..."` where `size` = `"tolerance {number(tol, '.2e')}"` if a tolerance, else `"{n} control points"`, and `mode = ", ".join(junction_specs()) or continuity name`; process events.
 5. `cancel_requested = False`; clear the plot items; reset the loss plot (label `Iterations` or `Time (s)` by the X axis setting, log modes by the scale setting); `reset_iteration_tracking()`; `set_fitting_ui(True)`; start a timer; `logger = OptimizerErrorLogger(airfoil name or filename)`; status `Starting {display name}...`.
 6. `live = LiveProgress(...)` (19.12.2). Work (worker thread): `result = run_optimization(config, opt, airfoil, callback=live.callback, should_stop=lambda: cancel_requested)`; `cancelled = cancel_requested` (read once here); `elapsed`; `fit = make_fit_result(...)` (19.12.4). Run it with `run_in_background(work, live.on_tick)` (19.12.3).
-7. If `fit` exists: it becomes the current fit; `kept = not add_optimization_run(config, opt, fit, loss_history)` (19.16.4; loss history from the logger: `IterationRecord(iteration, error, elapsed)`); plot the fit; refresh the comb. Else redraw the previous fit (if any).
+7. If `fit` exists: it becomes the current fit; first every earlier fit of a tolerance search is stored as a run of its own `[D23]` (below); `kept = not add_optimization_run(config, opt, fit, loss_history)` (19.16.4; loss history from the logger: `IterationRecord(iteration, error, elapsed)`); plot the fit; refresh the comb. Else redraw the previous fit (if any).
 8. `live.show_loss()`.
-9. Save the log: `logger.save(optimizer value, "continuity={c}, degree={p}")` with `c` = `"none"` for one section, the single spec when all are equal, else specs joined by `/`; print `Log saved: {path}` when saved.
-10. Status: `effort` = tolerance mode: `"{nit} refit(s), {evaluations} evaluation(s)"`; Direct LSQ: `"{evaluations or nit} solve(s)"`; else `"{evaluations} evaluation(s)"` (singular when 1, plural noun `+s`; `evaluations = get_evaluation_count()`). Cancelled: `"Cancelled: {effort} in {format_duration(elapsed)} | Best error {format_error(result.fun)}"`; else `"Completed ({display name}): {effort} in {duration} | Error {format_error(result.fun)}"`. Then `" | " + summary_line(report)` when the fit has a report; `" | Solver did not converge: {message}"` when not successful and not cancelled; `" | The project keeps its finished run of these settings"` when `kept`.
+9. Save the log: `logger.save(optimizer value, "continuity={c}, degree={p}")` with `c` = `"none"` for one section, the single spec when all are equal, else specs joined by `/`; print `Log saved: {path}` when saved (a file is written only with `SPLINE_FITTER_LOG_DIR` set, section 17 `[D11]`).
+10. Status: `effort` = tolerance mode: `"{nit} refit(s), {evaluations} evaluation(s)"`; else `"{evaluations} evaluation(s)"` (singular when 1, plural noun `+s`; `evaluations = get_evaluation_count()`). Cancelled: `"Cancelled: {effort} in {format_duration(elapsed)} | Best error {format_error(result.fun)}"`; else `"Completed ({display name}): {effort} in {duration} | Error {format_error(result.fun)}"`. Then `" | " + summary_line(report)` when the fit has a report; `" | Solver did not converge: {message}"` when not successful and not cancelled; `" | The project keeps its finished run of these settings"` when `kept`.
 11. Completion chime unless cancelled.
 12. Any exception in 6-11: print the traceback, status `Fitting error: {e}`, error chime, redraw the previous fit.
 13. Always `set_fitting_ui(False)`.
@@ -1525,7 +1583,7 @@ A sweep runs when Fit is pressed with at least one sweep widget sweeping. Axes, 
    3. airfoil: the current one if its section count matches, else re-split a copy;
    4. clear plot items, `reset_iteration_tracking()`, reset the loss plot, new logger, `LiveProgress` with prefix `"Sweep {i}/{T} | {label} | "`;
    5. run the fit in the background (as 19.12.1 step 6) and show the loss;
-   6. a fit exists: `add_optimization_run(..., replot=False)`; if not cancelled, append `(values, fit)` to the sweep results; any exception: traceback printed, counted as failed;
+   6. a fit exists: store the earlier fits of a tolerance search `[D23]` (19.16.4), then `add_optimization_run(..., replot=False)`; if not cancelled, append `(values, fit)` to the sweep results; any exception: traceback printed, counted as failed;
    7. a cancelled fit marks the sweep cancelled; a finished fit becomes the current fit, is plotted with its comb, and the sweep comparison is redrawn (exceptions printed only);
    8. status `"Sweep: {i}/{T} ({number(100i/T, '.0f')}%) | {label}"` + `" | Failed: {e}"` or `" | Cancelled"` or `", error {format_error(comparison_error)}"`, then `" | {format_duration(elapsed)}"`; process events.
 5. `set_fitting_ui(False)`.
@@ -1536,7 +1594,7 @@ A sweep runs when Fit is pressed with at least one sweep widget sweeping. Axes, 
 
 #### 19.13.1 Applying the best values
 
-Turn off every swept widget's sweep (sections first, then degree, then the others), then set their values in the same order. One undo step returns to the sweep settings.
+Inside one history group (19.8) `[D14]`: turn off every swept widget's sweep (sections first, then degree, then the others), then set their values in the same order. One undo step returns to the sweep settings.
 
 ### 19.14 Plots (`PlotManager`)
 
@@ -1629,11 +1687,11 @@ Refilling the explorer forgets the remembered points without redrawing. Marking 
 
 #### 19.15.1 Save fitted airfoil
 
-No fit or no airfoil: status `No fitted spline to save.`. Integer dialog title `Save fitted airfoil`, label `Points per side, spaced closer toward the leading and trailing edge`, default `max(20, (N + 1)//2)`, range 3..100000; cancel -> status `Save cancelled.`. Points = `resample(curves, n, "cosine")` (13.4). Save dialog title `Save fitted airfoil`, default `<home>/{file_stem(name or filename)}_fitted.dat`, filter `Airfoil data (*.dat)`; cancel -> `Save cancelled.`. Write with `export_airfoil_data(path, points, name=name or filename, precision=max(6, precision))`. Status `Saved: {path}`; any exception: `Save failed: {e}`, error chime.
+No fit or no airfoil: status `No fitted spline to save.`. Integer dialog title `Save fitted airfoil`, label `Points per side, spaced closer toward the leading and trailing edge`, default `max(20, (N + 1)//2)`, range 3..100000; cancel -> status `Save cancelled.`. Points = `resample(curves, n, "cosine")` (13.4). Save dialog title `Save fitted airfoil`, default `<home>/{file_stem(filename or name or "airfoil")}_fitted.dat` `[D16]`, filter `Airfoil data (*.dat)`; cancel -> `Save cancelled.`. Write with `export_airfoil_data(path, points, name=name or filename, precision=max(6, precision))`. Status `Saved: {path}`; any exception: `Save failed: {e}`, error chime.
 
 #### 19.15.2 Save spline
 
-No fit: `No fitted spline to save.`. Default `<home>/{file_stem(filename or name)}.deg{p}.spline.dat`, dialog title `Save spline control points`, filter `Spline data (*.spline.dat)`; cancel -> `Save cancelled.`. Continuity = `junction_specs()` of the run whose result is the shown fit, else of the sidebar's spline configuration (a `ValueError` -> no continuity). `export_spline_data(path, p, control points, name=name or (filename or name), precision=12, section_knots=[knots(i) as lists], continuity)`. `Saved: {path}` / `Save failed: {e}` + error chime.
+No fit: `No fitted spline to save.`. Default `<home>/{file_stem(filename or name or "airfoil")}.deg{p}.spline.dat` `[D16]`, dialog title `Save spline control points`, filter `Spline data (*.spline.dat)`; cancel -> `Save cancelled.`. Continuity = `junction_specs()` of the run whose result is the shown fit, else of the sidebar's spline configuration (a `ValueError` -> no continuity). `export_spline_data(path, p, control points, name=name or (filename or name), precision=12, section_knots=[knots(i) as lists], continuity)`. `Saved: {path}` / `Save failed: {e}` + error chime.
 
 #### 19.15.3 Export CAD
 
@@ -1674,7 +1732,7 @@ Dialog title `Open project`, home directory, filter `Spline project (*.asfproj);
 4. Capture everything opening changes (project state, airfoil, fit, sections maximum, all settings values, history checkpoint, file card texts, selection), then show the project:
    1. project, path, not modified, no deletions, `last_number` = highest run number;
    2. the airfoil becomes the project's; no fit; saving disabled; sections maximum `max(1, N - 1)`; file card with the path; Sections value = the airfoil's section count; label; Save project actions enabled; clear plot items; plot the airfoil;
-   3. with runs: apply the last run's settings (19.10; each change of the Sections value re-splits the airfoil as in 19.11.6), load it into the plots (19.16.7), status `"Loaded project with {k} run{s}, showing {optimizer display name}"`; without runs: `"Loaded project: {basename}"`;
+   3. with runs: apply the last run's settings (19.10), load it into the plots (19.16.7), status `"Loaded project with {k} run{s}, showing {optimizer display name}"`; without runs: `"Loaded project: {basename}"`;
    4. fill the explorer, refresh the comparison plot, update run buttons.
 5. An exception while showing: restore the capture (settings quietly and in order, then `on_optimizer_changed`, history rolled back so the failed open leaves no undo step, airfoil, file card, explorer and selection, plots and fit), status `Failed to load project: {e}`, error chime; false.
 6. Success: add to recent files; true.
@@ -1683,7 +1741,7 @@ Dialog title `Open project`, home directory, filter `Spline project (*.asfproj);
 
 `Save project`: without a project or path, does `Save project as`. Else `save_project`; success: not modified, label, `Saved: {path}`; failure: `Save failed: {e}`, error chime.
 
-`Save project as`: no airfoil: `No airfoil loaded to save.`. Create a project when there is none. Dialog title `Save project as`, default `<home>/{file_stem(name or filename or "project")}.asfproj`, filter `Spline project (*.asfproj)`; cancel -> `Save cancelled.`. If the chosen path does not end with `.asfproj` (case-insensitive), append it; if that file exists, ask (title `Save project as`, text `{basename} already exists. Replace it?`, Yes/No, default No); No -> `Save cancelled.`. Save; success: path set, not modified, label, Save actions enabled, recent files, `Saved: {path}`; failure: `Save failed: {e}`, error chime.
+`Save project as`: no airfoil: `No airfoil loaded to save.`. Create a project when there is none. Dialog title `Save project as`, default `<home>/{file_stem(filename or name or "project")}.asfproj` `[D16]`, filter `Spline project (*.asfproj)`; cancel -> `Save cancelled.`. If the chosen path does not end with `.asfproj` (case-insensitive), append it; if that file exists, ask (title `Save project as`, text `{basename} already exists. Replace it?`, Yes/No, default No); No -> `Save cancelled.`. Save; success: path set, not modified, label, Save actions enabled, recent files, `Saved: {path}`; failure: `Save failed: {e}`, error chime.
 
 #### 19.16.4 Adding runs (`add_optimization_run(config, opt, fit, loss_history, replot=True)`, returns whether added)
 
@@ -1694,7 +1752,9 @@ Dialog title `Open project`, home directory, filter `Spline project (*.asfproj);
 5. The first matching run is replaced in place and `run.number` = its number; otherwise append and `last_number = number_runs(runs, last_number)`.
 6. Modified; label; fill the explorer; refresh the comparison plot if `replot`. Return true.
 
-Match: equal `degree`, `num_control_points`, `num_sections`, `continuity`, `geometric_continuity`, `junction_continuity`, `tolerance`, `max_points_per_section`, `knot_placement`, `parameterization`, `optimize_le_position`, `grow_control_points`, `optimizer`, and, only when the new run has no tolerance, `smoothing_weight`.
+Match: equal `degree`, `num_control_points`, `num_sections`, `continuity`, `geometric_continuity`, `junction_continuity`, `tolerance`, `knot_placement`, `parameterization`, `optimize_le_position`, `grow_control_points`, `optimizer`; only when the new run has free knots, `min_knot_gap` `[D22]`; only when the new run has no tolerance, `smoothing_weight`; and, when it has a tolerance, the same number of control points in every section of the two fits `[D23]`.
+
+Earlier fits of a tolerance search `[D23]`: a tolerance search is a sequence of fits like a sweep of the control point count, and each is kept. For every entry `raw` of the optimizer result's `fits` (11.3), in order, the worker builds `FitResult(section_control_points, degree, final_error = raw.fun, num_iterations = raw.nit, num_evaluations = raw.evaluations or 0, elapsed_seconds = raw.seconds or 0, converged = raw.success, cancelled = False, section_knots, rms_error)` and attaches its report like any fit's. On the GUI thread, before the search's last fit is stored, each is added with `add_optimization_run(config, opt, fit, loss history up to its elapsed_seconds, replot=False)`. The fits of one search differ in their control point counts, so each is a run; a later fit of the same search with the counts of an earlier one replaces it, as does the same search run again. Fits the search tried and rejected (removal trials that left the tolerance) are not recorded and not stored. Batch conversion writes the last fit only.
 
 #### 19.16.5 Label and title
 
@@ -1725,15 +1785,15 @@ The run's result becomes the current fit; the loss data become its history (iter
 | 3 | `Goal` | `Tolerance` / `Fixed count` | | | | VarPro | |
 | 4 | `Tolerance` | tolerance | `.3g` | yes | | VarPro with tolerance | `Max deviation the tolerance goal had to meet` |
 | 5 | `Knots` | placement capitalized (`Uniform`, `Free`) | | | | VarPro | |
-| 6 | `Parameterization` | the stored value with `_` replaced by a space, then Python `str.capitalize()` (`Centripetal`, `Arc length`) | | | | Direct LSQ | |
-| 7 | `Grow points` | bool | | | | VarPro | |
-| 8 | `Degree` | degree | | | | | |
-| 9 | `Control points` | configured count | | | | | `Control points per section as set (the start count of a tolerance goal)` |
-| 10 | `Sections` | sections | | | | | |
-| 11 | `Continuity` | `G0`..`G3` (enum name) | | | | sections > 1 | |
-| 12 | `Type` | `Geometric` / `Parametric` | | | | VarPro and sections > 1 | |
-| 13 | `Per junction` | entries joined by `", "` | | | | VarPro | |
-| 14 | `Subsample` | max points or `None` | | | | VarPro | `Points per section of the subsample; blank when every point is used` |
+| 6 | `Knot spacing` `[D22]` | `min_knot_gap` | `.3g` | | | VarPro with free knots | `Smallest spacing of the free knots, as a fraction of a section` |
+| 7 | `Parameterization` | the stored value with `_` replaced by a space, then Python `str.capitalize()` (`Centripetal`, `Arc length`) | | | | Direct LSQ | |
+| 8 | `Grow points` | bool | | | | VarPro | |
+| 9 | `Degree` | degree | | | | | |
+| 10 | `Control points` | configured count | | | | | `Control points per section as set (the start count of a tolerance goal)` |
+| 11 | `Sections` | sections | | | | | |
+| 12 | `Continuity` | `G0`..`G3` (enum name) | | | | sections > 1 | |
+| 13 | `Type` | `Geometric` / `Parametric` | | | | VarPro and sections > 1 | |
+| 14 | `Per junction` | entries joined by `", "` | | | | VarPro | |
 | 15 | `Smoothing` | smoothing weight | `.3g` | yes | | VarPro without tolerance | |
 | 16 | `Optimize junctions` | bool | | | | sections > 1 | |
 | 17 | `Error` | `comparison_error` | `.3e` | yes | yes | | `RMS distance of the points to the curve, the same measure for every run` |
@@ -1754,7 +1814,7 @@ Cell text: `None` -> empty; bool -> `yes`/`no`; duration -> `format_duration`; f
 
 `term_matches(term, value, text)`: substring -> in `text.casefold()`; whole-cell -> `(text.casefold() == operand) == (op is "=")`; numeric -> `value` is a number and `value op operand`.
 
-Row filter: with no global terms and no column exclusions every row passes. Else a row matches when every global term matches (a numeric term against the `Error` column only; other terms, substring and whole-cell (`=`/`!=`) alike, match when they match in at least one column, so `!=x` passes a row as soon as one cell differs from `x`), and for every filtered column its cell text is not excluded. `Invert` shows exactly the non-matching rows (when any filter is set).
+Row filter: with no global terms and no column exclusions every row passes. Else a row matches when every global term matches, and for every filtered column its cell text is not excluded. A global term matches a row as follows `[D15]`: a numeric term is compared with the `Error` column only; a substring term or an `=text` term matches when it matches in at least one column; a `!=text` term matches when no column's cell equals `text`, so it is the exact opposite of `=text`. (In the source `!=x` matched as soon as any one cell differed from `x`, which is true of every row with two different cells, so the term filtered nothing.) `Invert` shows exactly the non-matching rows (when any filter is set).
 
 #### 19.17.3 Table widget
 
@@ -1847,7 +1907,7 @@ Mode colours (dark, light): `OK #4FBF85/#1A7A4A`, `WARN #F2B84B/#8F5E00`, `ERROR
 
 Fixed ink: `INK #FF6E10`, `INK_HOVER #FF8636`, `INK_PRESSED #E05E08`, `INK_DEEP #AD4200`, `ON_INK #1A0C02`.
 
-Palette (UI) tokens: the twelve greys except `CONSTRUCTION`, `INK*`, `ON_INK`, `OK`, `WARN`, `ERROR`. Plot (`Ink`) tokens: `CONSTRUCTION`, `KNOTS`, `COMB_EVEN`, `COMB_ODD` (RGB of the above), `DATA = TEXT`, `TRACE = GRID = TEXT_2`, `DEVIATION_EVEN/ODD = COMB_EVEN/ODD`, `CURVE = MARKER = INK`, `COMB_TEETH_ALPHA = 90`, `GRID_ALPHA = 0.10`.
+Palette (UI) tokens: the twelve greys of the table other than `CONSTRUCTION` (`CANVAS` to `SELECT_LINE`), the four `INK*` colours, `ON_INK`, `OK`, `WARN` and `ERROR`. Plot (`Ink`) tokens: `CONSTRUCTION`, `KNOTS`, `COMB_EVEN`, `COMB_ODD` (RGB of the above), `DATA = TEXT`, `TRACE = GRID = TEXT_2`, `DEVIATION_EVEN/ODD = COMB_EVEN/ODD`, `CURVE = MARKER = INK`, `COMB_TEETH_ALPHA = 90`, `GRID_ALPHA = 0.10`.
 
 `Z`: `COMB -10`, `CONSTRUCTION 0`, `DATA 5`, `CURVE 10`, `KNOTS 30`.
 
@@ -1918,7 +1978,7 @@ Title `Scrolling and zooming`, deleted on close, form with 16 px padding: `Scrol
 9. **ReflowRow(spacing)**: side by side when the width is at least the sum of the children's minimum widths plus spacing, else stacked; its minimum width is the largest child minimum.
 10. **show_document(parent, title, html, width, height, extra=None)**: modal dialog deleted on close; margins 0, 0, 0, 16; spacing 16; a themed text browser (opens external links) with the HTML (stretch 1); `extra` in a holder with 16 px side margins (stretch 1); a `Close` button box with 16 px side margins.
 11. **ResettableSplitter**: reports double-clicks on a handle with the handle index.
-12. **Glyphs**: stroked paths on a 12×12 grid, stroke 1.4, round caps and joins, painted in a palette token (disabled: `TEXT_3`; checked: the checked token): `chevron_down M2.5 4.5 L6 8 L9.5 4.5`, `chevron_up M2.5 7.5 L6 4 L9.5 7.5`, `chevron_right M4.5 2.5 L8 6 L4.5 9.5`, `chevron_left M7.5 2.5 L4 6 L7.5 9.5`, `check M2.5 6.2 L5 8.6 L9.5 3.6`, `dash M3 6 L9 6`, `sort_up M6 10 L6 2 M3 5 L6 2 L9 5`, `sort_down M6 2 L6 10 M3 7 L6 10 L9 7`, `filter M1.5 2.5 L10.5 2.5 L7 6.5 L7 10 L5 9 L5 6.5 L1.5 2.5`, `range M1 3 L1 9 M11 3 L11 9 M3 6 L9 6 M4.6 4.4 L3 6 L4.6 7.6 M7.4 4.4 L9 6 L7.4 7.6`. Default token `TEXT_2`. For the stylesheet, glyph SVG files are written (only if the file does not exist yet, creating the folder) to `<temp>/spline_fitter_glyphs/{name}_{colour}_{pad}.svg`, where `<temp>` is the system temporary directory, `{colour}` is the token's hex value without `#` in lower case, and the path is written with forward slashes. Their whole content, UTF-8, no line break: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="{-pad} {-pad} {12+2pad} {12+2pad}"><path d="{path data}" fill="none" stroke="{#RRGGBB as in the palette}" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>` (numbers as integers, for example `viewBox="-6 -6 24 24"`).
+12. **Glyphs**: stroked paths on a 12×12 grid, stroke 1.4, round caps and joins, painted in a palette token (disabled: `TEXT_3`; checked: the checked token): `chevron_down M2.5 4.5 L6 8 L9.5 4.5`, `chevron_up M2.5 7.5 L6 4 L9.5 7.5`, `chevron_right M4.5 2.5 L8 6 L4.5 9.5`, `chevron_left M7.5 2.5 L4 6 L7.5 9.5`, `check M2.5 6.2 L5 8.6 L9.5 3.6`, `dash M3 6 L9 6`, `sort_up M6 10 L6 2 M3 5 L6 2 L9 5`, `sort_down M6 2 L6 10 M3 7 L6 10 L9 7`, `filter M1.5 2.5 L10.5 2.5 L7 6.5 L7 10 L5 9 L5 6.5 L1.5 2.5`, `range M1 3 L1 9 M11 3 L11 9 M3 6 L9 6 M4.6 4.4 L3 6 L4.6 7.6 M7.4 4.4 L9 6 L7.4 7.6`. Default token `TEXT_2`. For the stylesheet, glyph SVG files are written (creating the folder; a file is written when it does not exist or when its bytes differ from the content below `[D12]`, so a stale or damaged file left by another version is repaired instead of being used for ever) to `<temp>/spline_fitter_glyphs/{name}_{colour}_{pad}.svg`, where `<temp>` is the system temporary directory, `{colour}` is the token's hex value without `#` in lower case, and the path is written with forward slashes. Their whole content, UTF-8, no line break: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="{-pad} {-pad} {12+2pad} {12+2pad}"><path d="{path data}" fill="none" stroke="{#RRGGBB as in the palette}" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>` (numbers as integers, for example `viewBox="-6 -6 24 24"`).
 13. **Button boxes**: dialog buttons sit in a `QDialogButtonBox`, which orders them by role following the style's button layout (the application's `Fusion` style on Windows uses Qt's Windows layout: reset-role buttons at the left, then a stretch, then accept-role, then reject-role buttons). Accepting closes the dialog with its accept code, rejecting or closing with its reject code.
 
 ### 19.22 Chimes
@@ -1956,7 +2016,7 @@ Title `Scrolling and zooming`, deleted on close, form with 16 px padding: `Scrol
 
 ## 21. Acceptance examples
 
-Each item must hold exactly unless a tolerance is stated. Every item was checked by running the reference implementation (Python 3.12, NumPy 2.2.5, SciPy 1.15.2 on OpenBLAS 0.3.28, PyQt6 with Qt 6.9.0, offscreen); see 23.2.
+Each item must hold exactly unless a tolerance is stated; for the items that run an iterative fit (11, 12, 17), "exactly" applies to the reference build and 0.3 says what another build or language must reproduce. Every item was checked by running the reference implementation (the reference build: Windows 11, Python 3.12, NumPy 2.2.5, SciPy 1.15.2 on OpenBLAS 0.3.28, PyQt6 with Qt 6.9.0, offscreen); see 23.2. Items marked "(run)" give values measured there.
 
 1. `open_uniform_knots(3, 5) = [0, 0, 0, 0, 0.5, 1, 1, 1, 1]`.
 2. `format_error(0.0000123) = "1.230e-05"`, `format_error(0.00456) = "0.004560"`, `format_error(12345.6) = "1.235e+04"` (decimal point `.`).
@@ -1968,29 +2028,37 @@ Each item must hold exactly unless a tolerance is stated. Every item was checked
    - `"NACA test\n100 0\n50 5\n0 0\n50 -5\n100 0\n"` -> same points, precision 2 (0-100 rule: `0 - log10(0.01)`);
    - Lednicer `"T\n3 3\n0 0\n0.5 0.06\n1 0\n0 0\n0.5 -0.05\n1 0\n"` -> `("f", "T", [(1,0), (0.5,0.06), (0,0), (0.5,-0.05), (1,0)], 2)`;
    - numeric name `"0012 64\n1 0\n0.5 0.06\n0 0\n0.5 -0.06\n1 0\n"` -> content name `"0012 64"`, five points, precision 2;
+   - non-finite first line `[D3]` `"inf 5\n1 0\n0.5 0.06\n0 0\n0.5 -0.06\n1 0\n"` -> content name `"inf 5"`, the same five points, precision 2, no exception; a line `nan nan` between the points is skipped;
    - escaped name: a comment line `#c`, then the line `\#name`, then the five points -> content name `"#name"`;
    - `"x\n2 0.2\n1 0.1\n0 0\n1 -0.1\n2 -0.2\n"` -> `[(1,0.1), (0.5,0.05), (0,0), (0.5,-0.05), (1,-0.1)]` (divided by chord 2), precision 1 (`1 - log10(0.5) = 1.30` floored).
 7. `scaled_precision(4, 0.01) = 6`, `scaled_precision(5, 0.5) = 5`, `scaled_precision(6, 1/0.98) = 6` (run).
 8. `output_name` (run):
    - `("naca0012", SplineConfig(degree=5, num_control_points=30, num_sections=3, junction_continuity=("G2","C1")), OptimizationConfig(tolerance=1e-4, knot_placement="uniform", grow_control_points=False))` -> `naca0012.deg5.n30.s3.G2-C1.tol1e-4.spline.dat`;
    - the reference settings -> `naca0012.deg5.spline.dat`;
-   - reference spline, `OptimizationConfig(tolerance=1e-5)` (model defaults free + grow), auto -> `naca0012.deg5.tol-auto.knots-free.grow.spline.dat`;
-   - `("x", SplineConfig(degree=3, continuity=G2), OptimizationConfig(optimizer=DIRECT_LSQ, parameterization="arc_length", knot_placement="uniform", grow_control_points=False, smoothing_weight=0.01, optimize_le_position=True, max_points_per_section=150))` -> `x.deg3.C2.lsq.arc-length.smooth0.01.sub150.free-le.spline.dat`;
+   - reference spline, `OptimizationConfig(tolerance=1e-5, knot_placement="free", grow_control_points=True)`, auto -> `naca0012.deg5.tol-auto.knots-free.grow.spline.dat`;
+   - `("x", SplineConfig(degree=3, continuity=G2, geometric_continuity=False), OptimizationConfig(optimizer=DIRECT_LSQ, parameterization="arc_length", knot_placement="uniform", grow_control_points=False, smoothing_weight=0.01, optimize_le_position=True))` -> `x.deg3.C2.lsq.arc-length.smooth0.01.free-le.spline.dat`;
    - one section, otherwise reference -> `x.deg5.s1.spline.dat`.
 9. `num`: `1e-4 -> "1e-4"`, `2.5e-5 -> "2.5e-5"`, `0.001 -> "1e-3"`, `0.0123 -> "0.0123"`, `0.5 -> "0.5"`, `1e-6 -> "1e-6"`, `3.33333e-7 -> "3.33e-7"`.
 10. `sanitize_filename("a b/c") = "a_b_c"`; `file_stem("NACA 2412 t/c 12%") = "NACA 2412 t_c 12%"`; `file_stem("") = "airfoil"`.
 11. Reference fits on `NACA4("2412", closed_te=True).points(81)` rounded to 6 decimals (161 points), two sections (81 + 81), degree 5, 25 control points (run; regression targets, relative tolerance 1e-3 on errors, exact on counts):
     - `default_tolerance(points, 6) = 1e-6`;
-    - VarPro LM, G3 geometric, uniform knots, no growth, smoothing 1e-3: `fun = rms_error ≈ 8.978e-7`, `nit = 40`, success, message ``"`ftol` termination condition is satisfied."``, counts `[25, 25]`; report `max_deviation ≈ 4.587e-6`, `rms_deviation ≈ 8.978e-7`, `max_thickness ≈ 0.12004` at `≈ 0.2988`, `max_camber ≈ 0.020000` at `≈ 0.4065`, `leading_edge_radius ≈ 0.015698`, `curvature_extrema = 5`;
-    - Direct LSQ, C2: `fun ≈ 2.942e-7`, `nit = 1`, counts `[25, 25]`; report `max_deviation ≈ 1.270e-6`, `rms_deviation ≈ 2.933e-7`, `curvature_extrema = 12`;
-    - VarPro LM, tolerance `1e-6`, G2 geometric, model defaults otherwise (free knots, growth): success, 17 refits (`nit = 17`), control points `[10, 11]`, `fun` (max deviation) `9.1121e-7` (relative tolerance 1e-3; about 2 minutes on the reference machine).
+    - VarPro LM, G3 geometric, uniform knots, no growth, smoothing 1e-3: `fun = rms_error ≈ 8.978e-7`, `nit = 33`, success, message ``"`ftol` termination condition is satisfied."``, counts `[25, 25]`; report `max_deviation ≈ 4.587e-6`, `rms_deviation ≈ 8.978e-7`, `max_thickness ≈ 0.12004` at `≈ 0.2988`, `max_camber ≈ 0.020000` at `≈ 0.4065`, `leading_edge_radius ≈ 0.015698`, `curvature_extrema = 5`;
+    - Direct LSQ, C2 `[D10]`: `fun ≈ 1.897e-5`, `nit = 1`, one evaluation, success, message `""`, counts `[25, 25]`; report `max_deviation ≈ 4.722e-5`, `rms_deviation ≈ 8.807e-6`, `curvature_extrema = 8`;
+    - VarPro LM, tolerance `1e-6`, G2 geometric, free knots, growth: success, 9 refits (`nit = 9`), control points `[11, 11]`, `fun` (max deviation) `7.9338e-7` (relative tolerance 1e-3; about 8 minutes on the reference machine), and the optimizer result carries the 8 earlier fits `[D23]`.
 12. CAD export of the VarPro fit of item 11 (run): STEP contains 2 `B_SPLINE_CURVE_WITH_KNOTS`; every IGES record is 80 characters and the last is `S      1G      4D      4P    112` + 40 spaces + `T      1`; DXF contains 2 `SPLINE` entities; `merge_curves` gives one degree-5 curve with 54 knots.
 13. STEP reals: `1e-7 -> "1.E-7"`, `3.0 -> "3.0"`, `0.5 -> "0.5"`, `2.5e16 -> "2.5E16"`, `-1e16 -> "-1.E16"` (run).
 14. Spline file round trip: `export_spline_data` then `parse_spline_data` returns the same degree, counts, continuity, knots (exactly, `repr`) and control points (to the written decimals).
 15. Project round trip: `save_project` then `load_project` keeps run numbers, settings, control points (exactly), result fields and loss history; a run with optimizer `"bfgs"` loads as VarPro LM.
 16. Theme greys: table of 19.19.1 (run).
-17. Window (run, offscreen Qt, decimal point `.`): at start status `Ready`, title `Airfoil Spline Fitter`; defaults VarPro LM, Fixed count, degree 5, 25 control points, 2 sections, G3, Geometric, Uniform, Grow off, Auto on, Live preview Moderate. New NACA 2412 (81 per side): status `Created: NACA 2412 (161 points, 2 sections: [81, 81])`, automatic tolerance `1e-06`. Fit: status `Completed (VarPro LM): 40 evaluations in {duration} | Error 8.978e-07 | max deviation 4.59e-06, RMS 8.98e-07, 49 control points`; project label `Unsaved project*` / `1 optimization run`; title `Unsaved project[*] - Airfoil Spline Fitter`; one log `{YYYYmmdd_HHMMSS}_NACA_2412_gn-varpro.csv`; readouts `Max deviation`, `4.59e-06`, `2 × 25`. Then Direct LSQ with C2: `Completed (Direct LSQ): 2 solves in {duration} | Error 2.942e-07 | max deviation 1.27e-06, RMS 2.93e-07, 49 control points`, two runs. Undo returns the optimizer and continuity to VarPro LM and G3 in one step. A control-point sweep 25..26 (VarPro, G3): `Sweep complete: 2 fits in {duration} | Best: Control points 25, error 8.978e-07`, after which the sweep is off and the count is 25.
+17. Window (run, offscreen Qt, decimal point `.`): at start status `Ready`, title `Airfoil Spline Fitter`; defaults VarPro LM, Fixed count, degree 5, 25 control points, 2 sections, G3, Geometric, Uniform, Grow off, Auto on, Live preview Moderate. New NACA 2412 (81 per side): status `Created: NACA 2412 (161 points, 2 sections: [81, 81])`, automatic tolerance `1e-06`. Fit: status `Completed (VarPro LM): 33 evaluations in {duration} | Error 8.978e-07 | max deviation 4.59e-06, RMS 8.98e-07, 49 control points`; project label `Unsaved project*` / `1 optimization run`; title `Unsaved project[*] - Airfoil Spline Fitter`; no log file `[D11]` (with `SPLINE_FITTER_LOG_DIR` set to a folder: one log `{YYYYmmdd_HHMMSS}_NACA_2412_gn-varpro.csv` in it); readouts `Max deviation`, `4.59e-06`, `2 × 25`. Then Direct LSQ with C2: `Completed (Direct LSQ): 1 evaluation in {duration} | Error 1.897e-05 | max deviation 4.72e-05, RMS 8.81e-06, 49 control points` `[D10]`, two runs. Undo returns the optimizer and continuity to VarPro LM and G3 in one step. A control-point sweep 25..26 (VarPro, G3): `Sweep complete: 2 fits in {duration} | Best: Control points 25, error 8.978e-07`, after which the sweep is off and the count is 25. Changing Sections from 2 to 3 and back leaves the shown fit, its readouts and the status text unchanged `[D13]`. Help > About: status `Airfoil Spline Fitter 2.0.0` `[D5]`.
 18. Batch: two `.dat` files converted into a target folder produce two `.spline.dat` files named by item 8; running again skips both (`Skipped 2 already in the target folder with these settings`).
+19. Line ends `[D1]`: a `.dat`, a `.spline.dat`, a project and a log written on any platform contain no `\r` byte.
+20. Non-finite numbers `[D2]`: a project with a run whose `final_error` is NaN and whose report holds `leading_edge_radius = inf` is written with the strings `"NaN"` and `"Infinity"`, is accepted by a JSON parser that rejects non-standard tokens, and loads back with NaN and `inf`. A file of an earlier version with the bare tokens loads to the same values.
+21. Global filter `[D15]`: with runs whose `Knots` cells are `Uniform`, `Free` and blank, the text `=free` shows exactly the `Free` runs and `!=free` exactly the others.
+22. Undo grouping `[D14]`: applying a run's settings with the 500 ms merge timer made to expire between any two widget changes still adds exactly one undo step.
+23. Project redundancy `[D17]`: a project whose stored `airfoil.sections` were edited to differ from its coordinates loads with the sections rebuilt from `coordinates` and `junction_indices`; `junction_indices` of `[0]` or out of order give `Failed to load project: Airfoil: the junction indices do not split the coordinates.`
+
+Items 19 to 23 and the tagged parts of items 6, 8, 11 and 17 state revision 3 behaviour. They have not been run: the source does not behave so yet (section 24). The Direct LSQ values of items 11 and 17 were measured on the source at `6db8ad3` with its `solve_joint` call replaced by a function that returns its input, which leaves exactly the single solve.
 
 Test suites covering these rules: `tests/` (application) and `packages/bspline-varpro/tests/` (library). `tests/test_design_language.py` checks the theming rules (no colour literals or stylesheets outside the theme, control heights, label wording).
 
@@ -1999,23 +2067,25 @@ Test suites covering these rules: `tests/` (application) and `packages/bspline-v
 ## 22. Known inconsistencies and their resolution
 
 1. **README vs window defaults.** The README describes Tolerance goal and Auto tolerance as defaults. The window starts in the Fixed count goal (first segment) with Auto checked. This spec requires the window behaviour.
-2. **Model vs window defaults.** `OptimizationConfig` defaults `knot_placement="free"`, `grow_control_points=True`; the window starts with Uniform and Grow off. Both are required: programmatic configs use the model defaults, the window its widget defaults.
+2. **Model vs window defaults (resolved, `[D7]`).** The models defaulted to free knots, growth and G1 parametric continuity while the window started with uniform knots, no growth and G3 geometric. The models now carry the values the window started with (5.4, 5.5), and the window reads its start values from them (19.4).
 3. **Smoothing in tolerance mode.** The sidebar Smoothing value is disabled and ignored in the tolerance goal; tolerance fits use `1e-7`.
-4. **`fit_to_tolerance` subsampling default** is 200 in the library; the application passes its own value (`None` unless Subsample is checked).
+4. **`fit_to_tolerance` subsampling default (resolved `[D21]`).** The library defaulted to 200 points per section while the application passed `None`; there is no subsampling any more.
 5. **Two airfoil readers.** The application uses only section 3; the library's `read_dat` (3.9) differs and is not used.
 6. **Direct LSQ junction type.** Always parametric; the Type control is hidden and the configuration's geometric flag is false for Direct LSQ.
 7. **Continuity labels.** Shown as `C0..C3` or `G0..G3` by the type (19.6); the stored value is always the `ContinuityMode` name `G0..G3`.
-8. **Retired fields** in projects are ignored (15.4); `smoothing_factor`, `early_stop_patience` and `relative_tolerance` survive only in the model and batch naming.
-9. **Two knot checks.** `BSplineCurve2D` uses the weaker check (2.1); the library the strict one. Every knot vector the application produces passes both.
+8. **Retired fields (resolved, `[D6]`).** `smoothing_factor`, `early_stop_patience` and `relative_tolerance` are gone from the model and from batch naming. In old project files they are unknown keys and ignored (15.4).
+9. **Two knot checks (resolved, `[D8]`).** `BSplineCurve2D` uses the library's `validate_knots` (2.1, 6.1). Every knot vector the application produced passed both checks, so no existing file is rejected.
 10. **Curve objects.** `FitResult.curves()` returns `BSplineCurve2D` (no SciPy attributes); everything passed to the library uses `scipy_curves(result)`.
-11. **About.** Help > About only shows `Airfoil Spline Fitter v1.0` in the status bar although the package version is 2.0.0; this text is required as is.
+11. **About (resolved, `[D5]`).** Help > About shows the package version (19.3), not `v1.0`.
 12. **Comb chord vs deviation chord.** The comb scales by the x extent of the fitted curves (sampled), the deviation by the x extent of the data points (19.14.3, 19.14.5).
 13. **Quiet undo merge.** The history keeps a quiet change and a user change that arrive within 500 ms apart: the quiet one merges into the state before the user's step (19.8).
 14. **Exit (resolved).** The reference implementation at `2febd13` returned the exit code from `main()` and let interpreter shutdown destroy the window and the `QApplication`; the process then usually crashed (exit status 139: 5 of 6 offscreen runs, 4 of 6 native Windows runs). `main()` now ends the process itself as section 1.1 step 5 describes. This spec requires that behaviour.
+15. **Line ends of written files (resolved, `[D1]`).** Every writer writes `\n` (section 1, "Text files"). Files written by earlier versions on Windows carry `\r\n` and load unchanged, because every reader splits on any line end (3.2, 14.2, 15.4).
+16. **Non-finite numbers in project files (resolved, `[D2]`).** Written as the strings `"NaN"`, `"Infinity"`, `"-Infinity"`, so a project is standard JSON; the bare tokens of earlier versions are still read (15.1).
 
 ---
 
-## 23. Review and verification record
+## 23. Review and verification record (informative)
 
 ### 23.1 External-developer review
 
@@ -2040,13 +2110,13 @@ Ambiguities found and resolved in the text:
 | Which knots does Save spline write for Direct LSQ? | The open uniform knots of each section (`FitResult.knots`). |
 | Which continuity does Save spline write? | The shown run's, else the sidebar's (19.15.2). |
 | Which smoothing does a sweep vary in tolerance mode? | None: smoothing and control-point sweeps are off in tolerance mode (19.6). |
-| What happens to the project when the section count changes? | Nothing; only the airfoil is re-split and the fit cleared (19.11.6). |
+| What happens to the project when the section count changes? | Nothing. In the source the airfoil was re-split and the fit cleared; from revision 3 a Sections change touches neither (19.11.6, `[D13]`). |
 | Does a cancelled fit replace a finished run? | No (19.16.4). |
-| Is the evaluation count of Direct LSQ 1? | 1 with fixed parameters; otherwise 2 (one solve, one joint stage), or 3 with free junctions (one solve, two joint stages) (10). `nit` is always 1. |
+| Is the evaluation count of Direct LSQ 1? | Yes `[D10]`: one solve, one evaluation, `nit = 1` (10). The source counted 2, or 3 with free junctions, because it ran refinement stages. |
 
 ### 23.2 Verification by execution
 
-The verification results are recorded in `spec-verification.md`, beside this file, together with the SHA-256 of the exact `spec.md` they were run against. This file is not edited after those runs. The checks, all run on the reference build (Python 3.12, NumPy 2.2.5, SciPy 1.15.2 on OpenBLAS 0.3.28, PyQt6 with Qt 6.9.0, offscreen platform) against the source at `2febd13`:
+The verification results are recorded in `spec-verification.md`, beside this file, together with the SHA-256 of the exact `spec.md` they were run against. That hash is of revision 1 of this file as stored in git, with `\n` line ends (commit `000f500`; a Windows checkout with line-end conversion hashes differently). Revision 2, this text, was edited after those runs; 23.4 lists the edits and what was re-run. The checks, all run on the reference build (Python 3.12, NumPy 2.2.5, SciPy 1.15.2 on OpenBLAS 0.3.28, PyQt6 with Qt 6.9.0, offscreen platform) against the source at `2febd13` with the exit fix applied (the tree that is now commit `6db8ad3`):
 
 1. **Acceptance:** every item of section 21 is asserted literally by one script. Item 16 parses the grey table out of this file. Items 17 and 18 drive a real `SplineFitterWindow`.
 2. **Clean-room differential test:** components were reimplemented following the text of this document (sections 2.1, 2.3, 2.6, 3, 4.1, 4.2, 5.2, 7.1, 7.3, 7.4, 8.2, 8.4 residual, 8.5, 9.3, 9.7, 12.6, 13.1, 14.2, 14.4, 16, 18, 19.17.2, 19.19.1, 19.21 items 4 and 6). Each reimplementation was compared with the source on random inputs: exact equality for discrete results and text, and floating-point agreement within 1e-6 relative for the VarPro residual (its solver is a different LAPACK routine) and within 1e-9 to 1e-15 elsewhere. The airfoil parser was fuzzed with Selig and Lednicer files in many number formats, scales, separators and name forms.
@@ -2063,7 +2133,7 @@ The verification results are recorded in `spec-verification.md`, beside this fil
 
 ### 23.3 Completeness statement
 
-Every behaviour of the application is specified; nothing is left to the implementer's choice. The boundaries below are deliberate dependencies, specified as such:
+The aim is that every behaviour of the application is specified and nothing is left to the implementer's choice. No finite set of checks proves that for a document of this size: the checks of 23.2 show it for the behaviours they compare, and the review of revision 2 (23.4) still found behaviours that revision 1 stated wrongly (line ends) or not at all (non-finite numbers in project files) because no check compared them. A reader who finds a rule that admits two readings should treat it as a defect of this document, not as a freedom. The boundaries below are deliberate dependencies, specified as such:
 
 - **Iterative fits.** Every iteration is specified exactly: unknowns, residual rows and their order, Jacobians, damping updates, acceptance and stopping tests, constants (sections 8-10). The dense linear algebra is pinned to these LAPACK routines (double precision), as called by the reference build (NumPy 2.2.5 and SciPy 1.15.2, both on OpenBLAS 0.3.28):
 
@@ -2073,9 +2143,8 @@ Every behaviour of the application is specified; nothing is left to the implemen
   | Cholesky step of LM (8.5) | `dpotrf`, `dpotrs` |
   | `matrix_root` Cholesky / fallback (8.4) | `dpotrf` / `dsyevd` |
   | Direct LSQ KKT solve (10, `scipy.linalg.solve` with the default structure detection, which finds the KKT matrix symmetric) | `dsysv` (Bunch-Kaufman, lower triangle) with a `dsycon` condition estimate; a singular matrix raises, an ill-conditioned one only warns |
-  | joint Schur solve (9.7, `numpy.linalg.solve`) | `dgesv` |
-  | null space (9.7) and pseudo-inverses (8.3, 12.6) | `dgesdd` |
-  | `P0` least squares (9.7), knot removal fit (14.7) | `dgelsd` |
+  | pseudo-inverses (8.3, 12.6) | `dgesdd` |
+  | knot removal fit (14.7) | `dgelsd` |
   | bounded leading-edge search (13.2) | Brent's bounded minimization (`fminbound`, `xatol = 1e-14`) |
   | Gauss-Legendre nodes (2.5) | `numpy.polynomial.legendre.leggauss` (companion-matrix eigenvalues, one Newton correction, symmetrized) |
 
@@ -2083,11 +2152,85 @@ Every behaviour of the application is specified; nothing is left to the implemen
 - **Widget drawing.** The application sets Qt's `Fusion` style, the full palette (19.19.2), the complete stylesheet (Appendix A), all fonts, sizes, plot pens and brushes, and z-order. How Qt and pyqtgraph rasterize those (anti-aliasing, glyph shapes) is the toolkit's behaviour, a declared dependency (section 1).
 - **Icons.** Appendix B gives both files byte for byte.
 
+### 23.4 Revision 2 (2026-11-10)
+
+Revision 2 is a review of revision 1 against the source at `6db8ad3`. It changes no algorithm, constant, label or message. What it changes, and how each change was checked:
+
+| Change | Sections | Checked by |
+|---|---|---|
+| Line ends of the application's written files follow the platform (`\r\n` on the reference build); revision 1 said `\n` | 1, 14.1, 14.2, 17, 22 item 15 | writing a `.dat`, a `.spline.dat`, a log and a project with the source on Windows and reading the bytes |
+| Project files carry `NaN` / `Infinity` tokens and no final line end; the JSON blocks are key lists, not literal content | 15.1, 22 item 16 | saving and reloading a project with a NaN error and an infinite leading-edge radius |
+| Conformance: the fit regression item is 21 item 11 (revision 1 named item 10); byte equality is scoped to the writers given equal values; two levels for results of iterative fits, which removes the conflict between "bitwise identity is not required" and exact evaluation counts | 0.3, 21 | reading 0.3, 21 and 23.3 side by side |
+| Baseline named as commit `6db8ad3`; revision line; statement that this file is not edited after the runs replaced | header, 23.2 | `git show --stat 6db8ad3`; the SHA-256 of the committed revision 1 equals the recorded one |
+| Library `read_dat` stated as a procedure (it was a summary) | 3.9 | `bspline_varpro/airfoil.py` |
+| Definitions that were used but missing: `L_node`, `JointProblem.control_points`, the `data` argument of `validate_chain_parameters` | 7.3, 8.1, 9.7 | `constraints.py`, `joint.py`, `chain.py` |
+| Wording: Direct LSQ continuity level and its unreachable guards; the twelve palette greys; the slider gradient's out-of-range temperatures; command-line arguments and Qt; the `.spline.dat` layout block | 10.1, 19.19.1, Appendix A, 1.1, 14.2 | the source files named in those sections |
+| Contents table, normative/informative statement, note on reused symbols; signatures moved out of the longest headings; completeness statement reworded as an aim | header, 8-9, 13.6, 14.2, 23.3 | no behaviour involved |
+
+Of the checks of 23.2, only the theme check (item 7) and acceptance item 16 read this file; the theme check was re-run on revision 2 (30 of 30), and the grey table that item 16 parses is unchanged (13 rows). `spec-verification.md` itself was not regenerated: its hashes and results describe revision 1. The blind reimplementation (item 3) was not repeated for the changed passages: the line-end and non-finite-number rules have no blind confirmation.
+
+### 23.5 Revision 3 (2026-11-10)
+
+Revision 3 changes what the document is for: it now states the behaviour the system is to have, and section 24 lists where the source at `6db8ad3` differs. None of the checks of 23.2 has been run against the `[Dk]` rules, because no implementation of them exists yet; the checks that will need new expectations are named in the last column of the table in section 24. The untagged rules are unchanged from revision 2 and remain covered as 23.4 says. The theme check, which reads this file, still passes on revision 3 against the unchanged source (the one tagged rule it touches, `[D12]`, changes when a glyph file is written, not what it contains).
+
+---
+
+## 24. Design changes of revision 3: the work list for the code
+
+Each row is one design change. "Was" is the behaviour of the source at `6db8ad3` (and of revisions 1 and 2 of this document). The rules themselves are in the sections named; this table adds none.
+
+| # | Change | Was | Why | Sections | Code and tests to change |
+|---|---|---|---|---|---|
+| D1 | Every writer writes `\n` line ends | The application's writers followed the platform: `\r\n` on Windows | The same fit produced different bytes on different machines; files could not be compared or hashed across platforms; the library's writers in the same program already wrote `\n` | 1, 14.1, 14.2, 17 | `newline="\n"` in `io.export_airfoil_data`, `io.export_spline_data`, `run_log.save`, `project_io.save_project` (`os.fdopen`) |
+| D2 | Project files are standard JSON: non-finite numbers are the strings `"NaN"`, `"Infinity"`, `"-Infinity"` | Bare `NaN` / `Infinity` tokens (Python's default) | Any other JSON reader (a browser, `jq`, another language) rejected a project as soon as one run had an infinite leading-edge radius | 15.1 | `project_io` encoder (`allow_nan=False`, replace values first) and decoders; a round-trip test |
+| D3 | A coordinate row needs two finite numbers | `inf` and `nan` were accepted as coordinates, and a first line such as `inf 5` crashed the parser with `OverflowError`, shown to the user as `Failed to load: cannot convert float infinity to integer` | The document specified an uncaught exception as required behaviour. A line with `nan` is not a point | 3.4, 3.5, 21 item 6 | `io.parse_airfoil_text` row test, `is_point_counts` |
+| D4 | The installed scripts start through `cli_entry`; the checkout's library folder is used only when no library is installed | `spline-fitter --help` opened the window while `python -m spline_fitter --help` printed help; importing the package put the checkout's library first on `sys.path`, hiding an installed one | Two start-up behaviours for one program; an import with a side effect that silently chooses which library version runs | 1, 1.1 | `pyproject.toml` `[project.scripts]`, `[project.gui-scripts]`; `spline_fitter/__init__.py` |
+| D5 | About shows the real version | `Airfoil Spline Fitter v1.0` for version 2.0.0 | A wrong version number, which revision 2 "required as is" | 19.3 | `gui/layout.py` |
+| D6 | Dead parts removed: the three retired `OptimizationConfig` fields and their file-name parts; `GNVarProConfig`; `OptimizerType.is_algebraic` / `is_iterative_algebraic`; `compute_polygon_metrics`, `compute_curve_energy`; `get_run_summary`; the aliases `EvaluationRecord` and `reset_evaluation_tracking` | All present. The retired fields did nothing in a fit but still changed batch output names, so two identical fits could get different file names | Code that nothing calls still has to be read, tested, specified and reimplemented; fields that only affect a file name are a trap | 5.3, 5.5, 5.7, 6.2, 6.3, 11.2, 11.3, 11.4, 15.4, 16 | `optimization/models.py`, `gui/batch.py`, `optimizers/varpro_gn.py` (or its present name), `spline/`, `project_io.py`, `optimization/tracking.py`, the package `__init__` exports; tests of the removed functions; `scripts/` that pass the retired fields |
+| D7 | One set of defaults: `SplineConfig()` and `OptimizationConfig()` equal the window's start values and the batch reference settings | Three sets: the models defaulted to G1 parametric, free knots, growth; the window to G3 geometric, uniform, no growth; the batch reference overrode the models to match the window | A script using the defaults fitted something else than the window with untouched settings, and the batch module had to carry its own corrected copies | 5.4, 5.5, 16, 19.4, 21 item 8 | `optimization/models.py` defaults; `gui/ui.py` sets the sidebar widgets from the two default objects instead of literals; `gui/batch.py` `DEFAULT_SPLINE`, `DEFAULT_OPTIMIZATION`; tests and scripts that rely on the old defaults. Note: `SplineConfig(degree=1)` or `degree=2` with more than one section must now name a continuity, because the default G3 needs degree 3 |
+| D8 | One implementation each of open uniform knots, the knot check, centripetal parameters and the end-derivative coefficients: the library's | The application carried copies: `create_open_uniform_knots` (same numbers, a message without the final period), `validate_knot_vector` (a weaker check), `centripetal_parametrize`, `compute_derivative_constraint_coeffs` (hand-derived closed forms, equal to the library's) | Four pairs of functions that had to be kept equal by hand, with the differences between them specified as required behaviour | 2.1, 2.6, 6.1, 7.5, 10 | `spline/`, `geometry.py`, `optimizers/constrained_lsq.py`; their tests move to the library functions |
+| D9 | One callback form, always with `preview=` and `step=`; no signature inspection in the application | The adapters inspected each callback's signature to decide which arguments to pass, and tolerance mode counted evaluations differently depending on whether the callback had a `step` parameter | Behaviour that depends on the spelling of a parameter name in another module; the application owns both ends of the call | 10 step 11, 11.3 | both optimizer adapters; test callbacks need the two keywords |
+| D10 | Direct LSQ is one constrained linear solve on fixed data parameters: `nit = 1`, one evaluation, always successful, empty message | One solve followed by up to 100 joint refinement steps per stage (two stages with free junctions), reported as `single-step, no iteration`, `nit = 1` and converged | The refinement solved the problem VarPro LM solves, in a second implementation, and was cut off at 100 steps in five of six test fits; the name, the tooltip and the report all described a single solve. Cost of the change: on the reference fit the RMS goes from `2.94e-7` to `1.90e-5` | 5.3, 10, 21 items 11 and 17 | `optimizers/constrained_lsq.py` (drop the stages and the `solve_joint` call; solve once with the constraints of the junction setting); the optimizer tooltip in `models.py`; `spec-verification/acceptance.py` and the tests that pin Direct LSQ errors |
+| D11 | CSV log files are written only when `SPLINE_FITTER_LOG_DIR` is set | Every fit wrote a file into `<checkout>/optimizer_logs` or `~/.spline_fitter/optimizer_logs` | Unbounded files nobody asked for, in a place that depended on whether a `pyproject.toml` was nearby; the same data is in the project and the loss plot | 1.2, 17, 19.12.1 step 9, 21 item 17 | `optimization/run_log.py` |
+| D12 | A glyph file is rewritten when its content is not the expected content | Written only when missing | A truncated or outdated file in the temporary folder stayed broken for ever | 19.21 item 12 | `gui/theme.py` |
+| D13 | Changing the Sections value does not touch the airfoil, the fit or the plots; the split is applied when a fit starts. Loading an airfoil builds the new airfoil before changing any widget | Every change of the spin box re-split the airfoil, cleared the shown fit, replotted and wrote a status. Loading set the Sections maximum first, which could re-split the previous airfoil and clear its fit before the new file had been accepted | Scrolling a spin box destroyed the fit on screen, although the split only matters to the next fit (sweeps already re-split per fit). A failed load could leave the previous airfoil without its fit | 19.11.1, 19.11.6, 19.12.1 step 4, 19.16.2 | the window's section-change handler, `set_airfoil`, `on_fit`; tests that expect `Re-split:` |
+| D14 | Changes the application makes as one action are grouped explicitly into one undo step | They were one step only because they all arrived within the 500 ms merge timer | Correctness that depends on the machine being fast | 19.8, 19.10, 19.13.1 | `gui` settings history (`group()`), `apply_run_settings`, the sweep controller |
+| D15 | A global `!=text` filter term matches rows in which no cell equals `text` | It matched as soon as one cell differed, that is, nearly always | The term could not filter anything | 19.17.2, 21 item 21 | the explorer's row filter; `spec-verification/gui_logic.py` and the blind model |
+| D16 | Default file names all come from `file_stem(filename or name or fallback)` | `name or filename` for the fitted airfoil and the project, `filename or name` for the spline and the CAD export | Four dialogs, two rules; the same airfoil got `NACA 2412_fitted.dat` next to `naca2412.deg5.spline.dat` | 19.15.1, 19.15.2, 19.16.3 | the file-action and project controllers; `spec-verification/file_flows_check.py` expectations |
+| D17 | Facts stored twice in a project file have one authoritative copy; the others are written but not read | `sections`, `num_sections` and `result.degree` were read as given, so an edited or damaged file could hold sections that are not slices of its coordinates | Redundant data with no rule for disagreement | 15.1, 15.4 | `project_io` decoders |
+| D18 | `knot_placement` decides whether the interior knots are unknowns of the one optimization loop of a fit (`solve_free_knots`); a fit with free knots has no stage after it, and its geometric junctions are solved in the same run | Free knots were a second optimization, `polish_knots`, run after the finished uniform-knot fit with a budget of 60 evaluations, and its result was kept only when not worse; with geometric junctions that made three runs | The setting said Free or Uniform but the process was Uniform, then a truncated attempt at Free. One loop does what the setting says and ends on its own test. Cost: seconds where the two-step fit took one to four; the knots of a symmetric airfoil are not symmetric | 8.10 steps 6 and 8, 8.11 | library `fitting.fit` and `_fit_once`, `tolerance.solve_free_knots` (new), the package exports and README (`polish_knots` itself goes with `[D20]`) |
+| D19 | A fit with geometric junctions is one optimization started from the problem's initial shape values; `solve_with_continuation` is gone | A geometric fit was two optimizations under one budget: the chain with parametric junctions run to convergence, then the geometric problem started from that result | Both runs satisfied the junctions exactly at every step, so the first only chose a start for the shape values, and the start the problem already has does as well: 60 fits measured, the same result in all 30 with smoothing and fewer evaluations in 29 (8.9). With `[D18]`, every fit at a fixed count is one optimization whatever Knots and Type say. Cost: evaluation counts of geometric fits change (the reference fit 40 -> 34), and without smoothing a fit can end in a different minimum of the same size | 8.9, 8.10 step 6, 9.1, 21 items 11 and 17 | library `fitting._fit_once` (`solve_with_continuation` and `parametric_options` removed), `tolerance._refit`, the library tests and README; the values in `spec-verification/acceptance.py` |
+| D20 | Every refit of growth and of the tolerance search is the same single fit as any other: with free knots they are its unknowns (`solve_free_knots`), and the procedure continues from where that fit left them. `polish_knots` and the `optimize_knots` argument are gone, and the history has the stages `insert` and `remove` only | The refits kept their knots fixed; free knots were moved by `polish_knots` afterwards (after growth; in the tolerance search before removal, on each failed removal trial and at the end), each run cut off after 60 evaluations and mostly kept only when not worse; a polish whose solve failed returned the unpolished fit without a word | The same reasons as `[D18]`: the Knots setting did not describe the process, and a result depended on a budget and on comparisons after the fact. Now a search is a sequence of fits that differ only in their knot count. Cost: large. The reference tolerance search with free knots and growth (21 item 11) took 2 minutes before; its fits with seven or more interior knots per section now take about 4000 evaluations and two minutes each. The free knots of such a fit stacked at the minimum gap of 8.11, then 0.001; that gap is a setting since `[D22]` | 9.1, 9.4, 9.5, 9.6, 9.8, 21 item 11 | library `tolerance.py` (`_refit`, `grow_to_counts`, `fit_to_tolerance`; `polish_knots` removed), the package exports, README and tests; `spec-verification/acceptance.py` |
+| D21 | There is no subsampling: every fit uses every point. `max_points_per_section` is gone from the library, the model, the window (the Subsample row), the explorer (its column), batch names (`sub{m}`) and project files (the key is ignored when read). The joint refinement that was its second stage is gone too (`refinement`, `joint`), as are the helpers only it used | Sections longer than the limit were fitted on an evenly spaced subsample, the other points projected onto that curve, and all points refined jointly; free knots were silently treated as uniform on that path | Two stages, and a setting (Knots) that did not do what it said. Cost: a fit of thousands of points is slow, since variable projection costs O(n³) per step in the number of points; thin the data before fitting if that matters | 5.5, 8.1, 8.10, 9.2, 9.7, 11.3, 15, 16, 19.4, 19.6, 19.9, 19.10, 19.16.4, 19.17.1, 21 item 8 | library `fitting.py`, `tolerance.py`, `chain.py` (`section_ranges`, `project_between`, `project_to_chain`), `constraints.py` (`theta_from_parametric`, `has_shape_parameters`), `refinement.py` and `joint.py` deleted; application `models.py`, `gn_varpro.py`, `project_io.py`, `gui/layout.py`, `ui.py`, `batch.py`, `explorer.py`, `project.py`; tests |
+| D22 | The smallest spacing of free knots is a setting, `min_knot_gap`, default 0.05 of a section's parameter range: in the library (`fit`, `fit_to_tolerance`, `grow_to_counts`, `solve_free_knots`), the model, the window (`Knot spacing`), the explorer, batch names and project files. Free knots are not inserted closer than it either. The gaps are built so that the floor holds in the knots themselves (8.11) | A constant `min_gap = 1e-3` inside `solve_free_knots`, not reachable from the application; insertion used a span of `1e-4`; the floor was applied before the gaps were normalized, so it did not hold | With 0.001 the free knots of a search stack at the floor, which nearly breaks the smoothness there: a NACA 0012 of 81 points at tolerance 1e-6 got a leading-edge radius of 0.0097 against 0.0159 in 207 s; with 0.05 it is 0.0158 in 19 s with `[8, 8]` control points. The value trades how closely knots can follow the data against that, so it is the user's. Cost: with uniform start knots closer than the setting (more than about 20 control points per section at 0.05) free knots can hardly move, since knots that start closer keep their spacing | 5.5, 8.11, 9.1, 9.4, 9.6, 9.8, 11.3, 15, 16, 19.4, 19.6, 19.16.4, 19.17.1 | library `fitting.py`, `tolerance.py`; application `models.py`, `gn_varpro.py`, `project_io.py`, `gui/layout.py`, `ui.py`, `batch.py`, `explorer.py`, `project.py`; tests |
+| D23 | Every fit a tolerance search goes through is stored as a run of its own, like the fits of a sweep; runs of one search are told apart by their control point counts | Only the last fit of a search was stored, and a tolerance run replaced any run of the same settings | A tolerance search does what a sweep of the control point count does: a sequence of complete fits. Each is a result worth comparing | 11.3, 19.8, 19.9, 19.16.4 | application `optimizers/base.py`, `gn_varpro.py`, `gui/fitting.py`, `gui/project.py`; tests |
+| D24 | The convergence tolerance of every fit (`ftol`, `xtol`, `gtol` of 8.5) is 1e-8: the default of `levenberg_marquardt`, `solve_problem`, `solve_free_knots` and `fit`, and the application's `LM_TOLERANCE` | 1e-10 | With the parametric pre-fit gone `[D19]`, a fit can run in a valley without a minimum: four sections of a NACA 2412 (81 points) at six control points each, G2, where a junction's `β` grows without limit for a gain of 0.1% per 10000 evaluations. Each step still gained more than 1e-10, so the fit never ended; three solvers behave alike, and neither another start of the shape parameters nor a bound on `β` changes it. At 1e-8 that fit ends (407 s), the reference free-knot tolerance search takes 7.5 minutes instead of about 20 with the same `[11, 11]` control points, and errors differ by at most 0.4%. 1e-6 is faster still but lets that reference search miss its tolerance | 8.5, 8.6, 8.10, 8.11, 11.3, 21 item 11 | library `fitting.py`, `tolerance.py`; application `gn_varpro.py`; tests |
+
+### 24.1 Design questions left open
+
+These were found in the same review and not changed, because the better behaviour is a decision for the owner of the program or needs measurement first. Each is specified as the source behaves.
+
+1. **Direct LSQ stopped at an arbitrary point (resolved, `[D10]`).** Its refinement ended at 100 steps whatever the state. The refinement is removed; Direct LSQ is the single solve.
+2. **`fun`, `final_error` and the `Error` shown mean three things**: the parametric RMS (Direct LSQ), the RMS at the fitted parameters (VarPro, fixed count) and the maximum orthogonal deviation (tolerance goal). The status line prints all three under the word `Error`. The report's `rms_deviation` is the one measure comparable across runs (`comparison_error`, 5.6).
+3. **Levenberg-Marquardt status 3** covers both a step below the tolerance and a damping value above `1e20`, and both count as success with the message that the `xtol` condition is satisfied (8.5).
+4. **Three ways to state continuity**: `continuity` (an enum named `G0..G3` that is also used for parametric continuity), `geometric_continuity`, and `junction_continuity`, which overrides both. Direct LSQ silently ignores the last two (section 10).
+5. **`optimize_le_position`** frees every junction, not the leading edge; the name survives in the model and the project format.
+6. **Two airfoil readers** that accept different files (section 3 and 3.9), two `FitResult` classes, two `split_at_leading_edge` and two `default_tolerance` functions remain between the application and the library.
+7. **Outlier removal is silent** (3.7): points are dropped on loading and the status line reports only the count that remains.
+8. **Process-global counters** (11.4) carry the evaluation count between the adapters, the live preview and the result.
+9. **Diagnostics are printed**, not logged (tracebacks, `Fit report failed`, `Log saved`), although the project loader uses `logging`.
+10. **Every file dialog starts in the home directory**; no last-used folder is kept, and the batch folders are forgotten at exit (19.23).
+11. **Status texts are punctuated two ways** (`Save cancelled.` with a period, `Cancelled: the project stays open` without) and `format_duration` mixes `12.34 s` with `2m 3s`.
+12. **The glyph files live in the shared temporary folder** (19.21 item 12); on a multi-user machine another account can own that folder.
+13. **`main()` ends with `os._exit`** to avoid a crash at interpreter shutdown (1.1 step 5); the cause in the Qt teardown order is not removed.
+14. **Fits in sequence (resolved `[D20]`, `[D21]`).** Growth and the tolerance search are sequences of fits, because the number of control points is a whole number that the optimizer cannot vary. Every fit in such a sequence is the one process of 8.6 or 8.11; nothing runs between or after them, and no fit runs in stages.
+15. **Minimum gap of free knots (resolved `[D22]`: a setting, default 0.05).** With `min_gap = 1e-3` the free knots of a tolerance search stack at the floor: a NACA 0012 of 81 points at tolerance 1e-6 ends with a leading-edge radius of 0.0097 against 0.0159 and takes 207 s. Measured with larger floors: `min_gap = 0.02` gives `[8, 8]` control points, radius 0.01535, 35 s; `min_gap = 0.05` gives `[8, 8]`, radius 0.01583, 36 s.
+
 ---
 
 ## Appendix A. Application stylesheet
 
-The stylesheet is this template with `{TOKEN}` replaced by the current `Palette` value (19.19.1), `{H}` by `24` (`CONTROL_HEIGHT - 2`), `{FIXED}` by `min-height: 24px; max-height: 24px;`, `{MONO}` by `Cascadia Mono, Consolas, Menlo, monospace`, and `{glyph:NAME:TOKEN:PAD}` by the path (forward slashes) of the glyph SVG file of 19.21 item 12 (`TOKEN` defaults to `TEXT_2`, `PAD` to 0). `{SLIDER_GRADIENT}` is `stop:0 #6288BA, stop:0.5 #868686, stop:1 #968645` (`grey(0.62, -4)`, `grey(0.62, 0)`, `grey(0.62, 4)`, independent of the theme).
+The stylesheet is this template with `{TOKEN}` replaced by the current `Palette` value (19.19.1), `{H}` by `24` (`CONTROL_HEIGHT - 2`), `{FIXED}` by `min-height: 24px; max-height: 24px;`, `{MONO}` by `Cascadia Mono, Consolas, Menlo, monospace`, and `{glyph:NAME:TOKEN:PAD}` by the path (forward slashes) of the glyph SVG file of 19.21 item 12 (`TOKEN` defaults to `TEXT_2`, `PAD` to 0). `{SLIDER_GRADIENT}` is `stop:0 #6288BA, stop:0.5 #868686, stop:1 #968645` (`grey(0.62, -4)`, `grey(0.62, 0)`, `grey(0.62, 4)`, independent of the theme; the temperatures `-4` and `4` are deliberately four times beyond the user's range `[-1, 1]` of 19.19.1 so the groove reads as cool to warm, and the formula of 19.19.1 is applied to them unchanged).
 
 ```css
 QWidget { color: {TEXT}; }

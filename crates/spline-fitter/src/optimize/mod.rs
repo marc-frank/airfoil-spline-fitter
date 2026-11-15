@@ -57,6 +57,12 @@ pub struct RawResult {
     pub evaluations: usize,
     pub success: bool,
     pub message: String,
+    /// Seconds from the start of the search to this fit (earlier fits of a
+    /// tolerance search only).
+    pub seconds: Option<f64>,
+    /// The earlier fits of a tolerance search, in order; the result itself
+    /// is the last fit. Each is a fit of its own.
+    pub earlier: Vec<RawResult>,
 }
 
 /// Fits the airfoil's sections with the configured method.
@@ -77,13 +83,15 @@ pub(crate) mod tests {
     use super::*;
     use crate::models::ContinuityMode;
     use bspline_varpro::airfoil::Naca4;
-    use bspline_varpro::KnotPlacement;
 
     pub fn naca2412() -> AirfoilData {
         let points: Vec<Vec2> =
             Naca4::new("2412", true).unwrap().points(81).iter().map(|p| p.map(|v| (v * 1e6).round_ties_even() / 1e6)).collect();
         AirfoilData::new(points, 2, "naca2412", "NACA 2412", 6).unwrap()
     }
+
+    /// Evaluations of the reference G3 fit (specification 21, item 11).
+    pub const REFERENCE_EVALUATIONS: usize = 33;
 
     fn close(a: f64, b: f64) -> bool {
         (a - b).abs() <= 1e-3 * b.abs()
@@ -92,18 +100,18 @@ pub(crate) mod tests {
     #[test]
     fn reference_fits() {
         let airfoil = naca2412();
-        let config = SplineConfig { continuity: ContinuityMode::G3, geometric_continuity: true, ..Default::default() };
-        let options = OptimizationConfig { knot_placement: KnotPlacement::Uniform, grow_control_points: false, ..Default::default() };
+        let config = SplineConfig::default();
+        let options = OptimizationConfig::default();
         let r = run_optimization(&config, &options, &airfoil, &mut Unmonitored).unwrap();
         assert!(close(r.error, 8.978e-7), "{}", r.error);
-        assert_eq!((r.iterations, r.evaluations), (40, 40));
+        assert_eq!((r.iterations, r.evaluations), (REFERENCE_EVALUATIONS, REFERENCE_EVALUATIONS));
         assert_eq!(r.message, "`ftol` termination condition is satisfied.");
 
-        let config = SplineConfig { continuity: ContinuityMode::G2, ..Default::default() };
+        let config = SplineConfig { continuity: ContinuityMode::G2, geometric_continuity: false, ..Default::default() };
         let options = OptimizationConfig { optimizer: OptimizerType::DirectLsq, ..options };
         let r = run_optimization(&config, &options, &airfoil, &mut Unmonitored).unwrap();
-        assert!(close(r.error, 2.942e-7), "{}", r.error);
-        assert_eq!((r.iterations, r.evaluations), (1, 2));
+        assert!(close(r.error, 1.897e-5), "{}", r.error);
+        assert_eq!((r.iterations, r.evaluations), (1, 1));
         assert_eq!(r.section_control_points.iter().map(Vec::len).collect::<Vec<_>>(), vec![25, 25]);
     }
 }

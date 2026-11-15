@@ -1,24 +1,19 @@
-//! Direct LSQ: one constrained linear least-squares solve on fixed data
-//! parameters, then a joint refinement of parameters and control points.
+//! Direct LSQ: one constrained linear least-squares solve on uniform knots
+//! with the data parameters taken from the point spacing.
 //!
 //! The chain is fitted as a whole with parametric continuity: the ends are
 //! fixed, the sections joined and, unless the junctions are free, pinned to
-//! their split points. After the linear solve every point slides to its
-//! closest chain point (and may cross a junction).
+//! their split points. One solve, one evaluation, no iteration.
 
 use bspline_varpro::basis::SparseRows;
 use bspline_varpro::chain::{chain_data, chain_parameters, evaluate_chain, locate};
-use bspline_varpro::{
-    centripetal_parameters, open_uniform_knots, solve_joint, BSpline, ChainConstraints, End, JointProblem, Junction, KktSolver,
-};
+use bspline_varpro::{centripetal_parameters, open_uniform_knots, BSpline, ChainConstraints, End, Junction, KktSolver};
 use nalgebra::DMatrix;
 
 use super::{Monitor, RawResult, Update, UpdateKind};
 use crate::models::{OptimizationConfig, Parameterization, SplineConfig};
 use crate::{Result, Vec2};
 
-/// Gauss-Newton iterations of each joint refinement.
-const MAX_ITERATIONS: usize = 100;
 /// Ridge of the linear solve.
 const REGULARIZATION: f64 = 1e-10;
 
@@ -33,34 +28,15 @@ pub fn fit(config: &SplineConfig, options: &OptimizationConfig, sections: &[Vec<
         Parameterization::ArcLength => 1.0,
     };
     let local: Vec<Vec<f64>> = sections.iter().map(|sec| centripetal_parameters(sec, alpha)).collect();
-    let mut u = chain_parameters(&local, sections);
-    let free = options.optimize_le_position && s > 1;
-    let constraints = |fixed: bool| -> Result<(DMatrix<f64>, DMatrix<f64>)> {
-        let junction = Junction::new(config.continuity.order(), false, fixed)?;
-        let chain = ChainConstraints::new(sections, &knots, p, vec![junction; s - 1], End::default(), End::default())?;
-        let built = chain.build(&[]);
-        Ok((built.c, built.d))
-    };
-    // With free junctions the fit starts from the pinned ones.
-    let mut stages = vec![constraints(true)?];
-    if free {
-        stages.push(constraints(false)?);
-    }
+    let u = chain_parameters(&local, sections);
+    let fixed = !(options.optimize_le_position && s > 1);
+    let junction = Junction::new(config.continuity.order(), false, fixed)?;
+    let constraints = ChainConstraints::new(sections, &knots, p, vec![junction; s - 1], End::default(), End::default())?.build(&[]);
 
     let offsets: Vec<usize> = (0..=s).map(|k| k * n).collect();
     let basis = SparseRows::new(&u, &knots, &offsets, p, 0, |v| locate(v, s));
-    let (c0, d0) = &stages[0];
     let rhs = basis.tr_mul(&DMatrix::from_fn(data.len(), 2, |i, k| data[i][k]));
-    let mut control = KktSolver::new(&basis.gram(), c0, REGULARIZATION).solve(&rhs, Some(d0));
-    let mut evaluations = 1;
-    for (c, d) in &stages {
-        let mut problem = JointProblem::new(sections, knots.clone(), p, c, d, 0.0, 0.0);
-        let z0 = problem.z_from(&control);
-        let solution = solve_joint(&mut problem, &u, z0, Some(MAX_ITERATIONS), 1e-12, &mut |_, _, _| false)?;
-        u = solution.u;
-        control = problem.control_points(&solution.z);
-        evaluations += 1;
-    }
+    let control = KktSolver::new(&basis.gram(), &constraints.c, REGULARIZATION).solve(&rhs, Some(&constraints.d));
 
     let section_control_points: Vec<Vec<Vec2>> =
         (0..s).map(|k| (k * n..(k + 1) * n).map(|i| Vec2::new(control[(i, 0)], control[(i, 1)])).collect()).collect();
@@ -74,7 +50,7 @@ pub fn fit(config: &SplineConfig, options: &OptimizationConfig, sections: &[Vec<
         knots: &knots,
         degree: p,
         error,
-        evaluations,
+        evaluations: 1,
     });
     Ok(RawResult {
         section_control_points,
@@ -82,8 +58,10 @@ pub fn fit(config: &SplineConfig, options: &OptimizationConfig, sections: &[Vec<
         error,
         rms_error: error,
         iterations: 1,
-        evaluations,
+        evaluations: 1,
         success: true,
         message: String::new(),
+        seconds: None,
+        earlier: vec![],
     })
 }

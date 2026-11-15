@@ -8,16 +8,14 @@ use bspline_varpro::KnotPlacement;
 use crate::analysis::default_tolerance;
 use crate::geometry::AirfoilData;
 use crate::io::{export_spline_data, parse_airfoil_file, SplineFile};
-use crate::models::{ContinuityMode, OptimizationConfig, OptimizerType, Parameterization, SplineConfig};
+use crate::models::{OptimizationConfig, OptimizerType, Parameterization, SplineConfig};
 use crate::optimize::{run_optimization, Monitor, RawResult};
 use crate::{bail, Error, Result};
 
-/// The settings of a new window, against which output names are made.
+/// The settings of a new window, against which output names are made: the
+/// defaults of the models.
 pub fn reference_settings() -> (SplineConfig, OptimizationConfig) {
-    (
-        SplineConfig { continuity: ContinuityMode::G3, geometric_continuity: true, ..SplineConfig::default() },
-        OptimizationConfig { knot_placement: KnotPlacement::Uniform, grow_control_points: false, ..OptimizationConfig::default() },
-    )
+    (SplineConfig::default(), OptimizationConfig::default())
 }
 
 /// A number for a file name, the same in every locale: small ones as
@@ -67,14 +65,14 @@ pub fn output_name(stem: &str, config: &SplineConfig, opt: &OptimizationConfig, 
     if opt.knot_placement != reference_opt.knot_placement {
         parts.push(format!("knots-{}", crate::models::placement_value(opt.knot_placement)));
     }
+    if opt.knot_placement == KnotPlacement::Free && opt.min_knot_gap != reference_opt.min_knot_gap {
+        parts.push(format!("gap{}", num(opt.min_knot_gap)));
+    }
     if opt.grow_control_points {
         parts.push("grow".into());
     }
     if opt.smoothing_weight != reference_opt.smoothing_weight {
         parts.push(format!("smooth{}", num(opt.smoothing_weight)));
-    }
-    if let Some(m) = opt.max_points_per_section {
-        parts.push(format!("sub{m}"));
     }
     if opt.optimize_le_position {
         parts.push("free-le".into());
@@ -203,9 +201,21 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(output_name("naca0012", &config, &o, false), "naca0012.deg5.n30.s3.G2-C1.tol1e-4.spline.dat");
-        let o = OptimizationConfig { tolerance: Some(1e-5), ..Default::default() };
+        let o = OptimizationConfig {
+            tolerance: Some(1e-5),
+            knot_placement: KnotPlacement::Free,
+            grow_control_points: true,
+            ..Default::default()
+        };
         assert_eq!(output_name("naca0012", &spline, &o, true), "naca0012.deg5.tol-auto.knots-free.grow.spline.dat");
-        let config = SplineConfig { degree: 3, continuity: ContinuityMode::G2, ..SplineConfig::default() };
+        let gap = OptimizationConfig { knot_placement: KnotPlacement::Free, min_knot_gap: 0.02, ..Default::default() };
+        assert_eq!(output_name("x", &spline, &gap, false), "x.deg5.knots-free.gap0.02.spline.dat");
+        let config = SplineConfig {
+            degree: 3,
+            continuity: crate::models::ContinuityMode::G2,
+            geometric_continuity: false,
+            ..SplineConfig::default()
+        };
         let o = OptimizationConfig {
             optimizer: OptimizerType::DirectLsq,
             parameterization: Parameterization::ArcLength,
@@ -213,10 +223,9 @@ mod tests {
             grow_control_points: false,
             smoothing_weight: 0.01,
             optimize_le_position: true,
-            max_points_per_section: Some(150),
             ..Default::default()
         };
-        assert_eq!(output_name("x", &config, &o, false), "x.deg3.C2.lsq.arc-length.smooth0.01.sub150.free-le.spline.dat");
+        assert_eq!(output_name("x", &config, &o, false), "x.deg3.C2.lsq.arc-length.smooth0.01.free-le.spline.dat");
         let one = SplineConfig { num_sections: 1, ..spline };
         assert_eq!(output_name("x", &one, &opt, false), "x.deg5.s1.spline.dat");
     }

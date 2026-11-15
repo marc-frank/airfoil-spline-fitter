@@ -8,7 +8,7 @@ use std::time::Instant;
 use spline_fitter::batch::{airfoil_files, prepare, write_result, BatchItem};
 use spline_fitter::formatting::{format_count, format_duration, format_error, number};
 use spline_fitter::geometry::AirfoilData;
-use spline_fitter::models::{FitResult, IterationRecord, OptimizationConfig, OptimizerType, SplineConfig};
+use spline_fitter::models::{FitResult, IterationRecord, OptimizationConfig, SplineConfig};
 use spline_fitter::BSpline;
 
 use crate::app::App;
@@ -96,15 +96,23 @@ impl App {
         Ok((config, self.settings.optimization_config()?))
     }
 
-    /// The Fit spline button.
+    /// The Fit spline button. The split belongs to the fit: the airfoil is
+    /// split for the section count here, not when the count changes.
     pub fn on_fit(&mut self) {
-        let Some(airfoil) = self.airfoil.clone() else {
+        let Some(mut airfoil) = self.airfoil.clone() else {
             return self.set_status("Load an airfoil first.");
         };
         let (config, opt) = match self.configs() {
             Ok(c) => c,
             Err(e) => return self.set_status(e.0),
         };
+        if airfoil.num_sections() != config.num_sections {
+            airfoil = match airfoil.resplit(config.num_sections) {
+                Ok(a) => a,
+                Err(e) => return self.set_status(e.0),
+            };
+            self.airfoil = Some(airfoil.clone());
+        }
         if self.settings.sweeping() {
             return self.start_sweep(config, opt);
         }
@@ -142,13 +150,20 @@ impl App {
     }
 
     fn effort(&self, job: &FitJob, outcome: &Outcome) -> String {
-        let evaluations = outcome.raw.evaluations;
+        let evaluations = plural_noun(outcome.raw.evaluations, "evaluation");
         if job.options.tolerance.is_some() {
-            format!("{}, {}", plural_noun(outcome.raw.iterations, "refit"), plural_noun(evaluations, "evaluation"))
-        } else if job.options.optimizer == OptimizerType::DirectLsq {
-            plural_noun(if evaluations > 0 { evaluations } else { outcome.raw.iterations }, "solve")
+            format!("{}, {evaluations}", plural_noun(outcome.raw.iterations, "refit"))
         } else {
-            plural_noun(evaluations, "evaluation")
+            evaluations
+        }
+    }
+
+    /// Stores the earlier fits of a tolerance search as runs of their own,
+    /// each with the loss history up to its time.
+    fn add_earlier_runs(&mut self, job: &FitJob, outcome: &Outcome, history: &[IterationRecord]) {
+        for fit in &outcome.earlier {
+            let upto = history.iter().filter(|r| r.elapsed_seconds <= fit.elapsed_seconds).copied().collect();
+            self.add_run(&job.config, &job.options, fit.clone(), upto, false);
         }
     }
 
@@ -164,6 +179,7 @@ impl App {
             Ok(outcome) => {
                 let history: Vec<IterationRecord> =
                     log.history().map(|(i, t, e)| IterationRecord { iteration: i, error: e, elapsed_seconds: t }).collect();
+                self.add_earlier_runs(job, &outcome, &history);
                 let kept = !self.add_run(&job.config, &job.options, outcome.fit.clone(), history, true);
                 self.fit = Some(outcome.fit.clone());
                 self.show_current_fit();
@@ -318,7 +334,9 @@ impl App {
                 status += &format!(" | Failed: {e}");
             }
             Ok(outcome) => {
-                let history = log.history().map(|(i, t, e)| IterationRecord { iteration: i, error: e, elapsed_seconds: t }).collect();
+                let history: Vec<IterationRecord> =
+                    log.history().map(|(i, t, e)| IterationRecord { iteration: i, error: e, elapsed_seconds: t }).collect();
+                self.add_earlier_runs(job, &outcome, &history);
                 self.add_run(&job.config, &job.options, outcome.fit.clone(), history, false);
                 if outcome.cancelled {
                     sweep.cancelled = true;

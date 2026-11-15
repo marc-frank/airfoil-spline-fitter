@@ -90,17 +90,19 @@ impl App {
             self.set_status("Cancelled: the project stays open");
             return false;
         }
-        self.quiet = true;
-        self.settings.sections.value.set_max(coords.len().saturating_sub(1).max(1));
-        let sections = self.settings.sections.value.value;
+        // The airfoil is built before anything changes, so a failure leaves
+        // the window as it was.
+        let most = coords.len().saturating_sub(1).max(1);
+        let sections = self.settings.sections.value.value.min(most);
         let airfoil = match AirfoilData::new(coords, sections, filename, name, precision) {
             Ok(a) => a,
             Err(e) => {
-                self.quiet = false;
                 self.fail(format!("Failed to load: {e}"));
                 return false;
             }
         };
+        self.quiet = true;
+        self.settings.sections.value.set_max(most);
         self.fit = None;
         self.reset_project();
         self.airfoil_path = path.to_string();
@@ -131,28 +133,6 @@ impl App {
     pub fn update_auto_tolerance(&mut self) {
         if let (true, Some(a)) = (self.settings.auto_tolerance, &self.airfoil) {
             self.settings.tolerance = default_tolerance(&a.coordinates, a.precision).max(1e-9);
-        }
-    }
-
-    /// Splits the airfoil again for a new section count.
-    pub fn resplit(&mut self) {
-        let Some(airfoil) = &self.airfoil else { return };
-        let sections = self.settings.sections.value.value;
-        match airfoil.resplit(sections) {
-            Ok(a) => {
-                self.fit = None;
-                self.projects.shown_run = None;
-                self.set_status(format!(
-                    "Re-split: {} ({} points, {} sections: {})",
-                    a.display_name(),
-                    a.coordinates.len(),
-                    a.num_sections(),
-                    a.section_sizes()
-                ));
-                self.main_plot.set_data(&a.coordinates);
-                self.airfoil = Some(a);
-            }
-            Err(e) => self.fail(format!("Failed to re-split airfoil: {e}")),
         }
     }
 
@@ -206,7 +186,7 @@ impl App {
     pub fn save_airfoil(&mut self, per_side: usize) {
         let (Some(fit), Some(airfoil)) = (self.fit.clone(), self.airfoil.clone()) else { return };
         let name = if airfoil.name.is_empty() { &airfoil.filename } else { &airfoil.name };
-        let default = format!("{}_fitted.dat", file_stem(name, "airfoil"));
+        let default = format!("{}_fitted.dat", file_stem(airfoil.file_base(), "airfoil"));
         let Some(path) = FileDialog::new()
             .set_title("Save fitted airfoil")
             .set_directory(home())
@@ -229,8 +209,7 @@ impl App {
         let (Some(fit), Some(airfoil)) = (self.fit.clone(), self.airfoil.clone()) else {
             return self.set_status("No fitted spline to save.");
         };
-        let stem = if airfoil.filename.is_empty() { &airfoil.name } else { &airfoil.filename };
-        let default = format!("{}.deg{}.spline.dat", file_stem(stem, "airfoil"), fit.degree);
+        let default = format!("{}.deg{}.spline.dat", file_stem(airfoil.file_base(), "airfoil"), fit.degree);
         let Some(path) = FileDialog::new()
             .set_title("Save spline control points")
             .set_directory(home())
@@ -246,7 +225,7 @@ impl App {
             .map(|run| run.spline_config.junction_specs())
             .or_else(|| self.settings.spline_config().ok().map(|c| c.junction_specs()));
         let spline = SplineFile {
-            name: if airfoil.name.is_empty() { stem.clone() } else { airfoil.name.clone() },
+            name: if airfoil.name.is_empty() { airfoil.file_base().to_string() } else { airfoil.name.clone() },
             degree: Some(fit.degree),
             control_points: fit.section_control_points.clone(),
             knots: Some(fit.all_knots()),
@@ -274,11 +253,10 @@ impl App {
         self.store.set_bool("cad_merge", choice.merge);
         self.store.set_bool("cad_close_te", choice.close_te);
         let (label, suffix) = crate::dialogs::CAD_FORMATS[choice.format];
-        let stem = [&airfoil.filename, &airfoil.name].into_iter().find(|s| !s.is_empty()).cloned().unwrap_or_else(|| "airfoil".into());
         let Some(path) = FileDialog::new()
             .set_title("Export CAD")
             .set_directory(home())
-            .set_file_name(format!("{}{suffix}", file_stem(&stem, "airfoil")))
+            .set_file_name(format!("{}{suffix}", file_stem(airfoil.file_base(), "airfoil")))
             .add_filter(label, &[suffix.trim_start_matches('.')])
             .save_file()
         else {
@@ -471,11 +449,10 @@ impl App {
         if self.projects.file.is_none() {
             self.projects.file = Some(ProjectFile::new(airfoil.clone()));
         }
-        let name = [&airfoil.name, &airfoil.filename].into_iter().find(|s| !s.is_empty()).cloned().unwrap_or_else(|| "project".into());
         let Some(mut path) = FileDialog::new()
             .set_title("Save project as")
             .set_directory(home())
-            .set_file_name(format!("{}.asfproj", file_stem(&name, "project")))
+            .set_file_name(format!("{}.asfproj", file_stem(airfoil.file_base(), "project")))
             .add_filter("Spline project", &["asfproj"])
             .save_file()
         else {

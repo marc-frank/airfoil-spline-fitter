@@ -16,7 +16,6 @@ pub mod curve;
 pub mod diagnostics;
 pub mod export;
 mod fitting;
-mod joint;
 mod kkt;
 mod linalg;
 mod lm;
@@ -30,10 +29,9 @@ pub use basis::{centripetal_parameters, clamped_knots, interior_knots, open_unif
 pub use chain::Parameters;
 pub use constraints::{minimum_control_points, ChainConstraints, End, Junction};
 pub use curve::BSpline;
-pub use fitting::{fit, ChainOptions, Continuity, FitOptions, FitResult, KnotPlacement};
-pub use joint::{solve_joint, JointProblem, JointSolution};
+pub use fitting::{fit, ChainOptions, Continuity, FitOptions, FitResult, KnotPlacement, LM_TOLERANCE, MIN_KNOT_GAP};
 pub use kkt::KktSolver;
-pub use tolerance::{fit_to_tolerance, ToleranceOptions};
+pub use tolerance::{fit_to_tolerance, solve_free_knots, ToleranceOptions};
 
 /// Planar point or vector.
 pub type Vec2 = nalgebra::Vector2<f64>;

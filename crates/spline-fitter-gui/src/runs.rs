@@ -131,6 +131,15 @@ pub const COLUMNS: [Column; 25] = [
         applies: varpro,
     },
     Column {
+        name: "Knot spacing",
+        tooltip: "Smallest spacing of the free knots, as a fraction of a section",
+        log: false,
+        metric: false,
+        format: Format::Spec(".3g"),
+        value: |r| Cell::Float(r.optimization_config.min_knot_gap),
+        applies: |r| varpro(r) && r.optimization_config.knot_placement == KnotPlacement::Free,
+    },
+    Column {
         name: "Parameterization",
         tooltip: "",
         log: false,
@@ -200,15 +209,6 @@ pub const COLUMNS: [Column; 25] = [
         metric: false,
         format: Format::Plain,
         value: |r| Cell::Text(r.spline_config.junction_continuity.join(", ")),
-        applies: varpro,
-    },
-    Column {
-        name: "Subsample",
-        tooltip: "Points per section of the subsample; blank when every point is used",
-        log: false,
-        metric: false,
-        format: Format::Plain,
-        value: |r| r.optimization_config.max_points_per_section.map_or(Cell::Empty, |m| Cell::Int(m as i64)),
         applies: varpro,
     },
     Column {
@@ -313,7 +313,7 @@ pub const COLUMNS: [Column; 25] = [
 ];
 
 pub const ERROR_COLUMN: usize = 16;
-pub const CONTROL_POINTS_COLUMN: usize = 8;
+pub const CONTROL_POINTS_COLUMN: usize = 9;
 
 impl Column {
     pub fn cell(&self, run: &OptimizationRun) -> Cell {
@@ -452,6 +452,8 @@ impl Filters {
         let terms = parse_filter(&self.text);
         let global = terms.iter().all(|term| match term {
             Term::Numeric { .. } => term_matches(term, &cells[ERROR_COLUMN].0, &cells[ERROR_COLUMN].1),
+            // `!=text`: no cell equals the text, the exact opposite of `=text`.
+            Term::Whole { equal: false, .. } => cells.iter().all(|(c, t)| term_matches(term, c, t)),
             _ => cells.iter().any(|(c, t)| term_matches(term, c, t)),
         });
         global && self.excluded.iter().filter(|(c, _)| Some(**c) != skip).all(|(c, ex)| !ex.contains(&cells[*c].1))
@@ -484,6 +486,21 @@ mod tests {
         assert_eq!(parse_filter("<inf"), vec![Term::Numeric { op: Op::Lt, value: f64::INFINITY }]);
         assert!(term_matches(&Term::Substring("pro".into()), &Cell::Empty, "VarPro LM"));
         assert!(!term_matches(&Term::Numeric { op: Op::Gt, value: 1.0 }, &Cell::Bool(true), "yes"));
+    }
+
+    /// Specification 21, item 21.
+    #[test]
+    fn whole_cell_terms_are_opposites() {
+        let rows: Vec<Vec<(Cell, String)>> = ["Uniform", "Free", ""]
+            .iter()
+            .map(|k| vec![(Cell::Text(k.to_string()), k.to_string()), (Cell::Text("VarPro LM".into()), "VarPro LM".into())])
+            .collect();
+        let shown = |text: &str| {
+            let f = Filters { text: text.into(), ..Filters::default() };
+            rows.iter().map(|r| f.matches_except(r, None)).collect::<Vec<_>>()
+        };
+        assert_eq!(shown("=free"), vec![false, true, false]);
+        assert_eq!(shown("!=free"), vec![true, false, true]);
     }
 
     #[test]

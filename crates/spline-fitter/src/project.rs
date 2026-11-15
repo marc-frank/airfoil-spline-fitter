@@ -185,8 +185,9 @@ impl Json {
             Json::Null => out.push_str("null"),
             Json::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
             Json::Int(i) => out.push_str(&i.to_string()),
-            Json::Float(f) if f.is_nan() => out.push_str("NaN"),
-            Json::Float(f) if f.is_infinite() => out.push_str(if *f > 0.0 { "Infinity" } else { "-Infinity" }),
+            // Non-finite numbers are written as strings, so a project is standard JSON.
+            Json::Float(f) if f.is_nan() => out.push_str("\"NaN\""),
+            Json::Float(f) if f.is_infinite() => out.push_str(if *f > 0.0 { "\"Infinity\"" } else { "\"-Infinity\"" }),
             Json::Float(f) => out.push_str(&shortest(*f)),
             Json::Str(s) => out.push_str(&serde_json::to_string(s).unwrap()),
             Json::Array(items) if items.is_empty() => out.push_str("[]"),
@@ -220,7 +221,8 @@ impl Json {
         }
     }
 
-    /// Parses JSON text, also accepting `NaN`, `Infinity` and `-Infinity`.
+    /// Parses JSON text, also accepting the bare `NaN`, `Infinity` and
+    /// `-Infinity` of older projects.
     pub fn parse(text: &str) -> std::result::Result<Json, String> {
         let value: serde_json::Value = serde_json::from_str(&mark_non_finite(text)).map_err(|e| e.to_string())?;
         Ok(Json::from_value(value))
@@ -321,9 +323,9 @@ fn encode_optimization_config(c: &OptimizationConfig) -> Json {
         ("optimize_le_position", Json::Bool(c.optimize_le_position)),
         ("parameterization", string(c.parameterization.value())),
         ("tolerance", opt_float(c.tolerance)),
-        ("max_points_per_section", c.max_points_per_section.map_or(Json::Null, int)),
         ("knot_placement", string(placement_value(c.knot_placement))),
         ("grow_control_points", Json::Bool(c.grow_control_points)),
+        ("min_knot_gap", float(c.min_knot_gap)),
         // Kept for older readers: data parameters given by the caller, never set.
         ("custom_parameters", Json::Null),
     ])
@@ -485,10 +487,14 @@ impl<'a> Part<'a> {
         self.json.get(key).filter(|v| !v.is_null())
     }
 
+    /// A number; also the strings "NaN", "Infinity" and "-Infinity".
     fn number_of(&self, key: &str, v: &Json) -> Result<f64> {
         match v {
             Json::Int(i) => Ok(*i as f64),
             Json::Float(f) => Ok(*f),
+            Json::Str(s) if s == "NaN" => Ok(f64::NAN),
+            Json::Str(s) if s == "Infinity" => Ok(f64::INFINITY),
+            Json::Str(s) if s == "-Infinity" => Ok(f64::NEG_INFINITY),
             _ => Err(self.error(format_args!("'{key}' is not a number"))),
         }
     }
@@ -581,19 +587,27 @@ impl<'a> Part<'a> {
     }
 }
 
+/// The airfoil; its sections are rebuilt from the coordinates and the
+/// junction indices (the stored `sections` and `num_sections` are not read).
 fn decode_airfoil(json: &Json) -> Result<AirfoilData> {
     let part = Part { json, place: "Airfoil" };
+    let coordinates = part.points_of("coordinates", part.field("coordinates")?)?;
+    let junction_indices = part.counts("junction_indices")?;
+    let n = coordinates.len();
+    let inside = junction_indices.iter().all(|&j| 1 <= j && j + 2 <= n);
+    if !inside || junction_indices.windows(2).any(|w| w[1] <= w[0]) {
+        return Err(part.error("the junction indices do not split the coordinates"));
+    }
+    let starts = std::iter::once(0).chain(junction_indices.iter().copied());
+    let ends = junction_indices.iter().copied().chain(std::iter::once(n - 1));
+    let sections = starts.zip(ends).map(|(a, b)| coordinates[a..=b].to_vec()).collect();
     Ok(AirfoilData {
-        coordinates: part.points_of("coordinates", part.field("coordinates")?)?,
-        sections: part.sections("sections")?,
-        junction_indices: part.counts("junction_indices")?,
+        sections,
+        coordinates,
+        junction_indices,
         filename: part.text_or("filename", "")?.to_string(),
         name: part.text_or("name", "")?.to_string(),
         precision: part.float_or("precision", 6.0)? as i32,
-    })
-    .and_then(|a| {
-        part.count("num_sections")?;
-        Ok(a)
     })
 }
 
@@ -645,9 +659,10 @@ fn decode_optimization_config(json: &Json, place: &str) -> Result<(OptimizationC
         smoothing_weight: part.float_or("smoothing_weight", 1e-3)?,
         parameterization: Parameterization::from_value(part.text_or("parameterization", "centripetal")?).map_err(|e| part.error(e.0))?,
         tolerance,
-        max_points_per_section: part.optional("max_points_per_section").map(|v| part.count_of("max_points_per_section", v)).transpose()?,
         knot_placement,
         grow_control_points: part.bool_or("grow_control_points", tolerance.is_some())?,
+        // Projects from before this setting were fitted with 0.001.
+        min_knot_gap: part.float_or("min_knot_gap", 1e-3)?,
     };
     Ok((config.validated().map_err(|e| part.error(e.0))?, warning))
 }
@@ -704,7 +719,9 @@ fn decode_report(json: &Json, place: &str) -> Result<Report> {
     })
 }
 
-fn decode_fit_result(json: &Json, place: &str, control_points: Vec<Vec<Vec2>>) -> Result<FitResult> {
+/// The result of a run; its degree is the run's spline degree (the stored
+/// `degree` is not read).
+fn decode_fit_result(json: &Json, place: &str, control_points: Vec<Vec<Vec2>>, degree: usize) -> Result<FitResult> {
     let part = Part { json, place };
     let section_knots = match part.optional("section_knots") {
         None => None,
@@ -712,7 +729,7 @@ fn decode_fit_result(json: &Json, place: &str, control_points: Vec<Vec<Vec2>>) -
     };
     Ok(FitResult {
         section_control_points: control_points,
-        degree: part.count("degree")?,
+        degree,
         final_error: part.float("final_error")?,
         num_iterations: part.count("num_iterations")?,
         num_evaluations: part.count("num_evaluations")?,
@@ -731,7 +748,7 @@ fn decode_run(json: &Json, place: &str, warnings: &mut Vec<String>) -> Result<Op
     let spline_config = decode_spline_config(run.field("spline_config")?, &format!("{place} spline settings"))?;
     let (optimization_config, warning) = decode_optimization_config(run.field("optimization_config")?, &format!("{place} fit settings"))?;
     warnings.extend(warning);
-    let result = decode_fit_result(run.field("result")?, &format!("{place} result"), control_points)?;
+    let result = decode_fit_result(run.field("result")?, &format!("{place} result"), control_points, spline_config.degree)?;
     let history_place = format!("{place} loss history");
     let history = Part { json, place: &history_place };
     let loss_history = history
@@ -818,7 +835,7 @@ mod tests {
         let airfoil = AirfoilData::new(pts, 2, "naca0012", "NACA 0012", 6).unwrap();
         let result = FitResult {
             section_control_points: vec![vec![Vec2::new(1.0, 0.0), Vec2::new(0.1, 0.06)], vec![Vec2::new(0.1, 0.06), Vec2::new(1.0, 0.0)]],
-            degree: 1,
+            degree: 5,
             final_error: 1.5e-7,
             num_iterations: 3,
             num_evaluations: 4,
@@ -858,6 +875,42 @@ mod tests {
         assert_eq!(loaded.project.runs[0].optimization_config.optimizer, OptimizerType::VarPro);
         assert_eq!(loaded.warnings, vec!["Optimizer 'bfgs' was retired; showing the run as VarPro LM."]);
         assert_eq!(loaded.project.runs[0].result.rms_error, Some(f64::INFINITY));
+    }
+
+    #[test]
+    fn non_finite_numbers_are_strings() {
+        let mut p = project();
+        p.runs[0].result.final_error = f64::NAN;
+        p.runs[0].result.rms_error = Some(f64::NEG_INFINITY);
+        let text = project_text(&p);
+        assert!(text.contains("\"final_error\": \"NaN\"") && text.contains("\"rms_error\": \"-Infinity\""));
+        assert!(serde_json::from_str::<serde_json::Value>(&text).is_ok());
+        let r = &parse_project(&text).unwrap().project.runs[0].result;
+        assert!(r.final_error.is_nan() && r.rms_error == Some(f64::NEG_INFINITY));
+    }
+
+    /// The project's text with `change` applied to its JSON.
+    fn edited(change: impl Fn(&mut serde_json::Value)) -> String {
+        let mut json: serde_json::Value = serde_json::from_str(&project_text(&project())).unwrap();
+        change(&mut json);
+        json.to_string()
+    }
+
+    #[test]
+    fn sections_and_degree_are_rebuilt_not_read() {
+        let text = edited(|j| {
+            j["airfoil"]["num_sections"] = 7.into();
+            j["airfoil"]["sections"] = serde_json::json!([]);
+            j["optimization_runs"][0]["result"]["degree"] = 9.into();
+        });
+        let loaded = parse_project(&text).unwrap().project;
+        assert_eq!(loaded.airfoil, project().airfoil);
+        assert_eq!(loaded.runs[0].result.degree, 5);
+        let junctions = |v: serde_json::Value| parse_project(&edited(|j| j["airfoil"]["junction_indices"] = v.clone()));
+        for bad in [serde_json::json!([0]), serde_json::json!([20]), serde_json::json!([5, 5]), serde_json::json!([8, 4])] {
+            assert_eq!(junctions(bad.clone()).unwrap_err().0, "Airfoil: the junction indices do not split the coordinates.", "{bad}");
+        }
+        assert_eq!(junctions(serde_json::json!([3, 6])).unwrap().project.airfoil.sections.len(), 3);
     }
 
     #[test]

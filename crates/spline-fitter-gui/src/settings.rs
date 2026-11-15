@@ -188,32 +188,33 @@ pub struct Settings {
     pub geometric: bool,
     pub control_points: IntSweep,
     pub per_junction: String,
-    pub subsample: bool,
-    pub subsample_points: IntField,
+    /// Smallest spacing of free knots, as a fraction of a section.
+    pub knot_gap: f64,
     pub smoothing: FloatSweep,
     pub optimize_junctions: bool,
 }
 
 impl Default for Settings {
+    /// The defaults of the models (one set of defaults).
     fn default() -> Self {
+        let (c, o) = (SplineConfig::default(), OptimizationConfig::default());
         let mut s = Settings {
-            optimizer: OptimizerType::VarPro,
-            tolerance_goal: false,
+            optimizer: o.optimizer,
+            tolerance_goal: o.tolerance.is_some(),
             auto_tolerance: true,
-            tolerance: 1e-5,
-            knot_placement: KnotPlacement::Uniform,
-            parameterization: Parameterization::Centripetal,
-            grow: false,
-            sections: IntSweep::new(2, 1, UNLIMITED),
-            degree: IntSweep::new(5, 1, UNLIMITED),
-            continuity: 3,
-            geometric: true,
-            control_points: IntSweep::new(25, 2, UNLIMITED),
-            per_junction: String::new(),
-            subsample: false,
-            subsample_points: IntField::new(200, 20, UNLIMITED),
-            smoothing: FloatSweep::new(1e-3, 1e-3),
-            optimize_junctions: false,
+            tolerance: o.tolerance.unwrap_or(1e-5),
+            knot_placement: o.knot_placement,
+            parameterization: o.parameterization,
+            grow: o.grow_control_points,
+            sections: IntSweep::new(c.num_sections, 1, UNLIMITED),
+            degree: IntSweep::new(c.degree, 1, UNLIMITED),
+            continuity: c.continuity.order(),
+            geometric: c.geometric_continuity,
+            control_points: IntSweep::new(c.num_control_points, 2, UNLIMITED),
+            per_junction: c.junction_continuity.join(", "),
+            knot_gap: o.min_knot_gap,
+            smoothing: FloatSweep::new(o.smoothing_weight, 1e-3),
+            optimize_junctions: o.optimize_le_position,
         };
         s.optimizer_changed();
         s
@@ -236,8 +237,7 @@ pub struct Values {
     geometric: bool,
     control_points: usize,
     per_junction: String,
-    subsample: bool,
-    subsample_points: usize,
+    knot_gap: f64,
     smoothing: f64,
     optimize_junctions: bool,
     degree_sweep: (bool, usize),
@@ -259,6 +259,10 @@ pub struct View {
     pub count_enabled: bool,
     pub junction_controls_enabled: bool,
     pub smoothing_enabled: bool,
+    /// The Knot spacing label: VarPro with free knots.
+    pub free_knots: bool,
+    /// The Knot spacing field: also editable.
+    pub knot_gap_enabled: bool,
 }
 
 impl Settings {
@@ -283,6 +287,7 @@ impl Settings {
         let editable = !fitting;
         let tolerance_mode = self.tolerance_mode();
         let has_junctions = self.has_junctions();
+        let free_knots = self.varpro() && self.knot_placement == KnotPlacement::Free;
         View {
             varpro: self.varpro(),
             tolerance_mode,
@@ -294,6 +299,8 @@ impl Settings {
             count_enabled: editable && self.count_used(),
             junction_controls_enabled: editable && has_junctions,
             smoothing_enabled: !tolerance_mode,
+            free_knots,
+            knot_gap_enabled: editable && free_knots,
         }
     }
 
@@ -464,21 +471,20 @@ impl Settings {
     /// The fit settings of the sidebar (the tolerance as set; the caller
     /// updates an automatic tolerance first).
     pub fn optimization_config(&self) -> Result<OptimizationConfig> {
-        let varpro = self.varpro();
         OptimizationConfig {
             optimizer: self.optimizer,
             optimize_le_position: self.optimize_junctions && self.has_junctions(),
             smoothing_weight: self.smoothing.value,
             parameterization: self.parameterization,
             tolerance: self.tolerance_mode().then_some(self.tolerance),
-            max_points_per_section: (varpro && self.subsample).then_some(self.subsample_points.value),
             knot_placement: self.knot_placement,
             grow_control_points: self.grow,
+            min_knot_gap: self.knot_gap,
         }
         .validated()
     }
 
-    /// Sets the sidebar to a run's settings (19.10); the caller re-splits
+    /// Sets the sidebar to a run's settings (19.10); the next fit splits
     /// the airfoil for the section count.
     pub fn apply_run(&mut self, run: &OptimizationRun) {
         let (c, o) = (&run.spline_config, &run.optimization_config);
@@ -497,10 +503,7 @@ impl Settings {
         self.geometric = c.geometric_continuity;
         self.control_points.value.set(c.num_control_points);
         self.per_junction = c.junction_continuity.join(", ");
-        self.subsample = o.max_points_per_section.is_some();
-        if let Some(m) = o.max_points_per_section {
-            self.subsample_points.set(m);
-        }
+        self.knot_gap = o.min_knot_gap;
         self.smoothing.value = o.smoothing_weight.max(0.0);
         self.optimize_junctions = o.optimize_le_position;
         self.optimizer_changed();
@@ -521,8 +524,7 @@ impl Settings {
             geometric: self.geometric,
             control_points: self.control_points.value.value,
             per_junction: self.per_junction.clone(),
-            subsample: self.subsample,
-            subsample_points: self.subsample_points.value,
+            knot_gap: self.knot_gap,
             smoothing: self.smoothing.value,
             optimize_junctions: self.optimize_junctions,
             degree_sweep: (self.degree.active, self.degree.end.value),
@@ -547,8 +549,7 @@ impl Settings {
         self.geometric = v.geometric;
         self.control_points.value.set(v.control_points);
         self.per_junction = v.per_junction.clone();
-        self.subsample = v.subsample;
-        self.subsample_points.set(v.subsample_points);
+        self.knot_gap = v.knot_gap;
         self.smoothing.value = v.smoothing;
         self.optimize_junctions = v.optimize_junctions;
         let int = |w: &mut IntSweep, (active, end): (bool, usize)| {
@@ -621,15 +622,6 @@ fn advanced_fields(s: &Settings) -> Vec<(Tracked, bool)> {
     let varpro = s.varpro();
     vec![
         (Tracked { name: "Per junction", value: s.per_junction.trim().into(), text: s.per_junction.clone() }, varpro),
-        (Tracked { name: "Subsample", value: on_off(s.subsample), text: on_off(s.subsample) }, varpro),
-        (
-            Tracked {
-                name: "Subsample points",
-                value: s.subsample_points.value.to_string(),
-                text: format!("{} points", s.subsample_points.value),
-            },
-            varpro,
-        ),
         (Tracked { name: "Smoothing", value: s.smoothing.value.to_string(), text: number(s.smoothing.value, ".6g") }, varpro),
         (Tracked { name: "Junctions", value: on_off(s.optimize_junctions), text: on_off(s.optimize_junctions) }, true),
     ]

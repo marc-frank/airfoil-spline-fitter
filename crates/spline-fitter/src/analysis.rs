@@ -313,7 +313,6 @@ mod tests {
     use super::*;
     use crate::models::{ContinuityMode, OptimizationConfig, SplineConfig};
     use crate::optimize::{run_optimization, RawResult, Unmonitored};
-    use bspline_varpro::KnotPlacement;
 
     fn to_fit(raw: RawResult, degree: usize) -> FitResult {
         FitResult {
@@ -339,8 +338,8 @@ mod tests {
     fn reference_reports() {
         let airfoil = crate::optimize::tests::naca2412();
         assert_eq!(default_tolerance(&airfoil.coordinates, 6), 1e-6);
-        let config = SplineConfig { continuity: ContinuityMode::G3, geometric_continuity: true, ..Default::default() };
-        let options = OptimizationConfig { knot_placement: KnotPlacement::Uniform, grow_control_points: false, ..Default::default() };
+        let config = SplineConfig::default();
+        let options = OptimizationConfig::default();
         let fit = to_fit(run_optimization(&config, &options, &airfoil, &mut Unmonitored).unwrap(), 5);
         let r = fit_report(&airfoil.sections, &fit, Some(6), None);
         assert!(close(r.max_deviation, 4.587e-6, 1e-3), "{}", r.max_deviation);
@@ -353,15 +352,12 @@ mod tests {
         assert!(close(s.max_camber, 0.020000, 1e-3) && close(s.max_camber_x, 0.4065, 1e-3));
         assert_eq!(r.summary_line(), "max deviation 4.59e-06, RMS 8.98e-07, 49 control points");
 
-        let config = SplineConfig { continuity: ContinuityMode::G2, ..Default::default() };
+        let config = SplineConfig { continuity: ContinuityMode::G2, geometric_continuity: false, ..Default::default() };
         let options = OptimizationConfig { optimizer: crate::models::OptimizerType::DirectLsq, ..options };
         let fit = to_fit(run_optimization(&config, &options, &airfoil, &mut Unmonitored).unwrap(), 5);
         let r = fit_report(&airfoil.sections, &fit, Some(6), None);
-        // The joint refinement stops at its iteration cap, and its damping
-        // depends on the (arbitrary) basis of the constraint null space, which
-        // differs between LAPACK builds: the deviations agree to about 1e-3.
-        assert!(close(r.max_deviation, 1.2699e-6, 2e-3), "{}", r.max_deviation);
-        assert!(close(r.rms_deviation, 2.933e-7, 1e-3));
-        assert_eq!(r.fairness.unwrap().curvature_extrema, 12);
+        assert!(close(r.max_deviation, 4.722e-5, 1e-3), "{}", r.max_deviation);
+        assert!(close(r.rms_deviation, 8.807e-6, 1e-3), "{}", r.rms_deviation);
+        assert_eq!(r.fairness.unwrap().curvature_extrema, 8);
     }
 }

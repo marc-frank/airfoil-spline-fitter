@@ -8,18 +8,10 @@ use chrono::{DateTime, Local};
 
 use crate::formatting::sanitize_filename;
 
-/// The log folder: `SPLINE_FITTER_LOG_DIR` if set, else `optimizer_logs`
-/// in the checkout when run from one, else `~/.spline_fitter/optimizer_logs`.
-pub fn default_log_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("SPLINE_FITTER_LOG_DIR").filter(|d| !d.is_empty()) {
-        return PathBuf::from(dir);
-    }
-    let checkout = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    if checkout.join("Cargo.toml").is_file() {
-        return checkout.join("optimizer_logs");
-    }
-    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).map(PathBuf::from).unwrap_or_default();
-    home.join(".spline_fitter").join("optimizer_logs")
+/// The log folder: `SPLINE_FITTER_LOG_DIR` when set and non-empty; logs
+/// are opt-in, so without it no file is written.
+pub fn default_log_dir() -> Option<PathBuf> {
+    std::env::var_os("SPLINE_FITTER_LOG_DIR").filter(|d| !d.is_empty()).map(PathBuf::from)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -35,7 +27,7 @@ struct Record {
 pub struct ErrorLog {
     run_name: String,
     start: DateTime<Local>,
-    dir: PathBuf,
+    dir: Option<PathBuf>,
     records: Vec<Record>,
 }
 
@@ -45,7 +37,7 @@ impl ErrorLog {
     }
 
     pub fn in_dir(run_name: &str, dir: PathBuf) -> Self {
-        ErrorLog { dir, ..Self::new(run_name) }
+        ErrorLog { dir: Some(dir), ..Self::new(run_name) }
     }
 
     pub fn log(&mut self, iteration: usize, evaluation: usize, error: f64, elapsed: f64) {
@@ -66,10 +58,10 @@ impl ErrorLog {
     }
 
     /// Writes `<start>_<run name>_<optimizer>.csv` (with `_2`, `_3`, ...
-    /// when taken); `None` without records.
+    /// when taken); `None` without records or without a log folder.
     pub fn save(&self, optimizer: &str, info: &str) -> std::io::Result<Option<PathBuf>> {
-        let Some(last) = self.records.last() else { return Ok(None) };
-        std::fs::create_dir_all(&self.dir)?;
+        let (Some(last), Some(dir)) = (self.records.last(), &self.dir) else { return Ok(None) };
+        std::fs::create_dir_all(dir)?;
         let stem = format!("{}_{}_{optimizer}", self.start.format("%Y%m%d_%H%M%S"), sanitize_filename(&self.run_name));
         let mut text = format!(
             "# Optimizer Error Log\n# Run: {}\n# Optimizer: {optimizer}\n# Start Time: {}\n",
@@ -94,7 +86,7 @@ impl ErrorLog {
         }
         for k in 1.. {
             let name = if k == 1 { format!("{stem}.csv") } else { format!("{stem}_{k}.csv") };
-            let path = self.dir.join(name);
+            let path = dir.join(name);
             match OpenOptions::new().write(true).create_new(true).open(&path) {
                 Ok(mut file) => {
                     file.write_all(text.as_bytes())?;

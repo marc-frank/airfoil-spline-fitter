@@ -165,6 +165,8 @@ impl Monitor for Progress {
 pub struct Outcome {
     pub raw: RawResult,
     pub fit: FitResult,
+    /// The earlier fits of a tolerance search, each with its report.
+    pub earlier: Vec<FitResult>,
     pub cancelled: bool,
     pub elapsed: f64,
 }
@@ -244,19 +246,24 @@ fn work(config: SplineConfig, options: OptimizationConfig, airfoil: AirfoilData,
     let raw = run_optimization(&config, &options, &airfoil, &mut monitor)?;
     let cancelled = monitor.live.cancelled();
     let elapsed = start.elapsed().as_secs_f64();
-    let mut fit = FitResult {
-        section_control_points: raw.section_control_points.clone(),
-        degree: config.degree,
-        final_error: raw.error,
-        num_iterations: raw.iterations,
-        num_evaluations: raw.evaluations,
-        elapsed_seconds: elapsed,
-        converged: raw.success && !cancelled,
-        cancelled,
-        section_knots: raw.section_knots.clone(),
-        report: None,
-        rms_error: Some(raw.rms_error),
+    let fit_of = |r: &RawResult, elapsed: f64, cancelled: bool| {
+        let mut fit = FitResult {
+            section_control_points: r.section_control_points.clone(),
+            degree: config.degree,
+            final_error: r.error,
+            num_iterations: r.iterations,
+            num_evaluations: r.evaluations,
+            elapsed_seconds: elapsed,
+            converged: r.success && !cancelled,
+            cancelled,
+            section_knots: r.section_knots.clone(),
+            report: None,
+            rms_error: Some(r.rms_error),
+        };
+        fit.report = Some(fit_report(&airfoil.sections, &fit, Some(airfoil.precision), options.tolerance));
+        fit
     };
-    fit.report = Some(fit_report(&airfoil.sections, &fit, Some(airfoil.precision), options.tolerance));
-    Ok(Outcome { raw, fit, cancelled, elapsed })
+    let fit = fit_of(&raw, elapsed, cancelled);
+    let earlier = raw.earlier.iter().map(|r| fit_of(r, r.seconds.unwrap_or(0.0), false)).collect();
+    Ok(Outcome { raw, fit, earlier, cancelled, elapsed })
 }

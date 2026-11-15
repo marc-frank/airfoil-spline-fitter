@@ -27,41 +27,68 @@ fn varpro_g3_fixed_count() {
     assert!(result.success, "{}", result.message);
     assert_eq!(result.message, "`ftol` termination condition is satisfied.");
     assert!(close(result.rms_error, 8.978e-7, 1e-3), "rms {}", result.rms_error);
-    assert_eq!(result.nfev, 40);
+    assert_eq!(result.nfev, 33);
 }
 
-/// About a minute; run with `cargo test --release -- --ignored`.
+fn g2(smoothing: f64) -> ChainOptions {
+    ChainOptions { continuity: Continuity::All(Junction::new(2, true, true).unwrap()), smoothing, ..ChainOptions::default() }
+}
+
+/// Free knots are unknowns of the one Levenberg-Marquardt loop. About 40
+/// seconds; run with `cargo test --release -- --ignored`.
 #[test]
 #[ignore]
-fn varpro_g2_tolerance_search() {
-    use bspline_varpro::{fit_to_tolerance, FitResult, Observer, ToleranceOptions};
-
-    struct Refits(usize);
-    impl Observer for Refits {
-        fn refit(&mut self, _: &FitResult, _: f64) -> bool {
-            self.0 += 1;
-            false
-        }
-    }
-
+fn varpro_g2_free_knots() {
     let sections = naca2412();
-    let options = ToleranceOptions {
-        chain: ChainOptions {
-            continuity: Continuity::All(Junction::new(2, true, true).unwrap()),
-            smoothing: 1e-7,
-            ..ChainOptions::default()
-        },
-        max_points_per_section: None,
-        ..ToleranceOptions::default()
-    };
-    let mut refits = Refits(0);
-    let result = fit_to_tolerance(&sections, 1e-6, 5, &options, &mut refits).unwrap();
+    let options = FitOptions { chain: g2(1e-7), knot_placement: KnotPlacement::Free, ..FitOptions::default() };
+    let result = fit(&sections, &[12, 12], 5, &options, &mut Silent).unwrap();
     assert!(result.success, "{}", result.message);
-    assert_eq!(result.num_control_points(), vec![10, 11]);
-    assert_eq!(refits.0, 17);
-    // Every refit matches the reference to about nine digits; the capped
-    // knot polishes (60 evaluations, finite-difference knot columns) amplify
-    // rounding differences of the linear algebra to a few tenths of a
-    // percent in the final deviation.
-    assert!(close(result.max_deviation.unwrap(), 9.1121e-7, 1e-2));
+    assert!(close(result.rms_error, 2.9394e-7, 1e-3), "rms {}", result.rms_error);
+    // The first interior knot sits on the minimum gap.
+    assert!(close(result.knots[0][6], 0.05, 1e-4), "{:?}", result.knots[0]);
+
+    let grown = fit(&sections, &[12, 12], 5, &FitOptions { grow: true, ..options }, &mut Silent).unwrap();
+    assert_eq!(grown.num_control_points(), vec![12, 12]);
+    assert!(close(grown.rms_error, 3.2869e-7, 1e-3), "rms {}", grown.rms_error);
+}
+
+struct Refits(Vec<(Vec<usize>, f64)>);
+
+impl bspline_varpro::Observer for Refits {
+    fn refit(&mut self, result: &bspline_varpro::FitResult, deviation: f64) -> bool {
+        self.0.push((result.num_control_points(), deviation));
+        false
+    }
+}
+
+fn search(placement: KnotPlacement) -> (bspline_varpro::FitResult, Vec<(Vec<usize>, f64)>) {
+    use bspline_varpro::{fit_to_tolerance, ToleranceOptions};
+    let options = ToleranceOptions { chain: g2(1e-7), knot_placement: placement, ..ToleranceOptions::default() };
+    let mut refits = Refits(vec![]);
+    let result = fit_to_tolerance(&naca2412(), 1e-6, 5, &options, &mut refits).unwrap();
+    assert!(result.success, "{}", result.message);
+    (result, refits.0)
+}
+
+/// About 20 seconds; run with `cargo test --release -- --ignored`.
+#[test]
+#[ignore]
+fn varpro_g2_tolerance_search_uniform() {
+    let (result, refits) = search(KnotPlacement::Uniform);
+    eprintln!("{refits:?}");
+    let counts: Vec<Vec<usize>> = refits.iter().map(|r| r.0.clone()).collect();
+    assert_eq!(counts, [[6, 6], [7, 7], [9, 9], [13, 12], [16, 14], [18, 15], [20, 16], [20, 18], [19, 18]]);
+    assert_eq!(result.num_control_points(), vec![19, 18]);
+    assert!(close(result.max_deviation.unwrap(), 9.7673e-7, 1e-3), "{:?}", result.max_deviation);
+}
+
+/// Specification 21, item 11: minutes; run with `cargo test --release -- --ignored`.
+#[test]
+#[ignore]
+fn varpro_g2_tolerance_search_free() {
+    let (result, refits) = search(KnotPlacement::Free);
+    eprintln!("{refits:?}");
+    assert_eq!(refits.len(), 9);
+    assert_eq!(result.num_control_points(), vec![11, 11]);
+    assert!(close(result.max_deviation.unwrap(), 7.9338e-7, 1e-3), "{:?}", result.max_deviation);
 }

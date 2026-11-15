@@ -10,11 +10,6 @@ use crate::settings::{Change, IntSweep};
 use crate::theme::{size, typeface, Palette};
 use crate::widgets::{self, caption, form_row, muted, Field, IntOptions};
 
-const OPTIMIZER_TIPS: [&str; 2] = [
-    "Levenberg-Marquardt Variable Projection (bspline-varpro).\nTolerance mode: fewest control points within a maximum\northogonal deviation, non-uniform knots.\nGeometric (G) or parametric (C) continuity per junction.\nRecommended for CAD-quality results.",
-    "Direct LSQ (single-step, no iteration).\nOne constrained least-squares solve, with fixed trailing-edge\nend points and junctions fixed or free (Advanced).\nFastest option (~1ms), moderate accuracy (~1e-4).\nIdeal for dense data or real-time preview.",
-];
-
 /// A section of the sidebar: caption, content, bottom rule.
 fn section(ui: &mut Ui, p: &Palette, title: &str, content: impl FnOnce(&mut Ui)) {
     egui::Frame::new().inner_margin(egui::Margin { left: 12, right: 12, top: 10, bottom: 12 }).show(ui, |ui| {
@@ -115,7 +110,10 @@ impl App {
                 widgets::segmented(
                     ui,
                     &mut s.optimizer,
-                    &[(OptimizerType::VarPro, "VarPro LM", OPTIMIZER_TIPS[0]), (OptimizerType::DirectLsq, "Direct LSQ", OPTIMIZER_TIPS[1])],
+                    &[
+                        (OptimizerType::VarPro, "VarPro LM", OptimizerType::VarPro.tooltip()),
+                        (OptimizerType::DirectLsq, "Direct LSQ", OptimizerType::DirectLsq.tooltip()),
+                    ],
                     width,
                 );
             });
@@ -163,6 +161,10 @@ impl App {
                         ],
                         width,
                     );
+                });
+                let view = s.view(false);
+                form_row(ui, &p, "Knot spacing", view.free_knots, "", |ui| {
+                    ui.add_enabled_ui(view.knot_gap_enabled, |ui| knot_gap_field(ui, &p, &mut s.knot_gap, width));
                 });
             } else {
                 form_row(ui, &p, "Parameterization", true, "", |ui| {
@@ -266,15 +268,6 @@ impl App {
                     if response.lost_focus() {
                         s.keep_curve_valid(Change::Other);
                     }
-                    form_row(ui, &p, "Subsample", true, "", |ui| {
-                        ui.horizontal(|ui| {
-                            ui.checkbox(&mut s.subsample, "to").on_hover_text("For dense data: fit an evenly spaced subsample of each section, then\nrefine the fit on all points. Much faster for thousands of points.\nOff: every point is used throughout.");
-                            ui.add_enabled_ui(s.subsample, |ui| {
-                                let f = &mut s.subsample_points;
-                                widgets::int_field(ui, &p, "subsample", &mut f.value, (f.min, f.max), Field::new((width - 50.0).max(80.0), "Points per section. Sections with more points than this are subsampled."), IntOptions { suffix: " points", ..IntOptions::default() });
-                            });
-                        });
-                    });
                     form_row(ui, &p, "Smoothing", view.smoothing_enabled, "", |ui| {
                         ui.add_enabled_ui(view.smoothing_enabled, |ui| {
                             ui.vertical(|ui| {
@@ -373,4 +366,14 @@ impl App {
             }
         });
     }
+}
+
+/// The Knot spacing field: three decimals, 0 to 0.5 in steps of 0.01.
+fn knot_gap_field(ui: &mut Ui, p: &Palette, value: &mut f64, width: f32) {
+    let format = |v: f64| spline_fitter::formatting::number(v, ".3f");
+    let parse = |t: &str| widgets::parse_scientific(t).map(|v| (v * 1000.0).round() / 1000.0);
+    let step = |v: f64, k: i32| ((v + 0.01 * k as f64) * 1000.0).round() / 1000.0;
+    let fmt = widgets::NumberFormat { format: &format, parse: &parse, step: &step };
+    let tooltip = "Smallest spacing of free knots, as a fraction of a section.\nCloser knots follow the data more tightly but can bend the\ncurve sharply between the points, and fits take longer.";
+    widgets::number_field(ui, p, "knot_gap", value, (0.0, 0.5), Field::new(width, tooltip), &fmt);
 }

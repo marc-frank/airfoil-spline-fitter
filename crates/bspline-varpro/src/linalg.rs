@@ -48,26 +48,6 @@ pub fn lstsq(a: &DMatrix<f64>, b: &DMatrix<f64>) -> DMatrix<f64> {
     pinv(a, rcond) * b
 }
 
-/// Null space and rank of `C` from its SVD: `rank = #{σ > tol · max(σ₀, 1)}`.
-pub fn null_space(c: &DMatrix<f64>, tol: f64) -> (DMatrix<f64>, usize) {
-    let n = c.ncols();
-    // Full V: pad C with zero rows so the thin SVD yields all n right vectors.
-    let rows = c.nrows().max(n);
-    let mut padded = DMatrix::zeros(rows, n);
-    padded.view_mut((0, 0), c.shape()).copy_from(c);
-    let svd = padded.svd(false, true);
-    let v_t = svd.v_t.unwrap();
-    let mut order: Vec<usize> = (0..svd.singular_values.len()).collect();
-    order.sort_by(|&i, &j| svd.singular_values[j].total_cmp(&svd.singular_values[i]));
-    let largest = order.first().map_or(0.0, |&i| svd.singular_values[i]);
-    let rank = order.iter().filter(|&&i| svd.singular_values[i] > tol * largest.max(1.0)).count();
-    let mut z = DMatrix::zeros(n, n - rank);
-    for (col, &i) in order[rank..].iter().enumerate() {
-        z.set_column(col, &v_t.row(i).transpose());
-    }
-    (z, rank)
-}
-
 /// Rows of points as an `(n, 2)` matrix.
 pub fn points_to_matrix(points: &[Vec2]) -> DMatrix<f64> {
     DMatrix::from_fn(points.len(), 2, |i, k| points[i][k])

@@ -39,13 +39,13 @@ write("naca2412.step".as_ref(), &result.curves(), 250.0, Units::Millimetre)?;
 2. Fit, measure the orthogonal deviation of every point, and insert a knot in
    every span that holds a point beyond the tolerance. Repeat until every
    point is within it.
-3. Optimize the interior knot positions together with the fit (free
-   placement).
-4. Try removing every knot, least useful first, refitting after each attempt;
-   keep removals that stay within the tolerance. Optimize the knots again.
+3. Try removing every knot, least useful first, refitting after each attempt;
+   keep removals that stay within the tolerance.
 
-Sections longer than `max_points_per_section` are fitted on an evenly spaced
-subsample, then refined jointly on all points.
+Every refit is the same single fit. With free placement the interior knot
+positions are unknowns of its Levenberg-Marquardt loop, kept at least
+`min_knot_gap` (default 0.05 of a section) apart; new knots are not inserted
+closer than that either.
 
 ## Modules
 
@@ -56,9 +56,8 @@ subsample, then refined jointly on all points.
 | `chain` | The data of a chain of sections, chain parameters, projection |
 | `constraints` | Junction and end constraints `C(θ) P = d` |
 | `reparam` | Softplus reparameterization of monotone parameters |
-| `fitting` | `fit`, continuation for geometric junctions |
-| `tolerance` | `fit_to_tolerance`, knot growth, polishing, subsampling |
-| `joint` | Joint refinement of parameters and control points |
+| `fitting` | `fit`, the variable-projection residual and Jacobian |
+| `tolerance` | `fit_to_tolerance`, knot growth, free knots in the loop (`solve_free_knots`) |
 | `diagnostics` | Orthogonal projection, fairness, junction measures |
 | `airfoil` | NACA 4-digit, default tolerance, leading edge, thickness and camber, resampling |
 | `export` | STEP, IGES, DXF, merging a chain into one curve |

@@ -52,20 +52,6 @@ pub fn chain_data(sections: &[Vec<Vec2>]) -> Vec<Vec2> {
     data
 }
 
-/// `(first, last)` index in [`chain_data`] of every section's points.
-pub fn section_ranges(sections: &[Vec<Vec2>]) -> Vec<(usize, usize)> {
-    let shared = shared_junctions(sections);
-    let mut ranges = Vec::with_capacity(sections.len());
-    let mut start = 0;
-    for (s, section) in sections.iter().enumerate() {
-        let first = if s > 0 && shared[s - 1] { start - 1 } else { start };
-        let last = first + section.len() - 1;
-        ranges.push((first, last));
-        start = last + 1;
-    }
-    ranges
-}
-
 /// Chain parameters from local parameters in `[0, 1]` per section.
 ///
 /// A shared junction point is one point at the integer. Where sections do
@@ -163,87 +149,6 @@ pub fn chain_deviations(data: &[Vec2], curves: &[BSpline]) -> Vec<f64> {
     distance_to_curves(data, curves)
 }
 
-/// Chain parameter of the closest chain point to each point within
-/// `[lower, upper]`.
-///
-/// Ordered data lie between their ordered neighbours, so the window keeps a
-/// point from jumping to a distant part of the chain that passes close (the
-/// other side of a thin trailing edge). `start` is an extra candidate.
-pub fn project_between(data: &[Vec2], curves: &[BSpline], lower: &[f64], upper: &[f64], start: Option<&[f64]>) -> Vec<f64> {
-    const SAMPLES: usize = 16;
-    let n = data.len();
-    let upper: Vec<f64> = upper.iter().zip(lower).map(|(u, l)| u.max(*l)).collect();
-    let mut u = Vec::with_capacity(n);
-    let mut best = Vec::with_capacity(n);
-    for i in 0..n {
-        let mut candidates: Vec<f64> = (0..=SAMPLES).map(|k| lower[i] + (upper[i] - lower[i]) * (k as f64 / SAMPLES as f64)).collect();
-        if let Some(start) = start {
-            candidates.push(start[i]);
-        }
-        let (mut best_u, mut best_d) = (candidates[0], f64::INFINITY);
-        for c in candidates {
-            let d = (evaluate_chain(curves, c, 0) - data[i]).norm_squared();
-            if d < best_d {
-                best_u = c;
-                best_d = d;
-            }
-        }
-        u.push(best_u);
-        best.push(best_d);
-    }
-    // Newton on the squared distance, inside the window, only where it improves.
-    for _ in 0..20 {
-        let mut improved = false;
-        for i in 0..n {
-            let (s, local) = locate(u[i], curves.len());
-            let d = curves[s].derivatives(local, 2);
-            let diff = d[0] - data[i];
-            let g = diff.dot(&d[1]);
-            let h = d[1].norm_squared() + diff.dot(&d[2]);
-            let mut trial = if h > 0.0 { (u[i] - g / h).clamp(lower[i], upper[i]) } else { u[i] };
-            if !trial.is_finite() {
-                trial = u[i];
-            }
-            let dist = (evaluate_chain(curves, trial, 0) - data[i]).norm_squared();
-            if dist < best[i] {
-                u[i] = trial;
-                best[i] = dist;
-                improved = true;
-            }
-        }
-        if !improved {
-            break;
-        }
-    }
-    u
-}
-
-/// Chain parameters of all points from those of an ordered subset `chosen`.
-pub fn project_to_chain(data: &[Vec2], curves: &[BSpline], chosen: &[usize], u_chosen: &[f64]) -> Vec<f64> {
-    let last = chosen.len() - 1;
-    let mut lower = Vec::with_capacity(data.len());
-    let mut upper = Vec::with_capacity(data.len());
-    for i in 0..data.len() {
-        let left = chosen.partition_point(|&c| c < i);
-        let right = chosen.partition_point(|&c| c <= i);
-        let before = (left as isize - 1).clamp(0, last as isize) as usize;
-        let after = right.min(last);
-        lower.push(u_chosen[before]);
-        upper.push(u_chosen[after]);
-    }
-    let s = curves.len() as f64;
-    let mut u = project_between(data, curves, &lower, &upper, None);
-    let mut running = f64::NEG_INFINITY;
-    for v in &mut u {
-        running = running.max(v.clamp(0.0, s));
-        *v = running;
-    }
-    u[0] = 0.0;
-    let n = u.len();
-    u[n - 1] = s;
-    u
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -260,7 +165,6 @@ mod tests {
         let s = sections();
         assert_eq!(shared_junctions(&s), vec![true]);
         assert_eq!(chain_data(&s).len(), 5);
-        assert_eq!(section_ranges(&s), vec![(0, 2), (2, 4)]);
         let u = initial_chain_parameters(&s);
         assert_eq!(u.len(), 5);
         assert_eq!((u[0], u[2], u[4]), (0.0, 1.0, 2.0));

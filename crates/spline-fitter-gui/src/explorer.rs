@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 use eframe::egui::{self, Align, Layout, RichText, Sense, Ui};
 use egui_extras::{Column as TableColumn, TableBuilder};
+use spline_fitter::bspline_varpro::KnotPlacement;
 use spline_fitter::formatting::{format_duration, number};
 use spline_fitter::models::{FitResult, IterationRecord, OptimizationConfig, SplineConfig};
 use spline_fitter::project::{number_runs, OptimizationRun, ProjectFile};
@@ -61,8 +62,10 @@ impl Projects {
     }
 }
 
-/// Whether a run has the settings of another (19.16.4).
-fn same_settings(run: &OptimizationRun, config: &SplineConfig, opt: &OptimizationConfig) -> bool {
+/// Whether a run has the settings of a new fit (19.16.4): with free knots
+/// also the knot spacing, with a tolerance the same control points in every
+/// section (each refit of a search is a run of its own).
+fn same_settings(run: &OptimizationRun, config: &SplineConfig, opt: &OptimizationConfig, fit: &FitResult) -> bool {
     let (c, o) = (&run.spline_config, &run.optimization_config);
     c.degree == config.degree
         && c.num_control_points == config.num_control_points
@@ -71,13 +74,14 @@ fn same_settings(run: &OptimizationRun, config: &SplineConfig, opt: &Optimizatio
         && c.geometric_continuity == config.geometric_continuity
         && c.junction_continuity == config.junction_continuity
         && o.tolerance == opt.tolerance
-        && o.max_points_per_section == opt.max_points_per_section
         && o.knot_placement == opt.knot_placement
         && o.parameterization == opt.parameterization
         && o.optimize_le_position == opt.optimize_le_position
         && o.grow_control_points == opt.grow_control_points
         && o.optimizer == opt.optimizer
+        && (opt.knot_placement != KnotPlacement::Free || o.min_knot_gap == opt.min_knot_gap)
         && (opt.tolerance.is_some() || o.smoothing_weight == opt.smoothing_weight)
+        && (opt.tolerance.is_none() || run.result.section_counts() == fit.section_counts())
 }
 
 /// View state of the explorer.
@@ -166,7 +170,7 @@ impl App {
         replot: bool,
     ) -> bool {
         let Some(airfoil) = self.airfoil.clone() else { return false };
-        let existing = self.projects.runs().iter().position(|r| same_settings(r, config, opt));
+        let existing = self.projects.runs().iter().position(|r| same_settings(r, config, opt, &fit));
         if fit.cancelled && existing.is_some_and(|i| !self.projects.runs()[i].result.cancelled) {
             return false;
         }
@@ -200,11 +204,7 @@ impl App {
 
     /// Sets the sidebar to a run's settings (one undo step).
     pub fn apply_run_settings(&mut self, run: &OptimizationRun) {
-        let sections = self.settings.sections.value.value;
         self.settings.apply_run(run);
-        if self.settings.sections.value.value != sections {
-            self.resplit();
-        }
     }
 
     /// Shows a run's fit and history.

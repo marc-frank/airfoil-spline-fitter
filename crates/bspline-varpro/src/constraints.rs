@@ -48,11 +48,6 @@ impl Junction {
         Ok(Junction { order, geometric, fixed })
     }
 
-    /// The same junction with parametric continuity.
-    pub fn parametric(self) -> Self {
-        Junction { geometric: false, ..self }
-    }
-
     /// `G2`, `C1`, ...
     pub fn label(&self) -> String {
         self.to_string()
@@ -245,10 +240,6 @@ impl ChainConstraints {
         self.slots.len()
     }
 
-    pub fn has_shape_parameters(&self) -> bool {
-        !self.slots.is_empty()
-    }
-
     fn ratio(&self, junction: usize) -> f64 {
         self.lengths[junction] / self.lengths[junction + 1]
     }
@@ -259,11 +250,6 @@ impl ChainConstraints {
             .iter()
             .map(|&(j, shape)| if shape == Shape::Alpha { alpha_parameter(self.ratio(j), self.ratio(j)) } else { 0.0 })
             .collect()
-    }
-
-    /// `θ` of the parametric join: `α = 1`, `β = γ = 0`.
-    pub fn parametric_params(&self) -> Vec<f64> {
-        self.slots.iter().map(|&(j, shape)| if shape == Shape::Alpha { alpha_parameter(1.0, self.ratio(j)) } else { 0.0 }).collect()
     }
 
     /// `ln(α/ratio)` per `α` slot and its derivative `(dα/da)/α` with

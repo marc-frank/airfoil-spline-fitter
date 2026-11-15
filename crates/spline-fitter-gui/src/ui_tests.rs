@@ -9,8 +9,6 @@ use spline_fitter::models::OptimizerType;
 use crate::app::App;
 
 fn harness() -> Harness<'static, App> {
-    let logs = std::env::temp_dir().join("spline_fitter_test_logs");
-    std::env::set_var("SPLINE_FITTER_LOG_DIR", &logs);
     Harness::builder().with_size([1500.0, 950.0]).wgpu().build_eframe(|cc| {
         let app = App::new(cc);
         spline_fitter::formatting::set_decimal_point('.');
@@ -64,7 +62,7 @@ fn reference_session() {
     finish(&mut h);
     {
         let app = h.state();
-        assert!(app.status.starts_with("Completed (VarPro LM): 40 evaluations in "), "{}", app.status);
+        assert!(app.status.starts_with("Completed (VarPro LM): 33 evaluations in "), "{}", app.status);
         assert!(app.status.ends_with(" | Error 8.978e-07 | max deviation 4.59e-06, RMS 8.98e-07, 49 control points"), "{}", app.status);
         assert_eq!(app.projects.label(), "Unsaved project*\n1 optimization run");
         assert_eq!(app.fit.as_ref().unwrap().section_counts(), vec![25, 25]);
@@ -84,8 +82,8 @@ fn reference_session() {
     finish(&mut h);
     {
         let app = h.state();
-        assert!(app.status.starts_with("Completed (Direct LSQ): 2 solves in "), "{}", app.status);
-        assert!(app.status.contains(" | Error 2.94"), "{}", app.status);
+        assert!(app.status.starts_with("Completed (Direct LSQ): 1 evaluation in "), "{}", app.status);
+        assert!(app.status.ends_with(" | Error 1.897e-05 | max deviation 4.72e-05, RMS 8.81e-06, 49 control points"), "{}", app.status);
         assert_eq!(app.projects.runs().len(), 2);
     }
     shot(&mut h, "4_direct_lsq");
@@ -132,12 +130,21 @@ fn light_theme_and_dialogs() {
         app.advanced_open = true;
     }
     h.run_steps(3);
-    assert!(h.state().status.starts_with("Re-split: NACA 0012 (121 points, 3 sections: "), "{}", h.state().status);
+    // The section count runs the rules only; the next fit splits.
+    assert_eq!(h.state().status, "Created: NACA 0012 (121 points, 2 sections: [61, 61])");
+    assert_eq!(h.state().airfoil.as_ref().unwrap().num_sections(), 2);
     h.state_mut().settings.sections.value.set(2);
     h.run_steps(3);
     h.state_mut().on_fit();
     finish(&mut h);
-    assert!(h.state().status.starts_with("Completed (VarPro LM): "), "{}", h.state().status);
+    {
+        let app = h.state();
+        assert!(app.status.starts_with("Completed (VarPro LM): "), "{}", app.status);
+        // Every refit of the search is a run of its own, told apart by its counts.
+        let counts: Vec<Vec<usize>> = app.projects.runs().iter().map(|r| r.result.section_counts()).collect();
+        assert!(counts.iter().enumerate().all(|(i, c)| !counts[..i].contains(c)), "{counts:?}");
+        assert_eq!(counts.last(), Some(&app.fit.as_ref().unwrap().section_counts()));
+    }
     h.state_mut().main_plot.deviation_on = true;
     h.state_mut().main_plot.show_knots = true;
     h.state_mut().main_plot.refresh_knots();
@@ -149,4 +156,17 @@ fn light_theme_and_dialogs() {
     h.state_mut().on_export_cad();
     h.run_steps(3);
     shot(&mut h, "7_cad_dialog");
+    h.state_mut().dialog = None;
+
+    // A fit splits the airfoil for its section count.
+    {
+        let app = h.state_mut();
+        app.settings.optimizer = OptimizerType::DirectLsq;
+        app.settings.sections.value.set(3);
+    }
+    h.run_steps(3);
+    h.state_mut().on_fit();
+    finish(&mut h);
+    assert!(h.state().status.starts_with("Completed (Direct LSQ): 1 evaluation in "), "{}", h.state().status);
+    assert_eq!(h.state().airfoil.as_ref().unwrap().num_sections(), 3);
 }

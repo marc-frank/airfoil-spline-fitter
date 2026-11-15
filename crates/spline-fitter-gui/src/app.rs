@@ -154,17 +154,14 @@ impl App {
         self.store.set_int("motion/zoom_ms", self.zoom_ms as i64);
     }
 
-    /// Settles the settings after this frame's edits: the rules, a re-split
-    /// for a new section count, and the undo history.
+    /// Settles the settings after this frame's edits: the rules and the undo
+    /// history. A new section count changes nothing else; the next fit splits.
     fn settle_settings(&mut self) {
         if self.settings.values() == self.before.values() {
             return;
         }
         let before = self.before.clone();
         self.settings.settle(&before);
-        if self.settings.sections.value.value != before.sections.value.value {
-            self.resplit();
-        }
         let quiet = self.quiet || self.fitting();
         self.history.on_change(self.settings.values(), quiet, Instant::now());
         self.before = self.settings.clone();
@@ -188,11 +185,7 @@ impl App {
     }
 
     fn restore(&mut self, values: &Values) {
-        let sections = self.settings.sections.value.value;
         self.settings.restore(values);
-        if self.settings.sections.value.value != sections {
-            self.resplit();
-        }
         self.history.restored(self.settings.values());
         self.before = self.settings.clone();
     }

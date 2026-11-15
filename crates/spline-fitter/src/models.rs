@@ -54,7 +54,7 @@ pub fn minimum_control_points(orders: &[usize], degree: usize) -> usize {
 pub enum OptimizerType {
     /// Levenberg-Marquardt variable projection.
     VarPro,
-    /// One constrained least-squares solve and a joint refinement.
+    /// A single constrained least-squares solve.
     DirectLsq,
 }
 
@@ -86,11 +86,11 @@ impl OptimizerType {
                  Recommended for CAD-quality results."
             }
             Self::DirectLsq => {
-                "Direct LSQ (single-step, no iteration).\n\
-                 One constrained least-squares solve, with fixed trailing-edge\n\
-                 end points and junctions fixed or free (Advanced).\n\
-                 Fastest option (~1ms), moderate accuracy (~1e-4).\n\
-                 Ideal for dense data or real-time preview."
+                "Direct LSQ: a single solve, no iteration.\n\
+                 One constrained least-squares solve on uniform knots, with the\n\
+                 data parameters taken from the point spacing (Parameterization).\n\
+                 Parametric continuity; junctions fixed or free (Advanced).\n\
+                 Fastest, but less accurate than VarPro LM."
             }
         }
     }
@@ -133,8 +133,8 @@ impl Default for SplineConfig {
             degree: 5,
             num_control_points: 25,
             num_sections: 2,
-            continuity: ContinuityMode::G1,
-            geometric_continuity: false,
+            continuity: ContinuityMode::G3,
+            geometric_continuity: true,
             junction_continuity: vec![],
         }
     }
@@ -252,11 +252,12 @@ pub struct OptimizationConfig {
     pub parameterization: Parameterization,
     /// Maximum deviation; `None` fits a fixed count.
     pub tolerance: Option<f64>,
-    /// VarPro subsampling of dense sections.
-    pub max_points_per_section: Option<usize>,
+    /// Uniform knots, or free knots whose positions are unknowns of the fit.
     pub knot_placement: KnotPlacement,
     /// Start from the fewest control points and add them where the fit is worst.
     pub grow_control_points: bool,
+    /// Smallest spacing of free knots, as a fraction of a section (0 to 0.5).
+    pub min_knot_gap: f64,
 }
 
 impl Default for OptimizationConfig {
@@ -267,9 +268,9 @@ impl Default for OptimizationConfig {
             smoothing_weight: 1e-3,
             parameterization: Parameterization::Centripetal,
             tolerance: None,
-            max_points_per_section: None,
-            knot_placement: KnotPlacement::Free,
-            grow_control_points: true,
+            knot_placement: KnotPlacement::Uniform,
+            grow_control_points: false,
+            min_knot_gap: bspline_varpro::MIN_KNOT_GAP,
         }
     }
 }
@@ -279,8 +280,8 @@ impl OptimizationConfig {
         if let Some(t) = self.tolerance.filter(|t| t.is_nan() || *t <= 0.0) {
             bail!("tolerance must be positive, got {}", bspline_varpro::numfmt::shortest(t));
         }
-        if let Some(m) = self.max_points_per_section.filter(|&m| m < 2) {
-            bail!("max_points_per_section must be at least 2, got {m}");
+        if !(0.0..=0.5).contains(&self.min_knot_gap) {
+            bail!("min_knot_gap must be between 0 and 0.5, got {}", bspline_varpro::numfmt::shortest(self.min_knot_gap));
         }
         Ok(self)
     }
@@ -357,7 +358,7 @@ mod tests {
 
     #[test]
     fn spline_config_rules() {
-        let c = SplineConfig { continuity: ContinuityMode::G2, degree: 1, ..Default::default() };
+        let c = SplineConfig { continuity: ContinuityMode::G2, geometric_continuity: false, degree: 1, ..Default::default() };
         assert_eq!(c.validated().unwrap_err().0, "G2 continuity requires degree >= 2, got 1");
         let c = SplineConfig { num_sections: 3, junction_continuity: vec![" g2".into(), "c1".into()], ..Default::default() };
         let c = c.validated().unwrap();

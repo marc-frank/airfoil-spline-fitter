@@ -111,6 +111,16 @@ impl AirfoilData {
         Self::new(self.coordinates.clone(), num_sections, &self.filename, &self.name, self.precision)
     }
 
+    /// The file name, else the name ("" without either): what default
+    /// file names are made from.
+    pub fn file_base(&self) -> &str {
+        if self.filename.is_empty() {
+            &self.name
+        } else {
+            &self.filename
+        }
+    }
+
     /// The name, else the file name, else `Airfoil`.
     pub fn display_name(&self) -> &str {
         [&self.name, &self.filename].into_iter().find(|s| !s.is_empty()).map_or("Airfoil", |s| s.as_str())

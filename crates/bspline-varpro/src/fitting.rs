@@ -8,11 +8,24 @@ use crate::constraints::{End, Junction};
 use crate::lm::{levenberg_marquardt, Model, Stopped};
 use crate::problem::VarProProblem;
 use crate::reparam::{apply_eta_jacobian, eta_to_t, t_to_eta};
-use crate::tolerance::{grow_to_counts, polish_knots, Setup};
+use crate::tolerance::{grow_to_counts, Setup};
 use crate::{bail, BSpline, Observer, Progress, Result, Vec2, STOPPED};
 
-/// Convergence tolerance (ftol, xtol and gtol) of every variable-projection solve.
-pub(crate) const LM_TOLERANCE: f64 = 1e-10;
+/// Convergence tolerance (ftol, xtol and gtol) of every fit. At 1e-10 a fit
+/// in a valley without a minimum (a junction's β growing without limit for
+/// ever smaller gains) never ended.
+pub const LM_TOLERANCE: f64 = 1e-8;
+
+/// Default smallest spacing of free knots, as a fraction of a section.
+pub const MIN_KNOT_GAP: f64 = 0.05;
+
+/// Checks a minimum knot gap: between 0 and 0.5.
+pub(crate) fn validate_min_knot_gap(gap: f64) -> Result<()> {
+    if !(gap.is_finite() && (0.0..=0.5).contains(&gap)) {
+        bail!("min_knot_gap must be between 0 and 0.5.");
+    }
+    Ok(())
+}
 
 /// Continuity at the junctions: one for all, or one per junction.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,15 +79,6 @@ impl ChainOptions {
     /// Junction orders of the chain.
     pub fn orders(&self, num_sections: usize) -> Result<Vec<usize>> {
         Ok(self.junctions(num_sections)?.iter().map(|j| j.order).collect())
-    }
-
-    /// The same chain with every geometric junction made parametric.
-    pub fn parametric(&self) -> ChainOptions {
-        let continuity = match &self.continuity {
-            Continuity::All(j) => Continuity::All(j.parametric()),
-            Continuity::Each(list) => Continuity::Each(list.iter().map(|j| j.parametric()).collect()),
-        };
-        ChainOptions { continuity, ..self.clone() }
     }
 
     pub fn problem(&self, sections: &[Vec<Vec2>], knots: Vec<Vec<f64>>, degree: usize) -> Result<VarProProblem> {
@@ -141,20 +145,32 @@ impl FitResult {
 }
 
 /// Settings of [`fit`].
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FitOptions {
     pub chain: ChainOptions,
     /// Starting data parameters; centripetal per section by default.
     pub initial_parameters: Option<Parameters>,
-    /// For dense data: fit an evenly spaced subsample of longer sections by
-    /// variable projection, then refine jointly on all points.
-    pub max_points_per_section: Option<usize>,
     /// Residual evaluations per solve; `None` runs until converged.
     pub max_nfev: Option<usize>,
     pub knot_placement: KnotPlacement,
     /// Start from the fewest control points and add knots where the fit is
     /// worst until each section has its count.
     pub grow: bool,
+    /// Smallest spacing of free knots, as a fraction of a section (0 to 0.5).
+    pub min_knot_gap: f64,
+}
+
+impl Default for FitOptions {
+    fn default() -> Self {
+        FitOptions {
+            chain: ChainOptions::default(),
+            initial_parameters: None,
+            max_nfev: None,
+            knot_placement: KnotPlacement::default(),
+            grow: false,
+            min_knot_gap: MIN_KNOT_GAP,
+        }
+    }
 }
 
 /// Every section has at least two finite points.
@@ -177,10 +193,11 @@ pub(crate) fn start_parameters(given: Option<&Parameters>, sections: &[Vec<Vec2>
 ///
 /// Control points and the curve parameter of every point are optimized
 /// jointly: the control points are eliminated by variable projection and the
-/// parameters (and the shape parameters of geometric junctions) are solved by
-/// Levenberg-Marquardt with the exact reduced Jacobian. The sections only
-/// give the starting split; a point's parameter slides along the chain,
-/// across junctions, staying strictly increasing.
+/// parameters, the shape parameters of geometric junctions and, with free
+/// knots, the interior knot positions are solved by one Levenberg-Marquardt
+/// loop with the exact reduced Jacobian. The sections only give the
+/// starting split; a point's parameter slides along the chain, across
+/// junctions, staying strictly increasing.
 ///
 /// `counts` holds the control points of every section. The observer sees
 /// every residual evaluation and can stop the fit; the result then holds the
@@ -209,62 +226,14 @@ pub fn fit(
     if options.max_nfev == Some(0) {
         bail!("max_nfev must be at least 1 or None.");
     }
-    if options.max_points_per_section.is_some_and(|m| m < 2) {
-        bail!("max_points_per_section must be at least 2.");
-    }
+    validate_min_knot_gap(options.min_knot_gap)?;
     let knots = counts.iter().map(|&n| open_uniform_knots(degree, n)).collect::<Result<Vec<_>>>()?;
     let u0 = start_parameters(options.initial_parameters.as_ref(), sections)?;
-    let dense = options.max_points_per_section.is_some_and(|m| sections.iter().any(|s| s.len() > m));
-    let (max_nfev, max_points) = (options.max_nfev, options.max_points_per_section);
+    let setup = Setup { sections, degree, options: chain, max_nfev: options.max_nfev, min_knot_gap: options.min_knot_gap };
     if options.grow {
-        let setup = Setup { sections, degree, options: chain, max_nfev, max_points };
         return grow_to_counts(setup, counts, u0, options.knot_placement, observer);
     }
-    if let Some(m) = max_points.filter(|_| dense) {
-        let setup = Setup { sections, degree, options: chain, max_nfev, max_points };
-        return setup.subsampled(knots, &u0, None, m, observer);
-    }
-    let problem = chain.problem(sections, knots, degree)?;
-    let result = solve_with_continuation(&problem, chain, sections, &u0, max_nfev, observer)?;
-    if options.knot_placement == KnotPlacement::Free && !result.stopped {
-        let polished = polish_knots(sections, &result, chain, observer)?;
-        if polished.stopped {
-            return Ok(polished);
-        }
-        if polished.rms_error <= result.rms_error {
-            // Moving the knots only refines a converged fit: keep its status.
-            return Ok(FitResult { nfev: polished.nfev + result.nfev, success: result.success, message: result.message, ..polished });
-        }
-    }
-    Ok(result)
-}
-
-/// Solves geometric junctions starting from the converged parametric
-/// solution: the geometric problem has flat directions (shape parameters
-/// trade off against the parameterization) that make a cold start drift.
-pub(crate) fn solve_with_continuation(
-    problem: &VarProProblem,
-    options: &ChainOptions,
-    sections: &[Vec<Vec2>],
-    u0: &[f64],
-    max_nfev: Option<usize>,
-    observer: &mut dyn Observer,
-) -> Result<FitResult> {
-    if !problem.constraints.has_shape_parameters() {
-        return Ok(solve_problem(problem, u0, &problem.theta, max_nfev, observer));
-    }
-    let base_problem = options.parametric().problem(sections, problem.knots.clone(), problem.degree)?;
-    let base = solve_problem(&base_problem, u0, &base_problem.theta, max_nfev, observer);
-    let theta0 = problem.constraints.parametric_params();
-    let remaining = max_nfev.map(|m| m as i64 - base.nfev as i64);
-    if base.stopped || remaining.is_some_and(|r| r < 1) {
-        // The same curve as a geometric join (α = 1).
-        let result = result_from_problem(problem, &base.parameters, &theta0, base.nfev, false, crate::lm::Status::Budget.message());
-        return Ok(if base.stopped { result.stop() } else { result });
-    }
-    let mut result = solve_problem(problem, &base.parameters, &theta0, remaining.map(|r| r as usize), observer);
-    result.nfev += base.nfev;
-    Ok(result)
+    setup.refit(knots, &u0, None, options.knot_placement == KnotPlacement::Free, observer)
 }
 
 /// The reduced residual of a [`VarProProblem`] over `x = [η, θ]`.
