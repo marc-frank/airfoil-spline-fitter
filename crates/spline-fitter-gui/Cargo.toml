@@ -1,0 +1,14 @@
+[package]
+name = "spline-fitter-gui"
+version = "2.0.0"
+description = "Airfoil Spline Fitter desktop application"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "spline-fitter"
+path = "src/main.rs"
+
+[dependencies]
+spline-fitter = { path = "../spline-fitter" }

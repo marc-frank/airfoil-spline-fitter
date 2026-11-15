@@ -28,10 +28,11 @@ mod tolerance;
 
 pub use basis::{centripetal_parameters, clamped_knots, interior_knots, open_uniform_knots, validate_knots};
 pub use chain::Parameters;
-pub use constraints::{minimum_control_points, Junction};
+pub use constraints::{minimum_control_points, ChainConstraints, End, Junction};
 pub use curve::BSpline;
 pub use fitting::{fit, ChainOptions, Continuity, FitOptions, FitResult, KnotPlacement};
 pub use joint::{solve_joint, JointProblem, JointSolution};
+pub use kkt::KktSolver;
 pub use tolerance::{fit_to_tolerance, ToleranceOptions};
 
 /// Planar point or vector.
