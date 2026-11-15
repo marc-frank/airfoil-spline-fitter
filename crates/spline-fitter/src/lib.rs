@@ -15,6 +15,7 @@ pub mod optimize;
 pub mod project;
 pub mod run_log;
 
+pub use bspline_varpro;
 pub use bspline_varpro::{BSpline, Error, Result, Vec2};
 
 /// The application version.

@@ -126,7 +126,7 @@ pub fn prepare(source: &Path, target: &Path, config: &SplineConfig, opt: &Optimi
     Ok(BatchItem { airfoil, output })
 }
 
-/// Fits one prepared file and writes its spline (with 12 decimals).
+/// Fits one prepared file and writes its spline.
 pub fn convert(item: &BatchItem, config: &SplineConfig, opt: &OptimizationConfig, auto_tolerance: bool, monitor: &mut dyn Monitor, cancelled: impl Fn() -> bool) -> Result<Outcome> {
     if item.output.exists() {
         return Ok(Outcome::Skipped(item.output.clone()));
@@ -142,6 +142,12 @@ pub fn convert(item: &BatchItem, config: &SplineConfig, opt: &OptimizationConfig
     if !result.success {
         bail!("Optimizer did not converge: {}", result.message);
     }
+    write_result(item, config, &result)?;
+    Ok(Outcome::Done(result))
+}
+
+/// Writes the fitted spline of a batch item (with 12 decimals).
+pub fn write_result(item: &BatchItem, config: &SplineConfig, result: &RawResult) -> Result<()> {
     let a = &item.airfoil;
     let spline = SplineFile {
         name: if a.name.is_empty() { a.filename.clone() } else { a.name.clone() },
@@ -150,8 +156,7 @@ pub fn convert(item: &BatchItem, config: &SplineConfig, opt: &OptimizationConfig
         knots: result.section_knots.clone(),
         continuity: Some(config.junction_specs()),
     };
-    export_spline_data(&item.output, &spline, Some(12))?;
-    Ok(Outcome::Done(result))
+    export_spline_data(&item.output, &spline, Some(12))
 }
 
 #[cfg(test)]

@@ -343,6 +343,10 @@ pub fn resample(curves: &[BSpline], n_per_side: usize) -> Result<Vec<Vec2>> {
 /// Thickness and camber of a fitted airfoil (fractions of the chord).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Shape {
+    /// Chordwise stations (cosine spaced) of the distributions.
+    pub stations: Vec<f64>,
+    pub thickness: Vec<f64>,
+    pub camber: Vec<f64>,
     pub chord: f64,
     pub max_thickness: f64,
     pub max_thickness_x: f64,
@@ -378,6 +382,7 @@ fn peak(x: &[f64], y: &[f64]) -> (f64, f64) {
 /// the same x.
 pub fn thickness_and_camber(curves: &[BSpline]) -> Result<Shape> {
     const SAMPLES: usize = 4000;
+    const STATIONS: usize = 201;
     let (section, u_le, _) = leading_edge(curves);
     let start = curves[0].domain().0;
     let end = curves[curves.len() - 1].domain().1;
@@ -405,17 +410,21 @@ pub fn thickness_and_camber(curves: &[BSpline]) -> Result<Shape> {
     };
     let (ux, uy) = sorted(upper);
     let (lx, ly) = sorted(lower);
+    let distributions = |xs: &[f64]| -> (Vec<f64>, Vec<f64>) {
+        xs.iter()
+            .map(|&x| {
+                let (yu, yl) = (interp(x, &ux, &uy), interp(x, &lx, &ly));
+                (yu - yl, 0.5 * (yu + yl))
+            })
+            .unzip()
+    };
     let fine = cosine_spacing(4 * SAMPLES);
-    let mut thickness = Vec::with_capacity(fine.len());
-    let mut camber = Vec::with_capacity(fine.len());
-    for &x in &fine {
-        let (yu, yl) = (interp(x, &ux, &uy), interp(x, &lx, &ly));
-        thickness.push(yu - yl);
-        camber.push(0.5 * (yu + yl));
-    }
-    let (max_thickness_x, max_thickness) = peak(&fine, &thickness);
-    let (max_camber_x, max_camber) = peak(&fine, &camber);
-    Ok(Shape { chord, max_thickness, max_thickness_x, max_camber, max_camber_x })
+    let (fine_thickness, fine_camber) = distributions(&fine);
+    let (max_thickness_x, max_thickness) = peak(&fine, &fine_thickness);
+    let (max_camber_x, max_camber) = peak(&fine, &fine_camber);
+    let stations = cosine_spacing(STATIONS);
+    let (thickness, camber) = distributions(&stations);
+    Ok(Shape { stations, thickness, camber, chord, max_thickness, max_thickness_x, max_camber, max_camber_x })
 }
 
 /// Straight segment closing a blunt trailing edge (lower TE to upper TE),
