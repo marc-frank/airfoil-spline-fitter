@@ -116,6 +116,7 @@ fn open_dialog(ctx: &egui::Context, title: &str, width: f32, margin: f32, conten
             .show(ui, |ui| {
                 ui.set_width(width - 2.0 * margin);
                 ui.spacing_mut().item_spacing.y = size::GAP;
+                focus_first_control(ui, title);
                 if let Some(content) = content.take() {
                     answer = content(ui);
                 }
@@ -135,35 +136,87 @@ fn open_dialog(ctx: &egui::Context, title: &str, width: f32, margin: f32, conten
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             answer = Answer::Reject;
         }
+        if !matches!(answer, Answer::Open) {
+            // Opened again, it focuses its first control again.
+            ui.ctx().data_mut(|d| d.remove::<u8>(opened_id(title)));
+        }
         answer
     })
 }
 
-/// A dialog button: 22 px wider than its text; the default one outlined in
-/// the selection line (Enter presses it).
+/// Where a dialog keeps how many frames it has been open (up to three).
+fn opened_id(title: &str) -> egui::Id {
+    egui::Id::unique(("dialog_opened", title))
+}
+
+/// Qt gives a dialog's first control the focus when it opens: an anchor
+/// before the content takes the focus on the first frame and passes it on
+/// to the next control on the second.
+fn focus_first_control(ui: &mut Ui, title: &str) {
+    let id = opened_id(title);
+    let frames = ui.ctx().data(|d| d.get_temp::<u8>(id)).unwrap_or(0);
+    if frames >= 3 {
+        return;
+    }
+    // The move is asked for before the anchor registers: the widget after
+    // it then takes the focus.
+    let anchor_id = id.with("anchor");
+    if frames == 1 && ui.memory(|m| m.has_focus(anchor_id)) {
+        ui.memory_mut(|m| m.move_focus(egui::FocusDirection::Next));
+    }
+    let anchor = egui::Rect::from_min_size(ui.cursor().min, egui::Vec2::ZERO);
+    let anchor = ui.interact(anchor, anchor_id, egui::Sense::focusable_noninteractive());
+    if frames == 0 {
+        anchor.request_focus();
+    }
+    ui.ctx().data_mut(|d| d.insert_temp(id, frames + 1));
+    ui.ctx().request_repaint();
+}
+
+/// A dialog's push button, 22 px wider than its text, as Qt's auto-default
+/// buttons: the one with the focus is the default; without a push button
+/// in focus, the `default` one is. The default is outlined in the selection
+/// line and Enter presses it. True when pressed.
 fn dialog_button(ui: &mut Ui, p: &Palette, text: &str, default: bool, enabled: bool) -> bool {
     let response = ui.add_enabled(enabled, egui::Button::new(text).min_size(egui::vec2(0.0, size::CONTROL_HEIGHT)));
-    if default && enabled {
+    let last_focused = egui::Id::unique("dialog_focused_button");
+    let focused = response.has_focus();
+    if focused {
+        ui.ctx().data_mut(|d| d.insert_temp(last_focused, response.id));
+    }
+    let other = ui.memory(|m| m.focused()).is_some_and(|f| f != response.id && ui.ctx().data(|d| d.get_temp::<egui::Id>(last_focused)) == Some(f));
+    let is_default = enabled && (focused || (default && !other));
+    if is_default {
         widgets::outline_checked(ui, p, &response, egui::CornerRadius::same(size::RADIUS));
     }
-    response.clicked() || (default && enabled && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+    // A focused button answers Enter itself (as a click).
+    response.clicked() || (is_default && !focused && ui.input(|i| i.key_pressed(egui::Key::Enter)))
 }
 
 /// The button row: a reset-role button at the left; at the right the
-/// accept button (the default) and the reject button, 6 px apart.
+/// accept button (the default) and the reject button, 6 px apart. Tab
+/// visits them in that order, as in Qt.
 fn buttons(ui: &mut Ui, p: &Palette, accept: Option<(&str, bool)>, reject: &str, reset: Option<(&str, &str)>) -> (bool, bool, bool) {
     let (mut a, mut r, mut z) = (false, false, false);
     let row = egui::vec2(ui.available_width(), size::CONTROL_HEIGHT);
     ui.allocate_ui_with_layout(row, Layout::left_to_right(Align::Center), |ui| {
         if let Some((text, tip)) = reset {
-            z = ui.add(egui::Button::new(text).min_size(egui::vec2(0.0, size::CONTROL_HEIGHT))).on_hover_text(tip).clicked();
+            ui.scope(|ui| {
+                z = dialog_button(ui, p, text, false, true);
+            })
+            .response
+            .on_hover_text(tip);
         }
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            r = dialog_button(ui, p, reject, false, true);
-            if let Some((text, enabled)) = accept {
-                a = dialog_button(ui, p, text, true, enabled);
-            }
-        });
+        // The right-hand buttons laid out left to right after the space they leave.
+        let font = egui::FontId::proportional(crate::theme::typeface::BASE);
+        let width = |t: &str| ui.painter().layout_no_wrap(t.to_string(), font.clone(), p.text).size().x + 2.0 * ui.spacing().button_padding.x;
+        let gap = ui.spacing().item_spacing.x;
+        let right = accept.map_or(0.0, |(t, _)| width(t) + gap) + width(reject);
+        ui.add_space((ui.available_width() - right).max(0.0));
+        if let Some((text, enabled)) = accept {
+            a = dialog_button(ui, p, text, true, enabled);
+        }
+        r = dialog_button(ui, p, reject, false, true);
     });
     (a, r, z)
 }
@@ -273,7 +326,7 @@ impl App {
                     for (label, folder) in [("Source", &mut source), ("Target", &mut target)] {
                         form_row(ui, &p, label, true, "", |ui| {
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                if widgets::button(ui, "Choose...", "").clicked() {
+                                if dialog_button(ui, &p, "Choose...", false, true) {
                                     let home = dirs::home_dir().unwrap_or_default();
                                     if let Some(dir) =
                                         rfd::FileDialog::new().set_title(format!("{label} folder")).set_directory(home).pick_folder()

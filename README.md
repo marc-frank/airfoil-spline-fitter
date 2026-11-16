@@ -106,6 +106,10 @@ Python results), and differs on purpose where the behaviour was a defect:
   of a sweep) are one undo step because the settings settle once per frame,
   not through an explicit history group.
 - The fit report is a native table, not HTML.
+- Enter in a dialog presses its accept button (or the push button that has
+  the focus). In the Python window the segmented choices were push buttons
+  that took the default: Enter chose "Closed" in New NACA airfoil and "mm"
+  in Export CAD, and reset Scrolling and zooming.
 - Library features nothing used (tangent end conditions, averaged knots, knot
   insertion, the second airfoil reader, all-finite-difference Jacobians) and the
   retired settings (`smoothing_factor`, `early_stop_patience`,

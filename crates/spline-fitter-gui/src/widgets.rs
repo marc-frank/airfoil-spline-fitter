@@ -1,7 +1,7 @@
 //! Controls of the Loft design: form rows, segmented controls, numeric
 //! fields with step arrows, the sweep toggle, captions and headers.
 
-use eframe::egui::{self, Align, Button, CornerRadius, FontId, Key, Layout, Response, RichText, Sense, TextEdit, Ui, Vec2, Widget};
+use eframe::egui::{self, Align, Button, CornerRadius, FontId, Key, Layout, Response, RichText, Sense, TextEdit, Ui, Vec2};
 use spline_fitter::formatting::{decimal_point, number};
 
 use crate::theme::{size, typeface, Glyph, Palette, INK, INK_HOVER, ON_INK};
@@ -131,6 +131,19 @@ pub fn tristate_checkbox(ui: &mut Ui, p: &Palette, checked: &mut bool, partly: b
     response.on_hover_cursor(egui::CursorIcon::Default)
 }
 
+/// Qt selects a field's text when the focus comes by keyboard (or with a
+/// dialog's opening), not by a click: typing then replaces it.
+fn select_on_focus(ui: &Ui, response: &Response, chars: usize) {
+    if !response.gained_focus() || ui.input(|i| i.pointer.any_pressed() || i.pointer.any_down()) {
+        return;
+    }
+    if let Some(mut state) = TextEdit::load_state(ui.ctx(), response.id) {
+        let all = egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(chars));
+        state.cursor.set_char_range(Some(all));
+        state.store(ui.ctx(), response.id);
+    }
+}
+
 /// A one-line text field in the Loft frame (as a spin box's, without
 /// arrows); at most `limit` characters (0: any).
 pub fn text_field(ui: &mut Ui, p: &Palette, id_salt: &str, text: &mut String, width: f32, hint: &str, limit: usize) -> Response {
@@ -177,6 +190,7 @@ fn field_of(
         edit = edit.char_limit(limit);
     }
     let response = ui.new_child(egui::UiBuilder::new().max_rect(edit_rect)).add(edit);
+    select_on_focus(ui, &response, text.chars().count());
     let mut cleared = false;
     if show_clear {
         let button = egui::Rect::from_min_max(egui::pos2(outer.right() - CLEAR, outer.top()), outer.max);
@@ -302,7 +316,9 @@ pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, items: &[(T, &
             };
             let checked = *value == *item;
             let mut response = ui.add_sized([each, size::CONTROL_HEIGHT], Button::new(*text).selected(checked).corner_radius(radius));
-            if checked && ui.is_enabled() {
+            // Outlined when checked, and while it has the focus (Qt's segments
+            // are push buttons: the focused one is the default).
+            if (checked || response.has_focus()) && ui.is_enabled() {
                 ui.painter().rect_stroke(response.rect, radius, egui::Stroke::new(1.0, select_line), egui::StrokeKind::Inside);
             }
             if !tooltip.is_empty() {
@@ -406,6 +422,13 @@ pub fn number_field(
         .min_size(text_rect.size());
     // In a child, so the layout cursor stays after the whole field.
     let response = ui.new_child(egui::UiBuilder::new().max_rect(text_rect)).add(edit);
+    // A spin box selects its number, not the unit after it.
+    let number = if text.starts_with(|c: char| c.is_ascii_digit() || c == '-') {
+        text.chars().take_while(|c| !c.is_whitespace()).count()
+    } else {
+        text.chars().count()
+    };
+    select_on_focus(ui, &response, number);
     let mut response = if tooltip.is_empty() { response } else { response.on_hover_text(tooltip) };
     let commit = |text: &str, value: &mut f64| {
         if let Some(v) = (fmt.parse)(text) {
@@ -719,6 +742,11 @@ pub fn combo(
         })
         .response;
     *ui.spacing_mut() = spacing;
+    // Focused, its border is the selection line (as a field's).
+    if response.has_focus() {
+        let stroke = egui::Stroke::new(1.0, ui.visuals().widgets.active.bg_stroke.color);
+        ui.painter().rect_stroke(response.rect, CornerRadius::same(size::RADIUS), stroke, egui::StrokeKind::Inside);
+    }
     if !tooltip.is_empty() {
         response.on_hover_text(tooltip);
     }
@@ -730,16 +758,6 @@ pub fn combo(
 pub fn combo_width(ui: &Ui, items: &[&str]) -> f32 {
     let font = FontId::proportional(typeface::BASE);
     items.iter().map(|t| crate::fonts::ink_width(ui, t, &font)).fold(0.0, f32::max) + size::COMBO_EXTRA
-}
-
-/// A plain button of control height.
-pub fn button(ui: &mut Ui, text: &str, tooltip: &str) -> Response {
-    let r = Button::new(text).min_size(Vec2::new(0.0, size::CONTROL_HEIGHT)).ui(ui);
-    if tooltip.is_empty() {
-        r
-    } else {
-        r.on_hover_text(tooltip)
-    }
 }
 
 #[cfg(test)]

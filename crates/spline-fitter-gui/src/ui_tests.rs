@@ -404,3 +404,34 @@ fn sweeps_show_the_whole_project_range() {
     let xs: Vec<f64> = h.state().comparison.points.iter().map(|p| p[0]).collect();
     assert_eq!(xs, [20.0, 21.0, 24.0, 25.0]);
 }
+
+/// A dialog gives its first control the focus with its text selected, so
+/// typing replaces it; Enter presses the default button, Tab moves the
+/// focus on and a focused push button becomes the default.
+#[test]
+fn dialogs_focus_their_first_control() {
+    use crate::dialogs::Dialog;
+    let mut h = harness();
+    h.run_steps(2);
+    h.state_mut().dialog = Some(Dialog::naca(&h.state().store));
+    h.run_steps(4);
+    h.input_mut().events.push(egui::Event::Text("0012".into()));
+    h.run_steps(2);
+    key(&mut h, egui::Key::Enter, egui::Modifiers::NONE);
+    h.run_steps(3);
+    assert!(h.state().dialog.is_none(), "Enter pressed Create");
+    assert_eq!(h.state().airfoil.as_ref().map(|a| a.name.clone()), Some("NACA 0012".into()));
+    // In Theme, Tab past the segments and the slider reaches Neutral, which
+    // Enter then presses (Close is no longer the default).
+    h.state_mut().dialog = Some(Dialog::theme(h.state()));
+    h.run_steps(4);
+    h.state_mut().temperature = 40;
+    for _ in 0..4 {
+        key(&mut h, egui::Key::Tab, egui::Modifiers::NONE);
+    }
+    shot(&mut h, "d_theme_neutral_focused");
+    key(&mut h, egui::Key::Enter, egui::Modifiers::NONE);
+    h.run_steps(2);
+    assert_eq!(h.state().temperature, 0, "Enter pressed the focused Neutral");
+    assert!(h.state().dialog.is_some(), "and not Close");
+}
