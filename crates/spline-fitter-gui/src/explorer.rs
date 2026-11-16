@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-use eframe::egui::{self, Align, Layout, RichText, Sense, Ui};
+use eframe::egui::{self, Align, Key, Layout, RichText, Sense, Ui};
 use egui_extras::{Column as TableColumn, TableBuilder};
 use spline_fitter::bspline_varpro::KnotPlacement;
 use spline_fitter::formatting::{format_duration, number};
@@ -95,7 +95,10 @@ pub struct ExplorerState {
     pub y_column: usize,
     /// Run ids of the plotted points, in plot order, with their coordinates.
     points: Option<Vec<(String, [f64; 2])>>,
+    /// Where a Shift-click or Shift-arrow selects from.
     anchor: Option<String>,
+    /// The table's current run: the arrow keys move from it.
+    current: Option<String>,
     popup: Option<ColumnPopup>,
     /// Height of the run details on the last frame (the table takes the rest).
     details_height: f32,
@@ -120,6 +123,7 @@ impl Default for ExplorerState {
             y_column: ERROR_COLUMN,
             points: None,
             anchor: None,
+            current: None,
             popup: None,
             details_height: 15.0,
             order: (0..COLUMNS.len()).collect(),
@@ -152,6 +156,21 @@ const HEADER_EXTRA: f32 = 46.0;
 const CELL_EXTRA: f32 = 18.0;
 const EMPTY_COLUMN: f32 = 100.0;
 
+/// The run table's keyboard focus (a click on a run gives it).
+fn table_focus() -> egui::Id {
+    egui::Id::unique("run_table_focus")
+}
+
+/// Registers the table as the focus's holder for this frame (egui drops
+/// the focus of a widget it does not see).
+/// `take`: a run was clicked, which gives the table the focus.
+fn table_focus_target(ui: &Ui, take: bool) {
+    let response = ui.interact(ui.max_rect(), table_focus(), Sense::focusable_noninteractive());
+    if take {
+        response.request_focus();
+    }
+}
+
 /// The open column filter drop-down.
 struct ColumnPopup {
     column: usize,
@@ -172,7 +191,7 @@ const POPUP_ROW: f32 = 21.0;
 
 impl App {
     /// The visible runs in table order, with their cells.
-    fn visible_rows(&self) -> Vec<(String, Vec<(Cell, String)>)> {
+    pub(crate) fn visible_rows(&self) -> Vec<(String, Vec<(Cell, String)>)> {
         let mut rows: Vec<(String, Vec<(Cell, String)>)> = self
             .projects
             .runs()
@@ -516,8 +535,12 @@ impl App {
     }
 
     fn click_run(&mut self, id: &str, order: &[String], modifiers: egui::Modifiers) {
+        self.explorer.current = Some(id.to_string());
         let selected = &mut self.projects.selected;
         if modifiers.shift {
+            if self.explorer.anchor.is_none() {
+                self.explorer.anchor = Some(id.to_string());
+            }
             if let Some(anchor) = &self.explorer.anchor {
                 let (a, b) = (order.iter().position(|x| x == anchor), order.iter().position(|x| x == id));
                 if let (Some(a), Some(b)) = (a, b) {
@@ -620,6 +643,8 @@ impl App {
         let mut clicked: Option<(String, egui::Modifiers)> = None;
         let mut double: Option<String> = None;
         let delete = ui.input(|i| i.key_pressed(egui::Key::Delete));
+        let page = ((ui.available_height() - HEADER_HEIGHT) / ROW_HEIGHT).floor().max(1.0) as usize;
+        let reveal = self.table_keys(ui, &order, false, page);
         let columns: Vec<usize> = self.explorer.order.clone();
         self.explorer.sections.clear();
         // Columns fit their contents when the runs change: the header with
@@ -669,6 +694,9 @@ impl App {
         if let Some(y) = self.explorer.scroll_to.take() {
             builder = builder.vertical_scroll_offset(y);
         }
+        if let Some(row) = reveal {
+            builder = builder.scroll_to_row(row, None);
+        }
         for w in &widths {
             builder = builder.column(TableColumn::initial(*w).at_least(24.0).clip(true));
         }
@@ -707,6 +735,7 @@ impl App {
                     }
                 });
             });
+        table_focus_target(ui, clicked.is_some());
         if let Some((id, modifiers)) = clicked {
             self.click_run(&id, &order, modifiers);
         }
@@ -742,6 +771,7 @@ impl App {
             })
             .collect();
         let height = columns.len() as f32 * ROW_HEIGHT;
+        let reveal = self.table_keys(ui, &order, true, 1);
         let mut clicked: Option<(String, egui::Modifiers)> = None;
         let mut double: Option<String> = None;
         egui::ScrollArea::vertical().id_salt("pivot_v").auto_shrink([false, false]).show(ui, |ui| {
@@ -771,6 +801,9 @@ impl App {
                                 let at = egui::pos2(rect.center().x, rect.top() + (i as f32 + 0.5) * ROW_HEIGHT);
                                 ui.painter().text(at, egui::Align2::CENTER_CENTER, value, font, p.text);
                             }
+                            if reveal.is_some_and(|i| order[i] == *id) {
+                                ui.scroll_to_rect(rect, None);
+                            }
                             if response.clicked() {
                                 clicked = Some((id.clone(), ui.input(|i| i.modifiers)));
                             }
@@ -782,12 +815,69 @@ impl App {
                 });
             });
         });
+        table_focus_target(ui, clicked.is_some());
         if let Some((id, modifiers)) = clicked {
             self.click_run(&id, &order, modifiers);
         }
         if let Some(id) = double {
             self.load_settings(&id);
         }
+    }
+
+    /// Qt's table keys while the run table has the focus. The runs are rows
+    /// (pivoted: columns): Up and Down (pivoted: Left and Right) move to
+    /// the next run and select it, Page Up and Page Down a page of rows,
+    /// Ctrl+Home and Ctrl+End (pivoted: Home and End) to the first and
+    /// last. Shift selects from the anchor to there; Ctrl moves without
+    /// selecting, and Ctrl+Space then selects or deselects the run. The
+    /// run moved to, to scroll into view.
+    fn table_keys(&mut self, ui: &Ui, order: &[String], pivoted: bool, page: usize) -> Option<usize> {
+        if !ui.memory(|m| m.has_focus(table_focus())) || order.is_empty() {
+            return None;
+        }
+        // The arrows stay with the table instead of moving the focus.
+        let filter = egui::EventFilter { horizontal_arrows: true, vertical_arrows: true, ..Default::default() };
+        ui.memory_mut(|m| m.set_focus_lock_filter(table_focus(), filter));
+        let (back, forward) = if pivoted { (Key::ArrowLeft, Key::ArrowRight) } else { (Key::ArrowUp, Key::ArrowDown) };
+        let last = order.len() - 1;
+        let current = self.explorer.current.as_ref().and_then(|c| order.iter().position(|x| x == c));
+        let (target, modifiers) = ui.input(|i| {
+            let m = i.modifiers;
+            let jump = |key| i.key_pressed(key) && (pivoted || m.command);
+            // Without a current run, a move goes to the first.
+            let at = |step: isize| current.map_or(0, |c| (c as isize + step).clamp(0, last as isize) as usize);
+            let target = if i.key_pressed(back) {
+                Some(at(-1))
+            } else if i.key_pressed(forward) {
+                Some(at(1))
+            } else if !pivoted && i.key_pressed(Key::PageUp) {
+                Some(at(-(page as isize)))
+            } else if !pivoted && i.key_pressed(Key::PageDown) {
+                Some(at(page as isize))
+            } else if jump(Key::Home) {
+                Some(0)
+            } else if jump(Key::End) {
+                Some(last)
+            } else {
+                None
+            };
+            (target, m)
+        });
+        if modifiers.command && ui.input(|i| i.key_pressed(Key::Space)) {
+            if let Some(c) = current {
+                self.click_run(&order[c], order, egui::Modifiers::COMMAND);
+            }
+            return None;
+        }
+        let target = target?;
+        if modifiers.command && !modifiers.shift {
+            self.explorer.current = Some(order[target].clone());
+        } else {
+            let modifiers = egui::Modifiers { shift: modifiers.shift, ..Default::default() };
+            self.click_run(&order[target], order, modifiers);
+        }
+        ui.ctx().request_repaint();
+        Some(target)
     }
 
     fn details(&mut self, ui: &mut Ui) {

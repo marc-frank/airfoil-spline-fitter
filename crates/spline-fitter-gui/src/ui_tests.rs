@@ -313,10 +313,13 @@ fn menus_answer_their_access_keys() {
 }
 
 fn key(h: &mut Harness<'static, App>, key: egui::Key, modifiers: egui::Modifiers) {
+    h.input_mut().events.push(egui::Event::ModifiersChanged(modifiers));
     for pressed in [true, false] {
         h.input_mut().events.push(egui::Event::Key { key, physical_key: None, pressed, repeat: false, modifiers });
     }
-    h.run_steps(2);
+    h.run_steps(1);
+    h.input_mut().events.push(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+    h.run_steps(1);
 }
 
 /// Double-clicks at a point (both clicks in one frame: the harness renders
@@ -425,6 +428,36 @@ fn sweeps_show_the_whole_project_range() {
     sweep(&mut h, 24, 25);
     let xs: Vec<f64> = h.state().comparison.points.iter().map(|p| p[0]).collect();
     assert_eq!(xs, [20.0, 21.0, 24.0, 25.0]);
+
+    // A click on a run gives the table the arrow keys, as in Qt.
+    use egui_kittest::kittest::Queryable;
+    let ppp = h.ctx.pixels_per_point();
+    let cell = h.query_all_by_label("1").map(|n| n.rect()).filter(|r| r.min.x > 700.0 * ppp && r.min.x < 1010.0 * ppp).last();
+    let cell = cell.expect("run 1 in the Run column");
+    click_at(&mut h, cell.center().x as f32 / ppp, cell.center().y as f32 / ppp);
+    // In the order shown.
+    let ids: Vec<String> = h.state().visible_rows().into_iter().map(|(id, _)| id).collect();
+    let selected = |h: &Harness<'static, App>| h.state().projects.selected.iter().cloned().collect::<Vec<_>>();
+    assert_eq!(selected(&h), [ids[0].clone()]);
+    key(&mut h, egui::Key::ArrowDown, egui::Modifiers::NONE);
+    assert_eq!(selected(&h), [ids[1].clone()]);
+    key(&mut h, egui::Key::ArrowDown, egui::Modifiers::SHIFT);
+    let mut two = vec![ids[1].clone(), ids[2].clone()];
+    two.sort();
+    assert_eq!(selected(&h), two);
+    key(&mut h, egui::Key::End, egui::Modifiers::COMMAND);
+    assert_eq!(selected(&h), two, "Ctrl moves without selecting");
+    key(&mut h, egui::Key::Space, egui::Modifiers::COMMAND);
+    assert_eq!(selected(&h).len(), 3);
+    key(&mut h, egui::Key::ArrowUp, egui::Modifiers::NONE);
+    assert_eq!(selected(&h), [ids[2].clone()]);
+    // Pivoted, the runs are columns: Left and Right move.
+    h.state_mut().explorer.pivot = true;
+    h.run_steps(2);
+    key(&mut h, egui::Key::ArrowLeft, egui::Modifiers::NONE);
+    assert_eq!(selected(&h), [ids[1].clone()]);
+    key(&mut h, egui::Key::Home, egui::Modifiers::NONE);
+    assert_eq!(selected(&h), [ids[0].clone()]);
 }
 
 /// A dialog gives its first control the focus with its text selected, so
