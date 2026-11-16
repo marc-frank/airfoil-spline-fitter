@@ -403,8 +403,9 @@ impl App {
             muted(ui, &p, self.projects.label());
             self.filter_bar(ui);
             ui.add_space(size::GAP - size::GROUP);
-            // The table takes the height the details and buttons leave.
-            let below = self.explorer.details_height + size::CONTROL_HEIGHT + 3.0 * size::GROUP;
+            // The table takes the height the details and buttons leave (a
+            // group's space before each).
+            let below = self.explorer.details_height + size::CONTROL_HEIGHT + 2.0 * size::GROUP;
             let table_height = (ui.available_height() - below).max(80.0);
             let width = ui.available_width();
             let (rect, _) = ui.allocate_exact_size(egui::vec2(width, table_height), Sense::hover());
@@ -453,14 +454,14 @@ impl App {
             let k = self.projects.selected.len();
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = size::GROUP;
-                if widgets::push_button(ui, !fitting && k == 1, "Load settings")
+                if widgets::push_button(ui, &p, !fitting && k == 1, "Load settings")
                     .on_hover_text("Set the sidebar to the selected run's settings (or double-click the run)")
                     .clicked()
                 {
                     let id = self.projects.selected.iter().next().unwrap().clone();
                     self.load_settings(&id);
                 }
-                if widgets::push_button(ui, !fitting && k > 0, "Delete")
+                if widgets::push_button(ui, &p, !fitting && k > 0, "Delete")
                     .on_hover_text("Delete the selected runs from the project (Delete key).\nEdit > Restore deleted runs brings them back.")
                     .clicked()
                 {

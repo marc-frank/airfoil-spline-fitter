@@ -113,7 +113,7 @@ impl App {
                     }
                 });
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if widgets::push_button(ui, !fitting, "Open...").on_hover_text("Open an airfoil coordinate file (Ctrl+O)").clicked() {
+                    if widgets::push_button(ui, &p, !fitting, "Open...").on_hover_text("Open an airfoil coordinate file (Ctrl+O)").clicked() {
                         self.on_open_airfoil();
                     }
                 });

@@ -178,7 +178,7 @@ fn focus_first_control(ui: &mut Ui, title: &str) {
 /// in focus, the `default` one is. The default is outlined in the selection
 /// line and Enter presses it. True when pressed.
 fn dialog_button(ui: &mut Ui, p: &Palette, text: &str, default: bool, enabled: bool) -> bool {
-    let response = widgets::push_button(ui, enabled, text);
+    let response = widgets::push_button(ui, p, enabled, text);
     let last_focused = egui::Id::unique("dialog_focused_button");
     let focused = response.has_focus();
     if focused {

@@ -76,13 +76,26 @@ pub fn outline_checked(ui: &Ui, p: &Palette, response: &Response, radius: Corner
 }
 
 /// A push button as wide as Qt makes it: its text and 11 px each side.
-pub fn push_button(ui: &mut Ui, enabled: bool, text: &str) -> Response {
+pub fn push_button(ui: &mut Ui, p: &Palette, enabled: bool, text: &str) -> Response {
     let padding = ui.spacing().button_padding.x;
     ui.spacing_mut().button_padding.x = 0.0;
     let width = push_button_width(ui, text);
     let response = ui.add_enabled(enabled, Button::new(text).min_size(Vec2::new(width, size::CONTROL_HEIGHT)));
     ui.spacing_mut().button_padding.x = padding;
+    if !enabled || !ui.is_enabled() {
+        paint_disabled_button(ui, p, &response, text, CornerRadius::same(size::RADIUS));
+    }
     response
+}
+
+/// A disabled button as the Python window draws one: on the panel grey in
+/// a rule border, its text in the third text grey (not the enabled look
+/// faded, as egui draws it).
+pub fn paint_disabled_button(ui: &Ui, p: &Palette, response: &Response, text: &str, radius: CornerRadius) {
+    let painter = ui.ctx().layer_painter(response.layer_id).with_clip_rect(ui.clip_rect());
+    let rect = response.rect;
+    painter.rect(rect, radius, p.panel, egui::Stroke::new(1.0, p.rule), egui::StrokeKind::Inside);
+    painter.text(rect.center(), egui::Align2::CENTER_CENTER, text, FontId::proportional(typeface::BASE), p.text_3);
 }
 
 /// A push button's width: Qt's text width and the padding beside it.
@@ -102,6 +115,9 @@ pub fn toggle_button(ui: &mut Ui, p: &Palette, text: &str, checked: bool, toolti
     let width = tool_button_width(ui, text);
     let response = ui.add(Button::new(text).selected(checked).min_size(Vec2::new(width, size::CONTROL_HEIGHT)));
     ui.spacing_mut().button_padding.x = padding;
+    if !ui.is_enabled() {
+        paint_disabled_button(ui, p, &response, text, CornerRadius::same(size::RADIUS));
+    }
     if checked {
         outline_checked(ui, p, &response, CornerRadius::same(size::RADIUS));
     }
