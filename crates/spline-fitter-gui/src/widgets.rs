@@ -142,9 +142,13 @@ pub fn checkbox_width(ui: &Ui, text: &str) -> f32 {
 
 /// A check box that can show a dash: some of what it stands for checked.
 pub fn tristate_checkbox(ui: &mut Ui, p: &Palette, checked: &mut bool, partly: bool, text: impl Into<RichText>) -> Response {
+    let text: RichText = text.into();
+    unfaded(ui, |ui| checkbox_body(ui, p, checked, partly, text))
+}
+
+fn checkbox_body(ui: &mut Ui, p: &Palette, checked: &mut bool, partly: bool, text: RichText) -> Response {
     const BOX: f32 = size::CHECK_BOX;
     let enabled = ui.is_enabled();
-    let text: RichText = text.into();
     let width = checkbox_width(ui, text.text());
     let color = if enabled { p.text } else { p.text_3 };
     let galley = egui::WidgetText::from(text).into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Body);
@@ -246,6 +250,34 @@ fn field_of(
     limit: usize,
     clearable: bool,
 ) -> (Response, bool) {
+    unfaded(ui, |ui| field_body(ui, p, id_salt, text, width, hint, limit, clearable))
+}
+
+/// Runs `add` with a disabled `ui` drawn at full opacity: a field draws
+/// its disabled colors itself (Qt's: the panel grey, the rule, the third
+/// text grey) instead of egui's faded enabled look.
+fn unfaded<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
+    if ui.is_enabled() {
+        return add(ui);
+    }
+    ui.scope(|ui| {
+        ui.set_opacity(1.0);
+        add(ui)
+    })
+    .inner
+}
+
+#[allow(clippy::too_many_arguments)]
+fn field_body(
+    ui: &mut Ui,
+    p: &Palette,
+    id_salt: &str,
+    text: &mut String,
+    width: f32,
+    hint: &str,
+    limit: usize,
+    clearable: bool,
+) -> (Response, bool) {
     const CLEAR: f32 = 20.0;
     let enabled = ui.is_enabled();
     let (outer, frame_response) = ui.allocate_exact_size(Vec2::new(width, size::CONTROL_HEIGHT), Sense::hover());
@@ -261,6 +293,7 @@ fn field_of(
             bottom: 0,
         }))
         .hint_text(hint)
+        .text_color(if enabled { p.text } else { p.text_3 })
         .align(egui::Align2::LEFT_CENTER)
         .desired_width(edit_rect.width() - 2.0 * size::FIELD_TEXT_INSET)
         .min_size(edit_rect.size());
@@ -480,6 +513,18 @@ pub fn number_field(
     field: Field,
     fmt: &NumberFormat,
 ) -> bool {
+    unfaded(ui, |ui| number_body(ui, p, id_salt, value, range, field, fmt))
+}
+
+fn number_body(
+    ui: &mut Ui,
+    p: &Palette,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
+    value: &mut f64,
+    range: (f64, f64),
+    field: Field,
+    fmt: &NumberFormat,
+) -> bool {
     let Field { width, tooltip } = field;
     let id = ui.make_persistent_id(id_salt);
     let buffer_id = id.with("buffer");
@@ -495,6 +540,7 @@ pub fn number_field(
         .id(id)
         .frame(egui::Frame::NONE.inner_margin(egui::Margin { left: size::FIELD_TEXT_INSET as i8, right: 0, top: 0, bottom: 0 }))
         .font(FontId::monospace(typeface::BASE))
+        .text_color(if enabled { p.text } else { p.text_3 })
         .align(egui::Align2::LEFT_CENTER)
         .desired_width(text_rect.width() - size::FIELD_TEXT_INSET)
         .min_size(text_rect.size());
