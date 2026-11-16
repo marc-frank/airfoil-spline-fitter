@@ -460,6 +460,27 @@ fn sweeps_show_the_whole_project_range() {
     assert_eq!(selected(&h), [ids[0].clone()]);
 }
 
+/// Zoomed into a few millionths, the plot draws as quickly as zoomed out:
+/// the dashed control polygon is only cut into dashes where it is seen.
+#[test]
+fn deep_zoom_draws_quickly() {
+    let mut h = harness();
+    h.state_mut().new_naca_airfoil("2412", 41, true);
+    h.run_steps(2);
+    h.state_mut().settings.optimizer = OptimizerType::DirectLsq;
+    h.state_mut().main_plot.deviation_on = true;
+    h.run_steps(2);
+    h.state_mut().on_fit();
+    finish(&mut h);
+    let center = h.state().airfoil.as_ref().unwrap().coordinates[20];
+    let bounds = egui_plot::PlotBounds::from_min_max([center.x - 2e-6, center.y - 1e-6], [center.x + 2e-6, center.y + 1e-6]);
+    h.state_mut().main_plot.view.fit(Some(bounds));
+    let start = std::time::Instant::now();
+    h.run_steps(3);
+    shot(&mut h, "z_deep_zoom");
+    assert!(start.elapsed().as_secs_f64() < 2.0, "three frames took {:?}", start.elapsed());
+}
+
 /// A dialog gives its first control the focus with its text selected, so
 /// typing replaces it; Enter presses the default button, Tab moves the
 /// focus on and a focused push button becomes the default.

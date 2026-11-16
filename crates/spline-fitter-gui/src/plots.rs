@@ -426,26 +426,52 @@ impl Canvas {
         (x.is_finite() && y.is_finite()).then(|| self.transform.position_from_point(&PlotPoint::new(x, y)))
     }
 
-    /// A polyline, broken where points are missing.
+    /// A polyline, broken where points are missing. Only its part inside
+    /// the frame is drawn: zoomed far in, the line is millions of pixels
+    /// long, too long to cut into dashes. A dash pattern keeps its phase
+    /// along the whole line, so it does not crawl as the view pans.
     pub fn polyline(&self, points: impl IntoIterator<Item = [f64; 2]>, stroke: Stroke, dashed: bool) {
-        let mut run: Vec<Pos2> = Vec::new();
-        let flush = |run: &mut Vec<Pos2>| {
-            if run.len() >= 2 {
-                if dashed {
-                    self.painter.extend(Shape::dashed_line(run, stroke, 6.0, 4.0));
-                } else {
-                    self.painter.add(Shape::line(std::mem::take(run), stroke));
-                }
-            }
-            run.clear();
-        };
+        let clip = self.frame().expand(stroke.width + 2.0);
+        // Visible runs with the distance along the line where each starts.
+        let mut runs: Vec<(f64, Vec<Pos2>)> = Vec::new();
+        let mut open = false;
+        let mut previous: Option<Pos2> = None;
+        let mut travelled = 0.0f64;
         for p in points {
-            match self.screen(p) {
-                Some(s) => run.push(s),
-                None => flush(&mut run),
+            let Some(b) = self.screen(p) else {
+                previous = None;
+                open = false;
+                continue;
+            };
+            if let Some(a) = previous {
+                let length = f64::from((b - a).length());
+                match clip_segment(a, b, clip) {
+                    Some((t0, t1)) => {
+                        let (from, to) = (a + (b - a) * t0, a + (b - a) * t1);
+                        if !open || t0 > 0.0 {
+                            runs.push((travelled + length * f64::from(t0), vec![from]));
+                        }
+                        runs.last_mut().unwrap().1.push(to);
+                        open = t1 >= 1.0;
+                    }
+                    None => open = false,
+                }
+                travelled += length;
+            }
+            previous = Some(b);
+        }
+        for (start, run) in runs {
+            if run.len() < 2 {
+                continue;
+            }
+            if dashed {
+                // The pattern: 6 px dash, 4 px gap.
+                let offset = start.rem_euclid(10.0) as f32;
+                self.painter.extend(Shape::dashed_line_with_offset(&run, stroke, &[6.0], &[4.0], offset));
+            } else {
+                self.painter.add(Shape::line(run, stroke));
             }
         }
-        flush(&mut run);
     }
 
     pub fn segments(&self, segments: &[[Vec2; 2]], stroke: Stroke) {
@@ -479,6 +505,28 @@ impl Canvas {
     pub fn frame(&self) -> Rect {
         *self.transform.frame()
     }
+}
+
+/// The part of the segment `a`–`b` inside `rect`, as the segment's
+/// fractions where it enters and leaves (Liang-Barsky); `None` if it misses.
+fn clip_segment(a: Pos2, b: Pos2, rect: Rect) -> Option<(f32, f32)> {
+    let d = b - a;
+    let (mut t0, mut t1) = (0.0f32, 1.0f32);
+    for (p, q) in [(-d.x, a.x - rect.left()), (d.x, rect.right() - a.x), (-d.y, a.y - rect.top()), (d.y, rect.bottom() - a.y)] {
+        if p == 0.0 {
+            if q < 0.0 {
+                return None;
+            }
+        } else {
+            let t = q / p;
+            if p < 0.0 {
+                t0 = t0.max(t);
+            } else {
+                t1 = t1.min(t);
+            }
+        }
+    }
+    (t0 <= t1).then_some((t0, t1))
 }
 
 fn xy(p: &Vec2) -> [f64; 2] {
