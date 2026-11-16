@@ -321,6 +321,8 @@ pub fn apply(ctx: &egui::Context, p: &Palette) {
             bar_inner_margin: 2.0,
             bar_outer_margin: 2.0,
             foreground_color: false,
+            // Content runs to the edge, unfaded, as in a Qt scroll area.
+            fade: egui::style::ScrollFadeStyle { strength: 0.0, ..Default::default() },
             ..egui::style::ScrollStyle::solid()
         };
         style.text_styles = [

@@ -502,7 +502,8 @@ impl App {
                     egui::Rect::from_min_size(egui::pos2(rect.left() + pad, top), egui::vec2(width - 2.0 * pad, size::CONTROL_HEIGHT));
                 ui.allocate_rect(row, egui::Sense::hover());
                 let mut child = ui.new_child(egui::UiBuilder::new().max_rect(row).layout(Layout::right_to_left(Align::Center)));
-                close |= dialog_button(&mut child, &p, "Close", false, true);
+                // The only button: the default (Enter closes).
+                close |= dialog_button(&mut child, &p, "Close", true, true);
             });
             if class != egui::ViewportClass::EmbeddedWindow {
                 close |= ui.input(|i| i.viewport().close_requested());

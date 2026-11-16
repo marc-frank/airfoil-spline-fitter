@@ -457,7 +457,8 @@ impl Canvas {
             let Some(c) = self.screen(p) else { continue };
             match marker {
                 Marker::Circle => {
-                    self.painter.circle(c, r, fill, stroke);
+                    // egui strokes outside the radius; pyqtgraph centers the pen on it.
+                    self.painter.circle(c, (r - stroke.width / 2.0).max(0.5), fill, stroke);
                 }
                 Marker::Square => {
                     self.painter.rect(Rect::from_center_size(c, EVec2::splat(side)), 0.0, fill, stroke, egui::StrokeKind::Middle);
