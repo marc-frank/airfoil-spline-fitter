@@ -202,6 +202,10 @@ pub mod size {
     pub const CHECK_ROW_HEIGHT: f32 = 16.0;
     /// A section caption's line.
     pub const CAPTION_LINE: f32 = 14.0;
+    /// A scroll bar's track; its handle is 2 px in and at least 24 px long.
+    pub const SCROLL_TRACK: f32 = 10.0;
+    pub const SCROLL_HANDLE_MARGIN: f32 = 2.0;
+    pub const SCROLL_HANDLE_MIN: f32 = 24.0;
     /// The status bar's size grip.
     pub const GRIP: f32 = 17.0;
     /// A run bar readout's value: a line of the readout face.
@@ -251,7 +255,6 @@ pub const TEETH_ALPHA: u8 = 90;
 /// Alpha of the plot grid.
 pub const GRID_ALPHA: f32 = 0.10;
 
-/// Applies the palette and the sizes to every style of the context.
 /// Colors scroll handles as the strong rule (the text grey when hovered or
 /// grabbed) in `ui`; egui paints them with the button fills, so only for a
 /// region without buttons.
@@ -263,6 +266,7 @@ pub fn scroll_handles(ui: &mut egui::Ui, p: &Palette) {
     w.active.bg_fill = p.text_3;
 }
 
+/// Applies the palette and the sizes to every style of the context.
 pub fn apply(ctx: &egui::Context, p: &Palette) {
     let mut visuals = if p.dark { egui::Visuals::dark() } else { egui::Visuals::light() };
     let radius = CornerRadius::same(size::RADIUS);

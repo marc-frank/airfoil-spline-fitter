@@ -8,9 +8,12 @@ use crate::theme::{size, typeface, Glyph, Palette, INK, INK_HOVER, ON_INK};
 
 /// An uppercase caption naming a region.
 pub fn caption(ui: &mut Ui, p: &Palette, text: &str) -> Response {
-    ui.label(
-        RichText::new(text.to_uppercase()).font(crate::fonts::semibold_id(typeface::CAPTION)).color(p.text_3).extra_letter_spacing(1.0),
-    )
+    let rich = RichText::new(text.to_uppercase()).font(crate::fonts::semibold_id(typeface::CAPTION)).color(p.text_3).extra_letter_spacing(1.0);
+    let galley = egui::WidgetText::from(rich).into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Body);
+    // A line of a caption's height, the text at its top (as a Qt label).
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(galley.size().x, size::CAPTION_LINE), Sense::hover());
+    ui.painter().galley(rect.min, galley, p.text_3);
+    response
 }
 
 /// Muted text: hints and notes, a size below the base.
@@ -129,6 +132,35 @@ pub fn tristate_checkbox(ui: &mut Ui, p: &Palette, checked: &mut bool, partly: b
     }
     ui.painter().galley(egui::pos2(indicator.right() + size::GAP, rect.center().y - galley.size().y / 2.0), galley, color);
     response.on_hover_cursor(egui::CursorIcon::Default)
+}
+
+/// A vertical scroll bar in `track` for a view showing `view` of `content`
+/// from `offset`, drawn as the theme's (a handle in the strong rule, the
+/// text grey when hovered). Dragging the handle or clicking the track
+/// (a page) returns the new offset.
+pub fn vertical_scroll_bar(ui: &mut Ui, p: &Palette, id: egui::Id, track: egui::Rect, offset: f32, content: f32, view: f32) -> Option<f32> {
+    let range = (content - view).max(0.0);
+    if range <= 0.0 {
+        return None;
+    }
+    let inner = track.shrink(size::SCROLL_HANDLE_MARGIN);
+    let length = (inner.height() * view / content).max(size::SCROLL_HANDLE_MIN).min(inner.height());
+    let travel = (inner.height() - length).max(1.0);
+    let top = inner.top() + travel * (offset / range).clamp(0.0, 1.0);
+    let handle = egui::Rect::from_min_size(egui::pos2(inner.left(), top), Vec2::new(inner.width(), length));
+    let track_response = ui.interact(track, id.with("track"), Sense::click());
+    let response = ui.interact(handle, id.with("handle"), Sense::drag());
+    let color = if response.hovered() || response.dragged() { p.text_3 } else { p.rule_strong };
+    ui.painter().rect_filled(handle, CornerRadius::same(3), color);
+    if response.dragged() {
+        return Some((offset + response.drag_delta().y * range / travel).clamp(0.0, range));
+    }
+    if track_response.clicked() {
+        let y = track_response.interact_pointer_pos()?.y;
+        let page = if y < handle.top() { -view } else { view };
+        return Some((offset + page).clamp(0.0, range));
+    }
+    None
 }
 
 /// Qt selects a field's text when the focus comes by keyboard (or with a

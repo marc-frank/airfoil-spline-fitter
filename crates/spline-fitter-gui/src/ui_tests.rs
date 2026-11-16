@@ -165,6 +165,20 @@ fn light_theme_and_dialogs() {
     h.state_mut().main_plot.refresh_deviation();
     h.run_steps(3);
     shot(&mut h, "6_light_tolerance");
+    // The rows' scroll bar is at the box's edge: clicking its track below
+    // the handle pages down to the last runs.
+    {
+        use egui_kittest::kittest::Queryable;
+        let runs = h.state().projects.runs().len().to_string();
+        // The last run's number in the Run column (the left of the box).
+        let ppp = h.ctx.pixels_per_point();
+        let in_run_column = |h: &Harness<'static, App>| h.query_all_by_label(&runs).any(|n| n.rect().min.x < 1010.0 * ppp);
+        assert!(!in_run_column(&h), "the last run is out of view");
+        for _ in 0..3 {
+            click_at(&mut h, 1482.0, 790.0);
+        }
+        assert!(in_run_column(&h), "paged down to the last run");
+    }
     h.state_mut().on_report();
     h.run_steps(4);
     shot(&mut h, "6r_report");

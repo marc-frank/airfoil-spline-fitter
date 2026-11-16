@@ -103,6 +103,8 @@ pub struct ExplorerState {
     order: Vec<usize>,
     /// Where each header section was on the last frame, in shown order.
     sections: Vec<(usize, egui::Rect)>,
+    /// Where the run table's own scroll bar moved its rows to.
+    scroll_to: Option<f32>,
 }
 
 impl Default for ExplorerState {
@@ -119,6 +121,7 @@ impl Default for ExplorerState {
             details_height: 15.0,
             order: (0..COLUMNS.len()).collect(),
             sections: Vec::new(),
+            scroll_to: None,
         }
     }
 }
@@ -409,7 +412,22 @@ impl App {
             if self.explorer.pivot {
                 self.pivot_table(&mut inside);
             } else {
-                egui::ScrollArea::horizontal().id_salt("runs_h").auto_shrink([false, false]).show(&mut inside, |ui| self.run_table(ui));
+                let body = egui::ScrollArea::horizontal().id_salt("runs_h").auto_shrink([false, false]).show(&mut inside, |ui| self.run_table(ui)).inner;
+                // The rows' scroll bar at the box's edge (the table itself is
+                // as wide as its columns), from the header down.
+                if let Some(body) = body {
+                    let viewport = inside.max_rect();
+                    let track = egui::Rect::from_min_max(
+                        egui::pos2(viewport.right() - size::SCROLL_TRACK, viewport.top()),
+                        egui::pos2(viewport.right(), body.inner_rect.bottom()),
+                    );
+                    let id = inside.scope_id().with("runs_v");
+                    let bar = widgets::vertical_scroll_bar(&mut inside, &p, id, track, body.state.clamped_offset().y, body.content_size.y, body.inner_rect.height());
+                    if let Some(y) = bar {
+                        self.explorer.scroll_to = Some(y);
+                        inside.ctx().request_repaint();
+                    }
+                }
             }
             ui.painter().rect_stroke(rect, radius, egui::Stroke::new(1.0, p.rule), egui::StrokeKind::Inside);
             let top = ui.cursor().top();
@@ -579,7 +597,8 @@ impl App {
         });
     }
 
-    fn run_table(&mut self, ui: &mut Ui) {
+    /// The runs, one per row; the body's scroll state (no rows: none).
+    fn run_table(&mut self, ui: &mut Ui) -> Option<egui::scroll_area::ScrollAreaOutput<()>> {
         let p = self.palette.clone();
         let rows = self.visible_rows();
         let order: Vec<String> = rows.iter().map(|(id, _)| id.clone()).collect();
@@ -628,11 +647,16 @@ impl App {
             .striped(false)
             .resizable(true)
             .sense(Sense::click())
-            .auto_shrink([false, false]);
+            .auto_shrink([false, false])
+            // Its own bar would be at the table's right end, out of view.
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden);
+        if let Some(y) = self.explorer.scroll_to.take() {
+            builder = builder.vertical_scroll_offset(y);
+        }
         for w in &widths {
             builder = builder.column(TableColumn::initial(*w).at_least(24.0).clip(true));
         }
-        builder
+        let body = builder
             .header(HEADER_HEIGHT, |mut header| {
                 for &c in &columns {
                     header.col(|ui| {
@@ -653,7 +677,7 @@ impl App {
                             let layout =
                                 if cell.is_number() { Layout::right_to_left(Align::Center) } else { Layout::left_to_right(Align::Center) };
                             ui.with_layout(layout, |ui| {
-                                ui.add_space(size::GAP);
+                                ui.add_space(CELL_EXTRA / 2.0);
                                 ui.add(egui::Label::new(rich.color(p.text)).selectable(false).truncate())
                             });
                         });
@@ -676,6 +700,7 @@ impl App {
         if delete && !self.projects.selected.is_empty() && !ui.ctx().egui_wants_keyboard_input() {
             self.confirm_delete_runs();
         }
+        Some(body)
     }
 
     /// The table pivoted: one row per setting (the header sections, in the
