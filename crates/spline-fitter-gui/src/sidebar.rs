@@ -112,11 +112,19 @@ impl App {
                         m.on_hover_text(&tip);
                     }
                 });
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if widgets::push_button(ui, &p, !fitting, "Open...").on_hover_text("Open an airfoil coordinate file (Ctrl+O)").clicked() {
-                        self.on_open_airfoil();
-                    }
-                });
+                // Centered on the two lines of text as Qt centers it: their
+                // 16 and 15 px, the rest halved and rounded down.
+                let row = ui.max_rect();
+                let width = widgets::push_button_width(ui, "Open...");
+                let drop = ((16.0 + 15.0 - size::CONTROL_HEIGHT) / 2.0_f32).floor();
+                let rect = egui::Rect::from_min_size(
+                    egui::pos2(row.right() - width, row.top() + drop),
+                    egui::vec2(width, size::CONTROL_HEIGHT),
+                );
+                let mut place = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+                if widgets::push_button(&mut place, &p, !fitting, "Open...").on_hover_text("Open an airfoil coordinate file (Ctrl+O)").clicked() {
+                    self.on_open_airfoil();
+                }
             });
         });
     }
