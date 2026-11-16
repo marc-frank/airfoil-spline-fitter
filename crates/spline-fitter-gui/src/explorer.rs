@@ -105,6 +105,9 @@ pub struct ExplorerState {
     sections: Vec<(usize, egui::Rect)>,
     /// Where the run table's own scroll bar moved its rows to.
     scroll_to: Option<f32>,
+    /// The table has been filled (with a project's runs, or none): its
+    /// columns fit their contents from then on.
+    pub filled: bool,
 }
 
 impl Default for ExplorerState {
@@ -122,6 +125,7 @@ impl Default for ExplorerState {
             order: (0..COLUMNS.len()).collect(),
             sections: Vec::new(),
             scroll_to: None,
+            filled: false,
         }
     }
 }
@@ -621,8 +625,9 @@ impl App {
                     .iter()
                     .map(|(_, cells)| measure(&cells[c].1, if cells[c].0.is_number() { &mono } else { &text }) + CELL_EXTRA)
                     .fold(0.0, f32::max);
-                // Without runs, Qt's default section width.
-                if rows.is_empty() {
+                // Never filled, Qt's default section width; filled, the
+                // header's width even without runs.
+                if rows.is_empty() && !self.explorer.filled {
                     EMPTY_COLUMN
                 } else {
                     header.max(cells).ceil()
@@ -643,7 +648,7 @@ impl App {
         // Columns resize by dragging, without lines between them.
         ui.visuals_mut().widgets.noninteractive.bg_stroke.color = egui::Color32::TRANSPARENT;
         let mut builder = TableBuilder::new(ui)
-            .id_salt(("runs", generation, columns.clone()))
+            .id_salt(("runs", generation, self.explorer.filled, columns.clone()))
             .striped(false)
             .resizable(true)
             .sense(Sense::click())

@@ -666,9 +666,10 @@ fn split_toggle(
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         let left = egui::CornerRadius { nw: size::RADIUS, sw: size::RADIUS, ne: 0, se: 0 };
-        ui.spacing_mut().button_padding.x = size::TOOL_BUTTON_PADDING;
+        ui.spacing_mut().button_padding.x = 0.0;
+        let width = widgets::tool_button_width(ui, text);
         let r = ui
-            .add(egui::Button::new(text).selected(*on).corner_radius(left).min_size(egui::vec2(0.0, size::CONTROL_HEIGHT)))
+            .add(egui::Button::new(text).selected(*on).corner_radius(left).min_size(egui::vec2(width, size::CONTROL_HEIGHT)))
             .on_hover_text(tip);
         if *on {
             widgets::outline_checked(ui, p, &r, left);

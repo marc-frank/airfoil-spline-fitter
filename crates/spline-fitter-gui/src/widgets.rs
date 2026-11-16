@@ -74,11 +74,17 @@ pub fn outline_checked(ui: &Ui, p: &Palette, response: &Response, radius: Corner
     }
 }
 
+/// A tool button's width: Qt's text width and the padding beside it.
+pub fn tool_button_width(ui: &Ui, text: &str) -> f32 {
+    crate::fonts::layout_width(ui, text, &FontId::proportional(typeface::BASE), false) + 2.0 * size::TOOL_BUTTON_PADDING
+}
+
 /// A checkable tool button, outlined when checked.
 pub fn toggle_button(ui: &mut Ui, p: &Palette, text: &str, checked: bool, tooltip: &str) -> Response {
     let padding = ui.spacing().button_padding.x;
-    ui.spacing_mut().button_padding.x = size::TOOL_BUTTON_PADDING;
-    let response = ui.add(Button::new(text).selected(checked).min_size(Vec2::new(0.0, size::CONTROL_HEIGHT)));
+    ui.spacing_mut().button_padding.x = 0.0;
+    let width = tool_button_width(ui, text);
+    let response = ui.add(Button::new(text).selected(checked).min_size(Vec2::new(width, size::CONTROL_HEIGHT)));
     ui.spacing_mut().button_padding.x = padding;
     if checked {
         outline_checked(ui, p, &response, CornerRadius::same(size::RADIUS));
