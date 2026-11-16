@@ -108,9 +108,6 @@ pub struct ExplorerState {
     sections: Vec<(usize, egui::Rect)>,
     /// Where the run table's own scroll bar moved its rows to.
     scroll_to: Option<f32>,
-    /// The table has been filled (with a project's runs, or none): its
-    /// columns fit their contents from then on.
-    pub filled: bool,
 }
 
 impl Default for ExplorerState {
@@ -129,7 +126,6 @@ impl Default for ExplorerState {
             order: (0..COLUMNS.len()).collect(),
             sections: Vec::new(),
             scroll_to: None,
-            filled: false,
         }
     }
 }
@@ -148,13 +144,17 @@ impl ExplorerState {
 }
 
 /// Run table: header and row heights, and what a header and a cell add to
-/// their text (padding, and the header's sort and filter glyphs). Qt sizes
-/// a header section by its text in bold.
+/// their text. Every column is as narrow as its header and cells allow:
+/// a cell keeps a gap on each side; a header its text's gap, then room for
+/// the sort arrow and the filter chevron (kept on every column, so sorting
+/// does not change the widths).
 const HEADER_HEIGHT: f32 = 28.0;
 const ROW_HEIGHT: f32 = 28.0;
-const HEADER_EXTRA: f32 = 46.0;
-const CELL_EXTRA: f32 = 18.0;
-const EMPTY_COLUMN: f32 = 100.0;
+const CELL_EXTRA: f32 = 2.0 * size::GAP;
+/// Centers of the filter chevron and the sort arrow, from the right edge.
+const CHEVRON_INSET: f32 = 9.0;
+const ARROW_INSET: f32 = 21.0;
+const HEADER_EXTRA: f32 = size::GAP + size::TIGHT + ARROW_INSET + size::GLYPH / 2.0;
 
 /// The run table's keyboard focus (a click on a run gives it).
 fn table_focus() -> egui::Id {
@@ -584,7 +584,7 @@ impl App {
         if response.dragged() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
         }
-        let glyph_x = rect.right() - 6.0 - 5.0;
+        let glyph_x = rect.right() - CHEVRON_INSET;
         ui.painter().text(
             rect.left_center() + egui::vec2(size::GAP, 0.0),
             egui::Align2::LEFT_CENTER,
@@ -596,7 +596,7 @@ impl App {
         glyph.paint(ui.painter(), egui::pos2(glyph_x, rect.center().y), size::GLYPH, if filtered { p.text } else { p.text_3 });
         if self.explorer.sort.0 == column {
             let arrow = if self.explorer.sort.1 { Glyph::SortUp } else { Glyph::SortDown };
-            arrow.paint(ui.painter(), egui::pos2(glyph_x - 14.0, rect.center().y), size::GLYPH, p.text_2);
+            arrow.paint(ui.painter(), egui::pos2(rect.right() - ARROW_INSET, rect.center().y), size::GLYPH, p.text_2);
         }
         let response = if col.tooltip.is_empty() { response } else { response.on_hover_text(col.tooltip) };
         if response.clicked() {
@@ -652,7 +652,7 @@ impl App {
         let text = egui::FontId::proportional(crate::theme::typeface::BASE);
         let mono = egui::FontId::monospace(crate::theme::typeface::BASE);
         let measure = |s: &str, font: &egui::FontId| crate::fonts::layout_width(ui, s, font, false);
-        let header_width = |c: usize| crate::fonts::layout_width(ui, COLUMNS[c].name, &text, true) + HEADER_EXTRA;
+        let header_width = |c: usize| crate::fonts::layout_width(ui, COLUMNS[c].name, &text, false) + HEADER_EXTRA;
         let widths: Vec<f32> = columns
             .iter()
             .map(|&c| {
@@ -661,13 +661,7 @@ impl App {
                     .iter()
                     .map(|(_, cells)| measure(&cells[c].1, if cells[c].0.is_number() { &mono } else { &text }) + CELL_EXTRA)
                     .fold(0.0, f32::max);
-                // Never filled, Qt's default section width; filled, the
-                // header's width even without runs.
-                if rows.is_empty() && !self.explorer.filled {
-                    EMPTY_COLUMN
-                } else {
-                    header.max(cells).ceil()
-                }
+                header.max(cells).ceil()
             })
             .collect();
         let generation = {
@@ -681,12 +675,12 @@ impl App {
         ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
         // As wide as its columns: wider than the panel, it scrolls.
         ui.set_min_width(widths.iter().sum());
-        // Columns resize by dragging, without lines between them.
+        // No lines between the columns.
         ui.visuals_mut().widgets.noninteractive.bg_stroke.color = egui::Color32::TRANSPARENT;
         let mut builder = TableBuilder::new(ui)
-            .id_salt(("runs", generation, self.explorer.filled, columns.clone()))
+            .id_salt(("runs", generation, columns.clone()))
             .striped(false)
-            .resizable(true)
+            .resizable(false)
             .sense(Sense::click())
             .auto_shrink([false, false])
             // Its own bar would be at the table's right end, out of view.
@@ -698,7 +692,7 @@ impl App {
             builder = builder.scroll_to_row(row, None);
         }
         for w in &widths {
-            builder = builder.column(TableColumn::initial(*w).at_least(24.0).clip(true));
+            builder = builder.column(TableColumn::exact(*w).clip(true));
         }
         let body = builder
             .header(HEADER_HEIGHT, |mut header| {
@@ -759,7 +753,7 @@ impl App {
         let text = egui::FontId::proportional(crate::theme::typeface::BASE);
         let mono = egui::FontId::monospace(crate::theme::typeface::BASE);
         let measure = |s: &str, font: &egui::FontId| crate::fonts::layout_width(ui, s, font, false);
-        let header_width = |c: usize| crate::fonts::layout_width(ui, COLUMNS[c].name, &text, true) + HEADER_EXTRA;
+        let header_width = |c: usize| crate::fonts::layout_width(ui, COLUMNS[c].name, &text, false) + HEADER_EXTRA;
         let name_width = columns.iter().map(|&c| header_width(c)).fold(0.0, f32::max);
         let widths: Vec<f32> = rows
             .iter()

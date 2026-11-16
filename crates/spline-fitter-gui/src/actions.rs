@@ -345,7 +345,6 @@ impl App {
 
     pub fn reset_project(&mut self) {
         self.projects = crate::explorer::Projects::default();
-        self.explorer.filled = true;
         self.explorer.forget_points();
         self.refresh_comparison();
     }
@@ -403,7 +402,6 @@ impl App {
         self.loss.reset();
         self.airfoil = Some(airfoil.clone());
         self.projects = crate::explorer::Projects::default();
-        self.explorer.filled = true;
         self.projects.last_number = runs.iter().map(|r| r.number).max().unwrap_or(0);
         self.projects.file = Some(ProjectFile { metadata, airfoil, runs });
         self.projects.path = Some(path.to_path_buf());
