@@ -17,6 +17,17 @@ pub fn caption(ui: &mut Ui, p: &Palette, text: &str) -> Response {
     response
 }
 
+/// A toolbar label in the second text grey, as wide as Qt lays it out (so
+/// rows computed from Qt's widths fit exactly).
+pub fn toolbar_label(ui: &mut Ui, p: &Palette, text: &str) -> Response {
+    let font = FontId::proportional(typeface::BASE);
+    let width = crate::fonts::layout_width(ui, text, &font, false);
+    let galley = ui.painter().layout_no_wrap(text.to_string(), font, p.text_2);
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, galley.size().y), Sense::hover());
+    ui.painter().galley(rect.min, galley, p.text_2);
+    response
+}
+
 /// Muted text: hints and notes, a size below the base.
 pub fn muted(ui: &mut Ui, p: &Palette, text: impl Into<String>) -> Response {
     ui.label(RichText::new(text.into()).size(typeface::MUTED).color(p.text_3))

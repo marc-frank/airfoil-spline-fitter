@@ -525,7 +525,7 @@ impl App {
                 let font = egui::FontId::proportional(crate::theme::typeface::BASE);
                 let labels: f32 = ["X axis", "Y axis"].iter().map(|t| crate::fonts::layout_width(ui, t, &font, false)).sum();
                 let each = ((ui.available_width() - labels - 3.0 * ui.spacing().item_spacing.x) / 2.0).max(60.0);
-                ui.label(egui::RichText::new("X axis").color(p.text_2));
+                widgets::toolbar_label(ui, &p, "X axis");
                 let all: Vec<&str> = COLUMNS.iter().map(|c| c.name).collect();
                 let mut x = self.explorer.x_column;
                 let tip = "The explorer column the runs are plotted along.\nOnly the runs that pass the explorer's filter are shown.";
@@ -534,7 +534,7 @@ impl App {
                     self.explorer.forget_points();
                     self.refresh_comparison();
                 }
-                ui.label(egui::RichText::new("Y axis").color(p.text_2));
+                widgets::toolbar_label(ui, &p, "Y axis");
                 let metrics: Vec<usize> = (0..COLUMNS.len()).filter(|&c| COLUMNS[c].metric).collect();
                 let names: Vec<&str> = metrics.iter().map(|&c| COLUMNS[c].name).collect();
                 let mut y = metrics.iter().position(|&c| c == self.explorer.y_column).unwrap_or(0);

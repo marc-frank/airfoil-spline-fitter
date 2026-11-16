@@ -524,11 +524,11 @@ impl App {
                     if widgets::combo(ui, &p, "loss_log", &mut self.loss.log_mode, &["None", "X only", "Y only", "Both"], 0.0, "") {
                         self.loss.view.follow = true;
                     }
-                    ui.label(RichText::new("Log scale").color(p.text_2));
+                    widgets::toolbar_label(ui, &p, "Log scale");
                     if widgets::combo(ui, &p, "loss_x", &mut self.loss.x_axis, &["Iterations", "Time"], 0.0, "") {
                         self.loss.view.follow = true;
                     }
-                    ui.label(RichText::new("X axis").color(p.text_2));
+                    widgets::toolbar_label(ui, &p, "X axis");
                 });
             });
             self.loss.show(ui, &p, self.zoom_ms);
@@ -540,8 +540,7 @@ impl App {
         // The live preview setting at the right of the display toggles, or
         // under them when the plot is too narrow for both.
         let font = egui::FontId::proportional(crate::theme::typeface::BASE);
-        let measure = |ui: &Ui, t: &str| ui.painter().layout_no_wrap(t.to_string(), font.clone(), p.text).size().x;
-        let live_width = measure(ui, "Live preview") + size::GAP + widgets::combo_width(ui, &LiveMode::LABELS);
+        let live_width = crate::fonts::layout_width(ui, "Live preview", &font, false) + size::GAP + widgets::combo_width(ui, &LiveMode::LABELS);
         let mut wraps = false;
         ui.horizontal(|ui| {
             let knots =
@@ -565,7 +564,7 @@ impl App {
 
     /// The Live preview label and combo (`reversed` in a right-to-left row).
     fn live_preview(&mut self, ui: &mut Ui, p: &crate::theme::Palette, reversed: bool) {
-        let label = |ui: &mut Ui| ui.label(RichText::new("Live preview").color(p.text_2));
+        let label = |ui: &mut Ui| widgets::toolbar_label(ui, p, "Live preview");
         if !reversed {
             label(ui);
         }
