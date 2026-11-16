@@ -252,6 +252,8 @@ pub mod typeface {
     /// Muted notes: a caption plus one.
     pub const MUTED: f32 = 11.0;
     pub const READOUT: f32 = 15.0;
+    /// Plot tick labels: 8 pt.
+    pub const TICK: f32 = BASE * 8.0 / 9.0;
     pub const HEADING: f32 = 15.0;
 }
 

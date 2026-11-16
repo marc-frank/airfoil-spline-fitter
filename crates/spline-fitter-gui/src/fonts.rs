@@ -100,17 +100,31 @@ pub fn ink_width(ui: &egui::Ui, text: &str, font: &FontId) -> f32 {
 /// it): every glyph's advance in whole pixels. Exact for Segoe UI at the
 /// base size; otherwise each glyph is measured and rounded.
 pub fn layout_width(ui: &egui::Ui, text: &str, font: &FontId, bold: bool) -> f32 {
-    let table = (font.family == FontFamily::Proportional
-        && font.size == crate::theme::typeface::BASE
-        && SEGOE.load(std::sync::atomic::Ordering::Relaxed))
-    .then_some(if bold { &SEGOE_BOLD } else { &SEGOE_REGULAR });
+    let segoe = font.family == FontFamily::Proportional && SEGOE.load(std::sync::atomic::Ordering::Relaxed);
+    let table = (segoe && font.size == crate::theme::typeface::BASE).then_some(if bold { &SEGOE_BOLD } else { &SEGOE_REGULAR });
+    let ticks = segoe && !bold && font.size == crate::theme::typeface::TICK;
     let painter = ui.painter();
     text.chars()
         .map(|c| match (table, (c as usize).checked_sub(32)) {
             (Some(t), Some(i)) if i < t.len() => t[i] as f32,
-            _ => painter.layout_no_wrap(c.to_string(), font.clone(), ui.visuals().text_color()).size().x.round(),
+            _ => match tick_advance(c).filter(|_| ticks) {
+                Some(advance) => advance,
+                None => painter.layout_no_wrap(c.to_string(), font.clone(), ui.visuals().text_color()).size().x.round(),
+            },
         })
         .sum()
+}
+
+/// Advances of the characters of plot tick labels in Segoe UI at 8 pt, as
+/// Qt lays them out.
+fn tick_advance(c: char) -> Option<f32> {
+    Some(match c {
+        '0'..='9' => 6.0,
+        '-' | '⁻' => 4.0,
+        '.' | ',' | '·' => 3.0,
+        '⁰' | '¹' | '²' | '³' | '⁴' | '⁵' | '⁶' | '⁷' | '⁸' | '⁹' => 4.0,
+        _ => return None,
+    })
 }
 
 #[cfg(test)]

@@ -48,6 +48,12 @@ impl Default for View {
 }
 
 impl View {
+    /// Back to following its data; the axes keep the room their labels
+    /// took (pyqtgraph's axes outlive a cleared plot).
+    pub fn reset(&mut self) {
+        *self = View { left_text: self.left_text, bottom_text: self.bottom_text, ..View::default() };
+    }
+
     /// Shows `bounds` (padded as an automatic range) on the next frame.
     pub fn fit(&mut self, bounds: Option<PlotBounds>) {
         if let Some(b) = bounds {
@@ -97,12 +103,12 @@ const FRAME_INSET: f32 = 3.0;
 /// The plot item's margins: small at the axes, even above and right.
 const AXIS_MARGIN: f32 = size::TIGHT;
 const PLOT_MARGIN: f32 = 24.0;
-/// What an axis label adds to its axis (0.8 of the label's line box).
-const LABEL_EXTENT: f32 = 17.6;
+/// What an axis label adds to its axis (0.8 of the label's 24 px box).
+const LABEL_EXTENT: f32 = 19.2;
 /// Gap between the axis line and its tick labels: left, bottom.
 const TICK_OFFSET: [f32; 2] = [5.0, 2.0];
 /// Tick labels a point below the base size; axis labels at the base size.
-const TICK_FONT: f32 = typeface::BASE * 8.0 / 9.0;
+const TICK_FONT: f32 = typeface::TICK;
 
 /// Ticks of one axis, per level: screen positions and labels (`None`: not drawn).
 struct AxisTicks {
@@ -290,11 +296,8 @@ pub fn show_plot(
     let bounds = *transform.bounds();
     let tick_font = egui::FontId::proportional(TICK_FONT);
     // Label boxes as Qt measures them: every glyph hinted to whole pixels.
-    let measure = |text: &str| {
-        let glyph = |c: char| ui.painter().layout_no_wrap(c.to_string(), tick_font.clone(), p.text_2).size();
-        let width = text.chars().map(|c| glyph(c).x.round()).sum::<f32>();
-        EVec2::new(width, glyph('0').y.ceil())
-    };
+    let line = ui.painter().layout_no_wrap("0".to_string(), tick_font.clone(), p.text_2).size().y.ceil();
+    let measure = |text: &str| EVec2::new(crate::fonts::layout_width(ui, text, &tick_font, false), line);
     let x_ticks = axis_ticks(
         (bounds.min()[0], bounds.max()[0]),
         frame.width(),
@@ -351,8 +354,10 @@ pub fn show_plot(
         if y - half < frame.top() - 0.5 || y + half > frame.bottom() + 0.5 {
             continue;
         }
-        widest = widest.max(size.x);
-        painter.galley(egui::pos2(frame.left() - TICK_OFFSET[0] - size.x, y - size.y / 2.0), galley, p.text_2);
+        // As wide as Qt lays the label out, right-aligned at the offset.
+        let width = measure(text).x;
+        widest = widest.max(width);
+        painter.galley(egui::pos2(frame.left() - TICK_OFFSET[0] - width, y - size.y / 2.0), galley, p.text_2);
     }
     let mut tallest: f32 = 0.0;
     for (x, text) in x_ticks.levels.iter().flatten() {
@@ -686,7 +691,7 @@ impl LossPlot {
 
     pub fn reset(&mut self) {
         self.data.clear();
-        self.view = View::default();
+        self.view.reset();
     }
 
     /// `(iteration, seconds, error)` records; errors floored at 1e-12.
@@ -840,4 +845,20 @@ pub fn shape_plot(ui: &mut Ui, p: &Palette, shape: &spline_fitter::bspline_varpr
             c.painter.text(egui::pos2(left, y), egui::Align2::LEFT_CENTER, name, font.clone(), p.text_2);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A cleared plot follows its data again but keeps the room its axis
+    /// labels took: from there the hysteresis lets the axis shrink to
+    /// narrower labels, as pyqtgraph's axis does.
+    #[test]
+    fn a_reset_view_keeps_its_label_room() {
+        let mut view = View { left_text: 20.0, bottom_text: 18.0, follow: false, ..View::default() };
+        view.reset();
+        assert!(view.follow);
+        assert_eq!((view.left_text, view.bottom_text), (20.0, 18.0));
+    }
 }
