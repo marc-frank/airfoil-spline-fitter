@@ -432,9 +432,9 @@ fn sweeps_show_the_whole_project_range() {
     // A click on a run gives the table the arrow keys, as in Qt.
     use egui_kittest::kittest::Queryable;
     let ppp = h.ctx.pixels_per_point();
-    let cell = h.query_all_by_label("1").map(|n| n.rect()).filter(|r| r.min.x > 700.0 * ppp && r.min.x < 1010.0 * ppp).last();
+    let cell = h.query_all_by_label("1").map(|n| n.rect()).rfind(|r| r.min.x > 700.0 * ppp && r.min.x < 1010.0 * ppp);
     let cell = cell.expect("run 1 in the Run column");
-    click_at(&mut h, cell.center().x as f32 / ppp, cell.center().y as f32 / ppp);
+    click_at(&mut h, cell.center().x / ppp, cell.center().y / ppp);
     // In the order shown.
     let ids: Vec<String> = h.state().visible_rows().into_iter().map(|(id, _)| id).collect();
     let selected = |h: &Harness<'static, App>| h.state().projects.selected.iter().cloned().collect::<Vec<_>>();
