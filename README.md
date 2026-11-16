@@ -106,6 +106,10 @@ Python results), and differs on purpose where the behaviour was a defect:
   of a sweep) are one undo step because the settings settle once per frame,
   not through an explicit history group.
 - The fit report is a native table, not HTML.
+- The deviation overlay is magnified so the larger of the tolerance and the
+  largest deviation is drawn at its height. Python used the tolerance alone,
+  so a live step far outside it (a tolerance fit starting from few control
+  points) drew whiskers many chords long.
 - Enter in a dialog presses its accept button (or the push button that has
   the focus). In the Python window the segmented choices were push buttons
   that took the default: Enter chose "Closed" in New NACA airfoil and "mm"

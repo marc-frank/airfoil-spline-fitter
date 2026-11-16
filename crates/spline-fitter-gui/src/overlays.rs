@@ -200,13 +200,16 @@ pub struct Deviation {
 }
 
 /// Every data point's distance from the curve, magnified along the normal
-/// so the tolerance (or without one the largest deviation) is drawn
-/// `height` chords from the curve.
+/// so the larger of the tolerance and the largest deviation is drawn
+/// `height` chords from the curve: a fit within the tolerance shows the
+/// band at `height`, one far outside it (a live step) keeps its whiskers
+/// on the plot and the band shrinks to the same magnification.
 pub fn deviation(coords: &[Vec2], curves: &[BSpline], feet: &FootPoints, height: f64, tolerance: Option<f64>) -> Option<Deviation> {
     if coords.len() < 2 {
         return None;
     }
-    let reference = tolerance.unwrap_or_else(|| feet.distance.iter().fold(0.0, |m, d| m.max(d.abs())));
+    let largest = feet.distance.iter().fold(0.0, |m: f64, d| m.max(d.abs()));
+    let reference = tolerance.map_or(largest, |t| t.max(largest));
     let (lo, hi) = coords.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), p| (l.min(p.x), h.max(p.x)));
     let chord = hi - lo;
     let positive = |v: f64| v.is_finite() && v > 0.0;
@@ -289,5 +292,47 @@ mod tests {
         let c = arc();
         let t = comb_parameters(&c, 30);
         assert!(comb_values(&c, &t, 3).iter().all(|v| v.is_finite()));
+    }
+
+    /// Points 1e-3 outside a unit arc, as foot points at its parameters.
+    fn off_arc(c: &BSpline, offset: f64) -> (Vec<Vec2>, FootPoints) {
+        let u = linspace(0.0, 1.0, 9);
+        let foot: Vec<Vec2> = u.iter().map(|&t| c.point(t)).collect();
+        let normal: Vec<Vec2> = u
+            .iter()
+            .map(|&t| {
+                let d = c.derivative(t, 1);
+                Vec2::new(d.y, -d.x) / d.norm()
+            })
+            .collect();
+        let coords = foot.iter().zip(&normal).map(|(f, n)| f + n * offset).collect();
+        let n = u.len();
+        (
+            coords,
+            FootPoints { distance: vec![offset; n], foot, normal, parameters: u.iter().map(|&t| vec![t]).collect(), section: vec![0; n] },
+        )
+    }
+
+    fn longest_whisker(d: &Deviation) -> f64 {
+        d.strokes.iter().flat_map(|s| &s.teeth).map(|[a, b]| (b - a).norm()).fold(0.0, f64::max)
+    }
+
+    #[test]
+    fn deviation_is_drawn_at_the_larger_of_tolerance_and_largest_deviation() {
+        let c = arc();
+        let (coords, feet) = off_arc(&c, 1e-3);
+        let chord = coords.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max) - coords.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+        // Within the tolerance: the tolerance is at the height.
+        let d = deviation(&coords, std::slice::from_ref(&c), &feet, 0.05, Some(1e-2)).unwrap();
+        assert!((longest_whisker(&d) - 0.05 * chord * 0.1).abs() < 1e-9);
+        // Far outside it (a live step): the largest deviation is at the height
+        // and the band is drawn at the same magnification, 1/100 of it.
+        let d = deviation(&coords, std::slice::from_ref(&c), &feet, 0.05, Some(1e-5)).unwrap();
+        assert!((longest_whisker(&d) - 0.05 * chord).abs() < 1e-9);
+        let reach = (d.band[0][200] - c.point(linspace(0.0, 1.0, 400)[200])).norm();
+        assert!((reach - 0.05 * chord / 100.0).abs() < 1e-6, "band at {reach}");
+        // Without a tolerance the largest deviation sets the scale.
+        let d = deviation(&coords, std::slice::from_ref(&c), &feet, 0.05, None).unwrap();
+        assert!((longest_whisker(&d) - 0.05 * chord).abs() < 1e-9);
     }
 }

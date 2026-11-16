@@ -780,7 +780,7 @@ pub fn deviation_toggle(app: &mut App, ui: &mut Ui) {
                 (0.001, 1.0),
                 Field::new(
                     widgets::spin_width(ui, &[&fmt(0.001), &fmt(1.0)]),
-                    "How far from the curve the tolerance is drawn, as a share of the chord\n(without a tolerance, the largest deviation).",
+                    "How far from the curve the tolerance is drawn, as a share of the chord\n(the largest deviation when there is no tolerance or it is larger).",
                 ),
                 &f,
             );
