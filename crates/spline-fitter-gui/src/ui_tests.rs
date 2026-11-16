@@ -60,6 +60,11 @@ fn reference_session() {
     shot(&mut h, "2_naca");
 
     h.state_mut().on_fit();
+    // What is about to be fitted shows first; the fit starts a frame later.
+    assert_eq!(h.state().status, "Preparing 25 control points, degree 5, G3 continuity...");
+    assert!(h.state().fitting());
+    h.step();
+    assert_eq!(h.state().status, "Starting VarPro LM...");
     // While it fits, the settings are disabled (as Python draws them).
     h.step();
     shot(&mut h, "2a_fitting");

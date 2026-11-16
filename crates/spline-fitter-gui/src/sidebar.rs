@@ -346,8 +346,11 @@ impl App {
             if ui.add_sized([width, size::CONTROL_HEIGHT], egui::Button::new("Cancel")).clicked() {
                 if let Some(r) = &self.running {
                     r.cancel();
+                    self.set_status("Cancelling... please wait");
+                } else if self.preparing.take().is_some() {
+                    // Not started yet: nothing to wait for.
+                    self.set_status("Cancelled");
                 }
-                self.set_status("Cancelling... please wait");
             }
         } else if widgets::primary_button(ui, "Fit spline", width).clicked() {
             self.on_fit();

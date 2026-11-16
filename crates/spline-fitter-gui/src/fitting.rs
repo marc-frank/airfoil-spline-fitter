@@ -117,6 +117,20 @@ impl App {
         if self.settings.sweeping() {
             return self.start_sweep(config, opt);
         }
+        // What is about to be fitted shows for a frame (as Python's status
+        // while it prepared), then the fit starts.
+        let size = match opt.tolerance {
+            Some(t) => format!("tolerance {}", number(t, ".2e")),
+            None => format!("{} control points", config.num_control_points),
+        };
+        let specs = config.junction_specs();
+        let mode = if specs.is_empty() { format!("G{}", config.continuity.order()) } else { specs.join(", ") };
+        self.set_status(format!("Preparing {size}, degree {}, {mode} continuity...", config.degree));
+        self.preparing = Some(Box::new((config, opt, airfoil)));
+    }
+
+    /// Starts the fit `on_fit` prepared.
+    fn start_fit(&mut self, (config, opt, airfoil): (SplineConfig, OptimizationConfig, AirfoilData)) {
         self.main_plot.clear_items();
         self.loss.reset();
         self.set_status(format!("Starting {}...", opt.optimizer.display_name()));
@@ -126,7 +140,12 @@ impl App {
     }
 
     /// Follows the running job: live drawing, and its end.
-    pub fn tick_job(&mut self, _ctx: &eframe::egui::Context) {
+    pub fn tick_job(&mut self, ctx: &eframe::egui::Context) {
+        if let Some(prepared) = self.preparing.take() {
+            self.start_fit(*prepared);
+            ctx.request_repaint();
+            return;
+        }
         let mode = self.live_mode;
         let Some(running) = self.running.as_mut() else { return };
         let job = running.job();

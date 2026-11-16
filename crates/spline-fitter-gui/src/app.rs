@@ -59,6 +59,8 @@ pub struct App {
     pub reset_explorer: bool,
     /// A submenu button its access key chose: it opens on the next frame.
     open_submenu: Option<egui::Id>,
+    /// A fit `on_fit` prepared: it starts on the next frame.
+    pub preparing: Option<Box<(spline_fitter::models::SplineConfig, spline_fitter::models::OptimizationConfig, AirfoilData)>>,
     pub dialog: Option<Dialog>,
     pub report: Option<ReportWindow>,
     pub batch_source: String,
@@ -105,6 +107,7 @@ impl App {
             reset_sidebar: false,
             reset_explorer: false,
             open_submenu: None,
+            preparing: None,
             dialog: None,
             report: None,
             batch_source: String::new(),
@@ -115,7 +118,7 @@ impl App {
     }
 
     pub fn fitting(&self) -> bool {
-        self.running.is_some()
+        self.running.is_some() || self.preparing.is_some()
     }
 
     pub fn set_status(&mut self, text: impl Into<String>) {
