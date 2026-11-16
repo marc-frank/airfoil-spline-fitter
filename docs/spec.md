@@ -905,7 +905,7 @@ Then `</table>`. If `junctions` is a non-empty list: `<h4>Junctions</h4><table>`
 
 Returns `(signed distance (n,), foot (n,2), unit normal (n,2), u (n,S), section (n,))`:
 
-1. `curves = scipy_curves(result)`. If `start` has shape `(n, S)`: `u = refine(start)`: for each section, clip to the domain, then `REFINE_STEPS = 3` Newton steps `u ← clip(u - g/h if h > 0 else u, domain)` with `g`, `h` as 12.1. Else `u[:, s] = project(points, curve_s)[0]`.
+1. `curves = scipy_curves(result)`. If `start` has shape `(n, S)`: `u = refine(start)`: for each section, clip to the domain, then `REFINE_STEPS = 3` Newton steps `u ← clip(u - g/h if h > 0 else u, domain)` with `g`, `h` as 12.1. Else `u[:, s] = project(points, curve_s)[0]`. [Rust: no `start`; every call searches the whole curves, because a solver step can move a point's parameter anywhere on the curve and the refinement then lands on the wrong part of it.]
 2. For each section in order: `at = curve(u_s)`, `d = |points - at|`; where `d < best`, take this section's foot and tangent.
 3. Normal = `(t_y, -t_x)` normalized (denominator floored at 1e-300): right of the direction of travel (outside for Selig data).
 4. Signed distance = `copysign(best, (point - foot)·normal)`.
@@ -1653,7 +1653,7 @@ Curves from `preview = (control points per section, knots per section or None, d
 
 Hidden when the height is none or fewer than 2 data points. With the data `coords` and a fit:
 
-1. Foot points (12.5): live mode refines the previous live step's parameters (`start`) and stores the new ones; finished fits are measured once and cached per (fit, coords).
+1. Foot points (12.5): live mode refines the previous live step's parameters (`start`) and stores the new ones; finished fits are measured once and cached per (fit, coords). [Rust: every shown curve, live or finished, is searched once and cached until the curves change.]
 2. `reference = max(tolerance, max|signed distance|)` (without a tolerance, `max|signed distance|`) [Rust: Python used the tolerance alone, which drew a live step far outside it many chords long]; `chord` = x range of `coords`; if either `<= 0`, hide.
 3. `scale = height·chord/reference`; tips `foot + scale·distance·normal`.
 4. Split the points into runs of equal nearest section; each run after the first begins at the last point of the previous run; a run goes to the parity of its section. Whiskers foot→tip, laid out exactly like the comb teeth of 19.14.3 step 4 (`foot, tip, NaN` per point, one further NaN between runs); envelope through the tips, like the comb envelope (runs joined with one NaN).

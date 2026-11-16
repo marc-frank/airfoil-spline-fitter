@@ -153,7 +153,7 @@ impl App {
         let (preview, status) = job.tick(mode);
         let history = job.live.history();
         if let Some(p) = preview {
-            self.main_plot.show_live(preview_curves(&p), tolerance);
+            self.main_plot.show_curves(preview_curves(&p), tolerance);
             self.loss.set_data(history);
         }
         if let Some(s) = status {
@@ -249,7 +249,7 @@ impl App {
         match &self.fit {
             Some(fit) => {
                 let tolerance = fit.report.as_ref().and_then(|r| r.tolerance);
-                self.main_plot.show_fit(fit.curves(), tolerance);
+                self.main_plot.show_curves(fit.curves(), tolerance);
             }
             None => self.main_plot.clear_items(),
         }
@@ -601,7 +601,7 @@ impl App {
             if !outcome.raw.success {
                 return Err(spline_fitter::Error::new(format!("Optimizer did not converge: {}", outcome.raw.message)));
             }
-            self.main_plot.show_live(outcome.fit.curves(), job.options.tolerance);
+            self.main_plot.show_curves(outcome.fit.curves(), job.options.tolerance);
             write_result(&item, &batch.config, &outcome.raw)?;
             Ok(Some(outcome))
         });

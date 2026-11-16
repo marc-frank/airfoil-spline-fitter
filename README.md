@@ -110,6 +110,10 @@ Python results), and differs on purpose where the behaviour was a defect:
   largest deviation is drawn at its height. Python used the tolerance alone,
   so a live step far outside it (a tolerance fit starting from few control
   points) drew whiskers many chords long.
+- The live deviation searches the foot points on each step's curve instead
+  of refining the previous step's: the solver's steps move a point's
+  parameter anywhere on the curve, and the refined feet then joined points to
+  the wrong part of it (whiskers across the airfoil).
 - Enter in a dialog presses its accept button (or the push button that has
   the focus). In the Python window the segmented choices were push buttons
   that took the default: Enter chose "Closed" in New NACA airfoil and "mm"

@@ -307,10 +307,7 @@ mod tests {
             .collect();
         let coords = foot.iter().zip(&normal).map(|(f, n)| f + n * offset).collect();
         let n = u.len();
-        (
-            coords,
-            FootPoints { distance: vec![offset; n], foot, normal, parameters: u.iter().map(|&t| vec![t]).collect(), section: vec![0; n] },
-        )
+        (coords, FootPoints { distance: vec![offset; n], foot, normal, section: vec![0; n] })
     }
 
     fn longest_whisker(d: &Deviation) -> f64 {

@@ -562,11 +562,9 @@ pub struct MainPlot {
     comb_strokes: Option<ParityStrokes>,
     deviation: Option<Deviation>,
     tolerance: Option<f64>,
-    /// Foot parameters of the previous live step, refined at the next one.
-    live_feet: Option<Vec<Vec<f64>>>,
-    /// Foot points of the shown finished fit.
-    fit_feet: Option<FootPoints>,
-    live: bool,
+    /// Foot points of the data on the shown curves, measured when the
+    /// deviation is first drawn.
+    feet: Option<FootPoints>,
 }
 
 impl Default for MainPlot {
@@ -585,9 +583,7 @@ impl Default for MainPlot {
             comb_strokes: None,
             deviation: None,
             tolerance: None,
-            live_feet: None,
-            fit_feet: None,
-            live: false,
+            feet: None,
         }
     }
 }
@@ -608,25 +604,12 @@ impl MainPlot {
         self.knots.clear();
         self.comb_strokes = None;
         self.deviation = None;
-        self.live_feet = None;
-        self.fit_feet = None;
+        self.feet = None;
     }
 
-    /// Shows a finished fit.
-    pub fn show_fit(&mut self, curves: Vec<BSpline>, tolerance: Option<f64>) {
-        self.live = false;
-        self.live_feet = None;
-        self.fit_feet = None;
-        self.set_curves(curves, tolerance);
-    }
-
-    /// Shows a step of a running fit.
-    pub fn show_live(&mut self, curves: Vec<BSpline>, tolerance: Option<f64>) {
-        self.live = true;
-        self.set_curves(curves, tolerance);
-    }
-
-    fn set_curves(&mut self, curves: Vec<BSpline>, tolerance: Option<f64>) {
+    /// Shows a finished fit or a step of a running one.
+    pub fn show_curves(&mut self, curves: Vec<BSpline>, tolerance: Option<f64>) {
+        self.feet = None;
         self.sampled = curves.iter().map(|c| c.points(&linspace(0.0, 1.0, 1000))).collect();
         self.curves = curves;
         self.tolerance = tolerance;
@@ -653,21 +636,8 @@ impl MainPlot {
         if !self.deviation_on || self.curves.is_empty() || self.data.len() < 2 {
             return;
         }
-        let feet = if self.live {
-            let feet = foot_points(&self.data, &self.curves, self.live_feet.as_deref());
-            self.live_feet = Some(feet.parameters.clone());
-            feet
-        } else {
-            match &self.fit_feet {
-                Some(f) => f.clone(),
-                None => {
-                    let f = foot_points(&self.data, &self.curves, None);
-                    self.fit_feet = Some(f.clone());
-                    f
-                }
-            }
-        };
-        self.deviation = deviation(&self.data, &self.curves, &feet, self.deviation_height, self.tolerance);
+        let feet = self.feet.get_or_insert_with(|| foot_points(&self.data, &self.curves));
+        self.deviation = deviation(&self.data, &self.curves, feet, self.deviation_height, self.tolerance);
     }
 
     pub fn show(&mut self, ui: &mut Ui, p: &Palette, motion_ms: u64) {

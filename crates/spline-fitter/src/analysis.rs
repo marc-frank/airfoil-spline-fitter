@@ -226,9 +226,6 @@ impl ReportRow {
     }
 }
 
-/// Newton steps per curve when refining feet from a previous fit.
-const REFINE_STEPS: usize = 3;
-
 /// Signed orthogonal distances of points to the nearest section of a fit.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FootPoints {
@@ -237,45 +234,20 @@ pub struct FootPoints {
     pub distance: Vec<f64>,
     pub foot: Vec<Vec2>,
     pub normal: Vec<Vec2>,
-    /// The parameter of every point on every section, to refine from next time.
-    pub parameters: Vec<Vec<f64>>,
     /// The nearest section of every point (nondecreasing along the chain).
     pub section: Vec<usize>,
 }
 
-/// Foot points of `points` on the curves; `start` (the parameters of a
-/// previous call on a close fit) is refined by a few Newton steps instead of
-/// searching the whole curves.
-pub fn foot_points(points: &[Vec2], curves: &[BSpline], start: Option<&[Vec<f64>]>) -> FootPoints {
+/// Foot points of `points` on the curves, each searched on the whole of
+/// every curve. Not refined from a previous fit: the solver's steps can move
+/// a point's parameter anywhere on the curve, so a search started from the
+/// previous step's parameters lands on the wrong part of it.
+pub fn foot_points(points: &[Vec2], curves: &[BSpline]) -> FootPoints {
     let n = points.len();
-    let parameters: Vec<Vec<f64>> = match start.filter(|s| s.len() == n && s.iter().all(|u| u.len() == curves.len())) {
-        Some(start) => (0..n)
-            .map(|i| {
-                curves
-                    .iter()
-                    .enumerate()
-                    .map(|(s, curve)| {
-                        let (lo, hi) = curve.domain();
-                        let mut u = start[i][s].clamp(lo, hi);
-                        for _ in 0..REFINE_STEPS {
-                            let d = curve.derivatives(u, 2);
-                            let diff = d[0] - points[i];
-                            let g = diff.dot(&d[1]);
-                            let h = d[1].norm_squared() + diff.dot(&d[2]);
-                            u = (u - if h > 0.0 { g / h } else { 0.0 }).clamp(lo, hi);
-                        }
-                        u
-                    })
-                    .collect()
-            })
-            .collect(),
-        None => {
-            let per_curve: Vec<Vec<(f64, f64)>> = curves.iter().map(|c| project(points, c)).collect();
-            (0..n).map(|i| per_curve.iter().map(|feet| feet[i].0).collect()).collect()
-        }
-    };
+    let per_curve: Vec<Vec<(f64, f64)>> = curves.iter().map(|c| project(points, c)).collect();
+    let parameters: Vec<Vec<f64>> = (0..n).map(|i| per_curve.iter().map(|feet| feet[i].0).collect()).collect();
     let tie = 1e-9 * largest_extent(points).max(1e-300);
-    let mut result = FootPoints { distance: vec![], foot: vec![], normal: vec![], parameters: vec![], section: vec![] };
+    let mut result = FootPoints { distance: vec![], foot: vec![], normal: vec![], section: vec![] };
     let mut running = 0;
     for (i, point) in points.iter().enumerate() {
         let candidates: Vec<(Vec2, f64)> = curves
@@ -298,7 +270,6 @@ pub fn foot_points(points: &[Vec2], curves: &[BSpline], start: Option<&[Vec<f64>
         result.normal.push(normal);
         result.section.push(running);
     }
-    result.parameters = parameters;
     result
 }
 
