@@ -163,6 +163,14 @@ pub fn vertical_scroll_bar(ui: &mut Ui, p: &Palette, id: egui::Id, track: egui::
     None
 }
 
+/// The width Qt gives a spin box that can show `texts` (its least and
+/// greatest values): the widest with a space after it, in the number face,
+/// and the room for the cursor, frame and arrows.
+pub fn spin_width(ui: &Ui, texts: &[&str]) -> f32 {
+    let font = FontId::monospace(typeface::BASE);
+    texts.iter().map(|t| crate::fonts::layout_width(ui, &format!("{t} "), &font, false)).fold(0.0, f32::max) + size::SPIN_EXTRA
+}
+
 /// Qt selects a field's text when the focus comes by keyboard (or with a
 /// dialog's opening), not by a click: typing then replaces it.
 fn select_on_focus(ui: &Ui, response: &Response, chars: usize) {

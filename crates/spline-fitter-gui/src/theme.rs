@@ -193,6 +193,8 @@ pub mod size {
     pub const ARROW_BUTTON_WIDTH: f32 = 24.0;
     /// A combo box is this much wider than its longest item's ink.
     pub const COMBO_EXTRA: f32 = 36.0;
+    /// A spin box is this much wider than its widest value and a space.
+    pub const SPIN_EXTRA: f32 = 38.0;
     /// A combo box's text inset, and its chevron's centre from the right.
     pub const COMBO_PADDING: f32 = 8.0;
     pub const COMBO_CHEVRON_INSET: f32 = 11.5;

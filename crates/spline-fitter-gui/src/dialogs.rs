@@ -694,7 +694,8 @@ fn split_toggle(
             widgets::outline_checked(ui, p, &arrow, right);
         }
         Glyph::ChevronDown.paint(ui.painter(), arrow.rect.center(), size::GLYPH, if open { p.text } else { p.text_2 });
-        egui::Popup::from_toggle_button_response(&arrow).id(popup_id).close_behavior(egui::PopupCloseBehavior::IgnoreClicks).show(|ui| {
+        let frame = egui::Frame::popup(ui.style()).inner_margin(0);
+        egui::Popup::from_toggle_button_response(&arrow).id(popup_id).frame(frame).close_behavior(egui::PopupCloseBehavior::IgnoreClicks).show(|ui| {
             egui::Frame::new().inner_margin(egui::Margin::same(12)).show(ui, |ui| {
                 changed = content(ui);
             });
@@ -717,7 +718,7 @@ pub fn comb_toggle(app: &mut App, ui: &mut Ui) {
     let (toggled, changed) = split_toggle(ui, &p, toggle, &mut plot.comb_on, |ui| {
         let mut changed = false;
         form_row(ui, &p, "Quantity", true, "", |ui| {
-            changed |= widgets::combo(ui, &p, "comb_quantity", &mut settings.quantity, &QUANTITIES, 180.0, "")
+            changed |= widgets::combo(ui, &p, "comb_quantity", &mut settings.quantity, &QUANTITIES, 0.0, "")
         });
         form_row(ui, &p, "Height", true, "", |ui| {
             let mut h = settings.height;
@@ -725,12 +726,12 @@ pub fn comb_toggle(app: &mut App, ui: &mut Ui) {
             let parse = |t: &str| widgets::parse_scientific(t);
             let step = |v: f64, k: i32| v + 0.01 * k as f64;
             let f = widgets::NumberFormat { format: &fmt, parse: &parse, step: &step };
-            changed |= widgets::number_field(ui, &p, "comb_height", &mut h, (0.0, 1000.0), Field::new(120.0, "Length of a tooth, in chords, where the quantity is 1 on the airfoil\nscaled to a unit chord. The comb looks the same at any size of the data."), &f);
+            changed |= widgets::number_field(ui, &p, "comb_height", &mut h, (0.0, 1000.0), Field::new(widgets::spin_width(ui, &[&fmt(0.0), &fmt(1000.0)]), "Length of a tooth, in chords, where the quantity is 1 on the airfoil\nscaled to a unit chord. The comb looks the same at any size of the data."), &f);
             settings.height = h;
         });
         form_row(ui, &p, "Density", true, "", |ui| {
             changed |=
-                widgets::int_field(ui, &p, "comb_density", &mut settings.density, (5, 2000), Field::new(120.0, ""), IntOptions::default())
+                widgets::int_field(ui, &p, "comb_density", &mut settings.density, (5, 2000), Field::new(widgets::spin_width(ui, &["5", "2000"]), ""), IntOptions::default())
         });
         changed
     });
@@ -765,7 +766,7 @@ pub fn deviation_toggle(app: &mut App, ui: &mut Ui) {
                 &mut height,
                 (0.001, 1.0),
                 Field::new(
-                    120.0,
+                    widgets::spin_width(ui, &[&fmt(0.001), &fmt(1.0)]),
                     "How far from the curve the tolerance is drawn, as a share of the chord\n(without a tolerance, the largest deviation).",
                 ),
                 &f,
