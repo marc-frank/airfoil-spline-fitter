@@ -178,13 +178,14 @@ fn focus_first_control(ui: &mut Ui, title: &str) {
 /// in focus, the `default` one is. The default is outlined in the selection
 /// line and Enter presses it. True when pressed.
 fn dialog_button(ui: &mut Ui, p: &Palette, text: &str, default: bool, enabled: bool) -> bool {
-    let response = ui.add_enabled(enabled, egui::Button::new(text).min_size(egui::vec2(0.0, size::CONTROL_HEIGHT)));
+    let response = widgets::push_button(ui, enabled, text);
     let last_focused = egui::Id::unique("dialog_focused_button");
     let focused = response.has_focus();
     if focused {
         ui.ctx().data_mut(|d| d.insert_temp(last_focused, response.id));
     }
-    let other = ui.memory(|m| m.focused()).is_some_and(|f| f != response.id && ui.ctx().data(|d| d.get_temp::<egui::Id>(last_focused)) == Some(f));
+    let other =
+        ui.memory(|m| m.focused()).is_some_and(|f| f != response.id && ui.ctx().data(|d| d.get_temp::<egui::Id>(last_focused)) == Some(f));
     let is_default = enabled && (focused || (default && !other));
     if is_default {
         widgets::outline_checked(ui, p, &response, egui::CornerRadius::same(size::RADIUS));
@@ -208,8 +209,7 @@ fn buttons(ui: &mut Ui, p: &Palette, accept: Option<(&str, bool)>, reject: &str,
             .on_hover_text(tip);
         }
         // The right-hand buttons laid out left to right after the space they leave.
-        let font = egui::FontId::proportional(crate::theme::typeface::BASE);
-        let width = |t: &str| ui.painter().layout_no_wrap(t.to_string(), font.clone(), p.text).size().x + 2.0 * ui.spacing().button_padding.x;
+        let width = |t: &str| widgets::push_button_width(ui, t);
         let gap = ui.spacing().item_spacing.x;
         let right = accept.map_or(0.0, |(t, _)| width(t) + gap) + width(reject);
         ui.add_space((ui.available_width() - right).max(0.0));
@@ -697,11 +697,15 @@ fn split_toggle(
         }
         Glyph::ChevronDown.paint(ui.painter(), arrow.rect.center(), size::GLYPH, if open { p.text } else { p.text_2 });
         let frame = egui::Frame::popup(ui.style()).inner_margin(0);
-        egui::Popup::from_toggle_button_response(&arrow).id(popup_id).frame(frame).close_behavior(egui::PopupCloseBehavior::IgnoreClicks).show(|ui| {
-            egui::Frame::new().inner_margin(egui::Margin::same(12)).show(ui, |ui| {
-                changed = content(ui);
+        egui::Popup::from_toggle_button_response(&arrow)
+            .id(popup_id)
+            .frame(frame)
+            .close_behavior(egui::PopupCloseBehavior::IgnoreClicks)
+            .show(|ui| {
+                egui::Frame::new().inner_margin(egui::Margin::same(12)).show(ui, |ui| {
+                    changed = content(ui);
+                });
             });
-        });
     });
     (toggled, changed)
 }
@@ -732,8 +736,15 @@ pub fn comb_toggle(app: &mut App, ui: &mut Ui) {
             settings.height = h;
         });
         form_row(ui, &p, "Density", true, "", |ui| {
-            changed |=
-                widgets::int_field(ui, &p, "comb_density", &mut settings.density, (5, 2000), Field::new(widgets::spin_width(ui, &["5", "2000"]), ""), IntOptions::default())
+            changed |= widgets::int_field(
+                ui,
+                &p,
+                "comb_density",
+                &mut settings.density,
+                (5, 2000),
+                Field::new(widgets::spin_width(ui, &["5", "2000"]), ""),
+                IntOptions::default(),
+            )
         });
         changed
     });

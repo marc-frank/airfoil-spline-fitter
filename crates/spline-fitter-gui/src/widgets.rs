@@ -8,7 +8,8 @@ use crate::theme::{size, typeface, Glyph, Palette, INK, INK_HOVER, ON_INK};
 
 /// An uppercase caption naming a region.
 pub fn caption(ui: &mut Ui, p: &Palette, text: &str) -> Response {
-    let rich = RichText::new(text.to_uppercase()).font(crate::fonts::semibold_id(typeface::CAPTION)).color(p.text_3).extra_letter_spacing(1.0);
+    let rich =
+        RichText::new(text.to_uppercase()).font(crate::fonts::semibold_id(typeface::CAPTION)).color(p.text_3).extra_letter_spacing(1.0);
     let galley = egui::WidgetText::from(rich).into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Body);
     // A line of a caption's height, the text at its top (as a Qt label).
     let (rect, response) = ui.allocate_exact_size(Vec2::new(galley.size().x, size::CAPTION_LINE), Sense::hover());
@@ -72,6 +73,21 @@ pub fn outline_checked(ui: &Ui, p: &Palette, response: &Response, radius: Corner
     if ui.is_enabled() {
         ui.painter().rect_stroke(response.rect, radius, egui::Stroke::new(1.0, p.select_line), egui::StrokeKind::Inside);
     }
+}
+
+/// A push button as wide as Qt makes it: its text and 11 px each side.
+pub fn push_button(ui: &mut Ui, enabled: bool, text: &str) -> Response {
+    let padding = ui.spacing().button_padding.x;
+    ui.spacing_mut().button_padding.x = 0.0;
+    let width = push_button_width(ui, text);
+    let response = ui.add_enabled(enabled, Button::new(text).min_size(Vec2::new(width, size::CONTROL_HEIGHT)));
+    ui.spacing_mut().button_padding.x = padding;
+    response
+}
+
+/// A push button's width: Qt's text width and the padding beside it.
+pub fn push_button_width(ui: &Ui, text: &str) -> f32 {
+    crate::fonts::layout_width(ui, text, &FontId::proportional(typeface::BASE), false) + 2.0 * size::BUTTON_PADDING
 }
 
 /// A tool button's width: Qt's text width and the padding beside it.

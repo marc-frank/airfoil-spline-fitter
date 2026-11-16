@@ -55,8 +55,11 @@ impl App {
     pub fn sidebar(&mut self, ui: &mut Ui) {
         let p = self.palette.clone();
         let frame = egui::Frame::new().fill(p.panel);
-        let mut panel =
-            egui::Panel::left("sidebar").resizable(true).default_size(size::SIDEBAR_WIDTH + size::SPLITTER).min_size(size::SIDEBAR_MIN_WIDTH).frame(frame);
+        let mut panel = egui::Panel::left("sidebar")
+            .resizable(true)
+            .default_size(size::SIDEBAR_WIDTH + size::SPLITTER)
+            .min_size(size::SIDEBAR_MIN_WIDTH)
+            .frame(frame);
         if std::mem::take(&mut self.reset_sidebar) {
             panel = panel.exact_size(size::SIDEBAR_WIDTH + size::SPLITTER);
         }
@@ -110,11 +113,7 @@ impl App {
                     }
                 });
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui
-                        .add_enabled(!fitting, egui::Button::new("Open...").min_size(egui::vec2(0.0, size::CONTROL_HEIGHT)))
-                        .on_hover_text("Open an airfoil coordinate file (Ctrl+O)")
-                        .clicked()
-                    {
+                    if widgets::push_button(ui, !fitting, "Open...").on_hover_text("Open an airfoil coordinate file (Ctrl+O)").clicked() {
                         self.on_open_airfoil();
                     }
                 });

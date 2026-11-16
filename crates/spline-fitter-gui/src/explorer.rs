@@ -416,7 +416,11 @@ impl App {
             if self.explorer.pivot {
                 self.pivot_table(&mut inside);
             } else {
-                let body = egui::ScrollArea::horizontal().id_salt("runs_h").auto_shrink([false, false]).show(&mut inside, |ui| self.run_table(ui)).inner;
+                let body = egui::ScrollArea::horizontal()
+                    .id_salt("runs_h")
+                    .auto_shrink([false, false])
+                    .show(&mut inside, |ui| self.run_table(ui))
+                    .inner;
                 // The rows' scroll bar at the box's edge (the table itself is
                 // as wide as its columns), from the header down.
                 if let Some(body) = body {
@@ -426,7 +430,15 @@ impl App {
                         egui::pos2(viewport.right(), body.inner_rect.bottom()),
                     );
                     let id = inside.scope_id().with("runs_v");
-                    let bar = widgets::vertical_scroll_bar(&mut inside, &p, id, track, body.state.clamped_offset().y, body.content_size.y, body.inner_rect.height());
+                    let bar = widgets::vertical_scroll_bar(
+                        &mut inside,
+                        &p,
+                        id,
+                        track,
+                        body.state.clamped_offset().y,
+                        body.content_size.y,
+                        body.inner_rect.height(),
+                    );
                     if let Some(y) = bar {
                         self.explorer.scroll_to = Some(y);
                         inside.ctx().request_repaint();
@@ -441,16 +453,14 @@ impl App {
             let k = self.projects.selected.len();
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = size::GROUP;
-                if ui
-                    .add_enabled(!fitting && k == 1, egui::Button::new("Load settings").min_size(egui::vec2(0.0, size::CONTROL_HEIGHT)))
+                if widgets::push_button(ui, !fitting && k == 1, "Load settings")
                     .on_hover_text("Set the sidebar to the selected run's settings (or double-click the run)")
                     .clicked()
                 {
                     let id = self.projects.selected.iter().next().unwrap().clone();
                     self.load_settings(&id);
                 }
-                if ui
-                    .add_enabled(!fitting && k > 0, egui::Button::new("Delete").min_size(egui::vec2(0.0, size::CONTROL_HEIGHT)))
+                if widgets::push_button(ui, !fitting && k > 0, "Delete")
                     .on_hover_text("Delete the selected runs from the project (Delete key).\nEdit > Restore deleted runs brings them back.")
                     .clicked()
                 {

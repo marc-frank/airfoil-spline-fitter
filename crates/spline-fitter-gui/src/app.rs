@@ -400,8 +400,12 @@ impl App {
                 }
             }));
             titles.push(bar_menu(ui, "&View", |ui| {
-                let entries =
-                    [("&Fit report...", "Ctrl+R"), ("Project &explorer", "Ctrl+Shift+E"), ("&Theme...", ""), ("&Scrolling and zooming...", "")];
+                let entries = [
+                    ("&Fit report...", "Ctrl+R"),
+                    ("Project &explorer", "Ctrl+Shift+E"),
+                    ("&Theme...", ""),
+                    ("&Scrolling and zooming...", ""),
+                ];
                 let m = MenuLayout::of(ui, &entries, true);
                 if m.item(ui, &p, entries[0], has_fit, None) {
                     self.on_report();
