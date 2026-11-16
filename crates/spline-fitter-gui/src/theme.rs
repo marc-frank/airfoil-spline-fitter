@@ -193,6 +193,9 @@ pub mod size {
     pub const ARROW_BUTTON_WIDTH: f32 = 24.0;
     /// A combo box is this much wider than its longest item's ink.
     pub const COMBO_EXTRA: f32 = 36.0;
+    /// Where a field's text starts: Qt's 1 px frame, 6 px padding and 2 px
+    /// text margin.
+    pub const FIELD_TEXT_INSET: f32 = 9.0;
     /// A spin box is this much wider than its widest value and a space.
     pub const SPIN_EXTRA: f32 = 38.0;
     /// A combo box's text inset, and its chevron's centre from the right.

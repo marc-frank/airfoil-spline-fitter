@@ -217,14 +217,14 @@ fn field_of(
     let mut edit = TextEdit::singleline(text)
         .id(ui.make_persistent_id(id_salt))
         .frame(egui::Frame::NONE.inner_margin(egui::Margin {
-            left: (size::GAP + 1.0) as i8,
-            right: (size::GAP + 1.0) as i8,
+            left: size::FIELD_TEXT_INSET as i8,
+            right: size::FIELD_TEXT_INSET as i8,
             top: 0,
             bottom: 0,
         }))
         .hint_text(hint)
         .align(egui::Align2::LEFT_CENTER)
-        .desired_width(edit_rect.width() - 2.0 * (size::GAP + 1.0))
+        .desired_width(edit_rect.width() - 2.0 * size::FIELD_TEXT_INSET)
         .min_size(edit_rect.size());
     if limit > 0 {
         edit = edit.char_limit(limit);
@@ -455,10 +455,10 @@ pub fn number_field(
     let text_rect = egui::Rect::from_min_max(outer.min, egui::pos2(outer.right() - arrows, outer.bottom()));
     let edit = TextEdit::singleline(&mut text)
         .id(id)
-        .frame(egui::Frame::NONE.inner_margin(egui::Margin { left: (size::GAP + 1.0) as i8, right: 0, top: 0, bottom: 0 }))
+        .frame(egui::Frame::NONE.inner_margin(egui::Margin { left: size::FIELD_TEXT_INSET as i8, right: 0, top: 0, bottom: 0 }))
         .font(FontId::monospace(typeface::BASE))
         .align(egui::Align2::LEFT_CENTER)
-        .desired_width(text_rect.width() - size::GAP - 1.0)
+        .desired_width(text_rect.width() - size::FIELD_TEXT_INSET)
         .min_size(text_rect.size());
     // In a child, so the layout cursor stays after the whole field.
     let response = ui.new_child(egui::UiBuilder::new().max_rect(text_rect)).add(edit);

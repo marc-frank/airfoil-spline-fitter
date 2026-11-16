@@ -281,7 +281,7 @@ impl App {
                 if view.varpro {
                     let response = form_row(ui, &p, "Per junction", view.has_junctions, "", |ui| {
                         ui.add_enabled_ui(view.has_junctions, |ui| {
-                            ui.add(egui::TextEdit::singleline(&mut s.per_junction).hint_text("G2, C1  (blank = same everywhere)").desired_width(width))
+                            widgets::text_field(ui, &p, "per_junction", &mut s.per_junction, width, "G2, C1  (blank = same everywhere)", 0)
                                 .on_hover_text("Continuity of each junction in order, overriding the Continuity\nsetting. One entry per junction (sections - 1), each G0-G3 or C0-C3.\nVarPro LM only.")
                         })
                         .inner
