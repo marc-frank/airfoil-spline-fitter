@@ -129,6 +129,7 @@ impl App {
             form_row(ui, &p, "Optimizer", true, "", |ui| {
                 widgets::segmented(
                     ui,
+                    &p,
                     &mut s.optimizer,
                     &[
                         (OptimizerType::VarPro, "VarPro LM", OptimizerType::VarPro.tooltip()),
@@ -142,6 +143,7 @@ impl App {
                 form_row(ui, &p, "Goal", true, "", |ui| {
                     widgets::segmented(
                         ui,
+                        &p,
                         &mut s.tolerance_goal,
                         &[
                             (false, "Fixed count", "Fit the given number of control points per section."),
@@ -175,6 +177,7 @@ impl App {
                 form_row(ui, &p, "Knots", true, "", |ui| {
                     widgets::segmented(
                         ui,
+                        &p,
                         &mut s.knot_placement,
                         &[
                             (KnotPlacement::Uniform, "Uniform", "Knots stay evenly spaced in the curve parameter."),
@@ -189,7 +192,7 @@ impl App {
                 });
             } else {
                 form_row(ui, &p, "Parameterization", true, "", |ui| {
-                    widgets::segmented(ui, &mut s.parameterization, &[
+                    widgets::segmented(ui, &p, &mut s.parameterization, &[
                         (Parameterization::Centripetal, "Centripetal", "Space the data parameters by the square root of the point distances.\nFollows tight curvature, such as the leading edge, more closely."),
                         (Parameterization::ArcLength, "Arc length", "Space the data parameters by the distance along the data."),
                     ], width);
@@ -248,14 +251,14 @@ impl App {
             form_row(ui, &p, "Continuity", view.has_junctions, "", |ui| {
                 ui.add_enabled_ui(view.has_junctions, |ui| {
                     let items: Vec<(usize, &str, &str)> = (0..4).map(|i| (i, labels[i].as_str(), tips[i])).collect();
-                    widgets::segmented(ui, &mut s.continuity, &items, width);
+                    widgets::segmented(ui, &p, &mut s.continuity, &items, width);
                 });
             });
             if view.varpro {
                 form_row(ui, &p, "Type", view.has_junctions, "", |ui| {
                     ui.add_enabled_ui(view.has_junctions, |ui| {
                         let tip = "Geometric: tangent direction, curvature and curvature rate match\nacross the junction (what CAD calls G1/G2/G3).\nParametric: the derivative vectors themselves match (C1/C2/C3),\nwhich is stricter and needs more control points.\nOnly VarPro LM supports geometric continuity; other optimizers\nalways use parametric.";
-                        widgets::segmented(ui, &mut s.geometric, &[(true, "Geometric", tip), (false, "Parametric", tip)], width);
+                        widgets::segmented(ui, &p, &mut s.geometric, &[(true, "Geometric", tip), (false, "Parametric", tip)], width);
                     });
                 });
             }

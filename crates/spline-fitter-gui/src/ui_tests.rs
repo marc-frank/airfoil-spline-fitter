@@ -60,6 +60,9 @@ fn reference_session() {
     shot(&mut h, "2_naca");
 
     h.state_mut().on_fit();
+    // While it fits, the settings are disabled (as Python draws them).
+    h.step();
+    shot(&mut h, "2a_fitting");
     finish(&mut h);
     {
         let app = h.state();

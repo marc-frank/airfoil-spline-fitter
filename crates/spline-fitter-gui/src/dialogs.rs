@@ -262,7 +262,7 @@ impl App {
                             (true, "Closed", "Modified thickness coefficient: a sharp trailing edge"),
                             (false, "Open", "Original thickness coefficient: a thin blunt trailing edge"),
                         ];
-                        widgets::segmented(ui, closed, &items, form(WIDTH));
+                        widgets::segmented(ui, &p, closed, &items, form(WIDTH));
                     });
                     let (a, r, _) = buttons(ui, &p, Some(("Create", valid)), "Cancel", None);
                     answer_of(a, r)
@@ -289,7 +289,7 @@ impl App {
                     });
                     form_row(ui, &p, "Units", true, "", |ui| {
                         let items: Vec<(&'static str, &str, &str)> = CAD_UNITS.iter().map(|u| (*u, *u, "")).collect();
-                        widgets::segmented(ui, &mut choice.units, &items, form(WIDTH));
+                        widgets::segmented(ui, &p, &mut choice.units, &items, form(WIDTH));
                     });
                     form_row(ui, &p, "Scale", true, "", |ui| {
                         let f = Field::new(80.0, "Coordinates are multiplied by this factor, for example the chord length.");
@@ -366,7 +366,7 @@ impl App {
                                 (*m, m.label(), if *m == ThemeMode::System { "Follow the light or dark setting of the system" } else { "" })
                             })
                             .collect();
-                        widgets::segmented(ui, &mut mode, &items, form(WIDTH));
+                        widgets::segmented(ui, &p, &mut mode, &items, form(WIDTH));
                     });
                     form_row(ui, &p, "Temperature", true, "", |ui| {
                         ui.label(RichText::new("Cool").color(p.text_2));

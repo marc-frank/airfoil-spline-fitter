@@ -92,10 +92,18 @@ pub fn push_button(ui: &mut Ui, p: &Palette, enabled: bool, text: &str) -> Respo
 /// a rule border, its text in the third text grey (not the enabled look
 /// faded, as egui draws it).
 pub fn paint_disabled_button(ui: &Ui, p: &Palette, response: &Response, text: &str, radius: CornerRadius) {
+    paint_disabled(ui, p, response, text, radius, p.panel, egui::Align2::CENTER_CENTER);
+}
+
+/// Paints a disabled control over egui's faded one, unfaded: `fill` in a
+/// rule border, its text in the third grey (centered, or 8 px in for a
+/// combo box).
+fn paint_disabled(ui: &Ui, p: &Palette, response: &Response, text: &str, radius: CornerRadius, fill: egui::Color32, align: egui::Align2) {
     let painter = ui.ctx().layer_painter(response.layer_id).with_clip_rect(ui.clip_rect());
     let rect = response.rect;
-    painter.rect(rect, radius, p.panel, egui::Stroke::new(1.0, p.rule), egui::StrokeKind::Inside);
-    painter.text(rect.center(), egui::Align2::CENTER_CENTER, text, FontId::proportional(typeface::BASE), p.text_3);
+    painter.rect(rect, radius, fill, egui::Stroke::new(1.0, p.rule), egui::StrokeKind::Inside);
+    let at = if align == egui::Align2::CENTER_CENTER { rect.center() } else { egui::pos2(rect.left() + size::COMBO_PADDING, rect.center().y) };
+    painter.text(at, align, text, FontId::proportional(typeface::BASE), p.text_3);
 }
 
 /// A push button's width: Qt's text width and the padding beside it.
@@ -410,7 +418,7 @@ pub fn icon_button(ui: &mut Ui, p: &Palette, glyph: Glyph, checked: bool, toolti
 
 /// Joined buttons for a choice of two to four short options; returns true
 /// when the choice changed.
-pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, items: &[(T, &str, &str)], width: f32) -> bool {
+pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, p: &Palette, value: &mut T, items: &[(T, &str, &str)], width: f32) -> bool {
     let select_line = ui.visuals().widgets.active.bg_stroke.color;
     let mut changed = false;
     let n = items.len() as f32;
@@ -428,9 +436,14 @@ pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, items: &[(T, &
             let checked = *value == *item;
             let mut response = ui.add_sized([each, size::CONTROL_HEIGHT], Button::new(*text).selected(checked).corner_radius(radius));
             // Outlined when checked, and while it has the focus (Qt's segments
-            // are push buttons: the focused one is the default).
+            // are push buttons: the focused one is the default). Disabled, in
+            // Qt's disabled colors; the checked one keeps its grey.
             if (checked || response.has_focus()) && ui.is_enabled() {
                 ui.painter().rect_stroke(response.rect, radius, egui::Stroke::new(1.0, select_line), egui::StrokeKind::Inside);
+            }
+            if !ui.is_enabled() {
+                let fill = if checked { p.select } else { p.panel };
+                paint_disabled(ui, p, &response, text, radius, fill, egui::Align2::CENTER_CENTER);
             }
             if !tooltip.is_empty() {
                 response = response.on_hover_text(*tooltip);
@@ -866,6 +879,11 @@ pub fn combo(
         })
         .response;
     *ui.spacing_mut() = spacing;
+    if !ui.is_enabled() {
+        paint_disabled(ui, p, &response, text, CornerRadius::same(size::RADIUS), p.panel, egui::Align2::LEFT_CENTER);
+        let chevron = egui::pos2(response.rect.right() - size::COMBO_CHEVRON_INSET, response.rect.center().y);
+        Glyph::ChevronDown.paint(&ui.ctx().layer_painter(response.layer_id).with_clip_rect(ui.clip_rect()), chevron, size::GLYPH, p.text_3);
+    }
     // Focused, its border is the selection line (as a field's).
     if response.has_focus() {
         let stroke = egui::Stroke::new(1.0, ui.visuals().widgets.active.bg_stroke.color);
