@@ -880,7 +880,7 @@ mod tests {
                 tolerance: None,
                 precision_floor: None,
                 fairness: None,
-                shape: shape.clone(),
+                shape,
                 shape_keys: keys,
             });
             let text = project_text(&p);
