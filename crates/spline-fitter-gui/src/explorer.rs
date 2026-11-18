@@ -337,10 +337,18 @@ impl App {
     pub fn refresh_comparison(&mut self) {
         let (xc, yc) = (self.explorer.x_column, self.explorer.y_column);
         let rows = self.visible_rows();
+        // A tolerance run's configured count is only where its search
+        // started: along control points it is plotted at the count it found,
+        // as a sweep plots it.
+        let fitted_count = COLUMNS[xc].name == "Control points";
         let mut points: Vec<(String, Cell, String, f64)> = rows
             .into_iter()
             .filter_map(|(id, cells)| {
-                let (x, xt) = cells[xc].clone();
+                let (mut x, mut xt) = cells[xc].clone();
+                if let Some(run) = self.projects.run(&id).filter(|r| fitted_count && r.optimization_config.tolerance.is_some()) {
+                    let count = run.result.num_control_points();
+                    (x, xt) = (Cell::Int(count as i64), count.to_string());
+                }
                 let y = cells[yc].0.number()?;
                 (x != Cell::Empty).then_some((id, x, xt, y))
             })

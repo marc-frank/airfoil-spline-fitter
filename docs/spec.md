@@ -1678,7 +1678,7 @@ Items: a trace (line `Ink.TRACE` width 1.5 when connected, else no line; circles
 
 `refresh_comparison_plot()` (on explorer filter changes, combo changes, run list changes, after adding runs with `replot`):
 
-1. Rows = the explorer's visible rows in table order; points `(x, y, run)` where `x` is not `None` and `y` is a number (bools are not numbers).
+1. Rows = the explorer's visible rows in table order; points `(x, y, run)` where `x` is not `None` and `y` is a number (bools are not numbers). [Rust: along `Control points`, a tolerance run's `x` is its fitted chain count (`result.num_control_points`), as in the sweep comparison (19.13); the column itself still shows the configured count.]
 2. If any `x` is not a number: labels = the distinct `x` texts sorted case-insensitively; `x` becomes the label's index; tick labels at those positions.
 3. `log_x` = the column is a log column, no tick labels, and all `x > 0`; `log_y` = the column is a log column and all `y > 0`.
 4. Sort points by `(x, y)`; set axes (labels = column names, log modes, ticks), the trace (connected iff `x` values are unique), auto-range; remember the points; mark the selected runs (marker at their points).

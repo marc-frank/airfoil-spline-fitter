@@ -123,6 +123,9 @@ Python results), and differs on purpose where the behaviour was a defect:
   five rounds of added control points stops with the best fit and names the
   point where the deviation stays (a kink or noise in the data); Python kept
   adding control points for all 40 rounds.
+- Along "Control points" the runs plot places a tolerance run at the count
+  its search found, as the sweep plot does; Python placed every tolerance
+  run at the start count they share. The column still shows the start count.
 - The runs plot ticks only whole numbers when every run's x value is one
   (control points, sections, degree); pyqtgraph also ticked 25.2, 25.4, ...
 - Enter in a dialog presses its accept button (or the push button that has

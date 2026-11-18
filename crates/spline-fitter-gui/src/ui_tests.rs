@@ -173,6 +173,17 @@ fn light_theme_and_dialogs() {
     h.state_mut().main_plot.refresh_deviation();
     h.run_steps(3);
     shot(&mut h, "6_light_tolerance");
+    // Along control points the tolerance runs are plotted at the counts they
+    // found, not at the start count they share.
+    {
+        let app = h.state();
+        let mut xs: Vec<f64> = app.comparison.points.iter().map(|p| p[0]).collect();
+        let mut fitted: Vec<f64> = app.projects.runs().iter().map(|r| r.result.num_control_points() as f64).collect();
+        xs.sort_by(f64::total_cmp);
+        fitted.sort_by(f64::total_cmp);
+        assert_eq!(xs, fitted);
+        assert!(xs.first() != xs.last(), "{xs:?}");
+    }
     // The rows' scroll bar is at the box's edge: clicking its track below
     // the handle pages down to the last runs.
     {
