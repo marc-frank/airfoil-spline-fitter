@@ -286,15 +286,16 @@ impl App {
         let (Some(fit), Some(airfoil)) = (self.fit.as_mut(), &self.airfoil) else {
             return self.set_status("No fitted spline.");
         };
-        if fit.report.is_none() {
+        let curves = fit.curves();
+        if let Some(report) = &mut fit.report {
+            // A report saved before the shape keys gets them now.
+            if !report.shape_keys {
+                report.shape = spline_fitter::analysis::airfoil_shape(&curves);
+                report.shape_keys = true;
+            }
+        } else {
             let report = fit_report(&airfoil.sections, fit, Some(airfoil.precision), None);
             fit.report = Some(report);
-        } else if fit.report.as_ref().is_some_and(|r| !r.shape_keys) {
-            // A report saved before the shape keys gets them now.
-            let shape = spline_fitter::analysis::airfoil_shape(&fit.curves());
-            let report = fit.report.as_mut().unwrap();
-            report.shape = shape;
-            report.shape_keys = true;
         }
         let title = [&airfoil.name, &airfoil.filename].into_iter().find(|s| !s.is_empty()).cloned().unwrap_or_else(|| "Fit report".into());
         let report = fit.report.clone().unwrap();
