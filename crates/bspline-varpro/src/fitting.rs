@@ -390,6 +390,43 @@ mod tests {
     use crate::airfoil::Naca4;
 
     #[test]
+    #[ignore = "timing; cargo test --release -p bspline-varpro reduced_normal_equations_timing -- --ignored --nocapture"]
+    fn reduced_normal_equations_timing() {
+        // Two sections of 130 points and 25 controls, G3: a free-knot step has
+        // 40 knot columns besides θ.
+        let points = Naca4::new("2412", true).unwrap().points(130);
+        let sections = vec![points[..130].to_vec(), points[129..].to_vec()];
+        let options =
+            ChainOptions { continuity: Continuity::All(Junction { order: 3, geometric: true, fixed: true }), ..Default::default() };
+        let problem = options.problem(&sections, vec![open_uniform_knots(5, 25).unwrap(); 2], 5).unwrap();
+        let u = problem.initial_parameters();
+        let eta = t_to_eta(&u);
+        let theta = problem.theta.clone();
+        let r = problem.residual(&eta_to_t(&eta, 2.0), &theta).0;
+        let knots = DMatrix::from_fn(r.len(), 40, |i, j| ((i * 7 + j * 3) % 11) as f64 * 1e-3);
+        for (name, extra) in [("without knot columns", None), ("with 40 knot columns", Some(&knots))] {
+            let start = std::time::Instant::now();
+            for _ in 0..100 {
+                std::hint::black_box(reduced_normal_equations(&problem, &eta, &theta, &r, extra));
+            }
+            println!("{name}: {:.3} ms", start.elapsed().as_secs_f64() * 10.0);
+        }
+        let u = eta_to_t(&eta, 2.0);
+        let x = DMatrix::from_column_slice(r.len(), 1, r.as_slice());
+        let time = |name: &str, f: &dyn Fn()| {
+            let start = std::time::Instant::now();
+            for _ in 0..100 {
+                f();
+            }
+            println!("  {name}: {:.3} ms", start.elapsed().as_secs_f64() * 10.0);
+        };
+        time("parameter_jacobian", &|| drop(std::hint::black_box(problem.parameter_jacobian(&u, &theta))));
+        time("problem.normal_equations", &|| drop(std::hint::black_box(problem.normal_equations(&u, &theta, &x))));
+        let (normal, _) = problem.normal_equations(&u, &theta, &x);
+        time("eta_congruence", &|| drop(std::hint::black_box(eta_congruence(&normal, &eta, &u, 2.0))));
+    }
+
+    #[test]
     fn reduced_normal_equations_match_the_dense_jacobian() {
         let points = Naca4::new("2412", true).unwrap().points(21);
         let sections = vec![points[..21].to_vec(), points[20..].to_vec()];

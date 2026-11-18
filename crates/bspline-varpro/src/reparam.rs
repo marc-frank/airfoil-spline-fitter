@@ -113,9 +113,22 @@ pub fn apply_eta_jacobian(j: &DMatrix<f64>, eta: &[f64], u: &[f64], span: f64) -
     out
 }
 
-/// `(∂u/∂η)ᵀ V` without forming `∂u/∂η`.
+/// `(∂u/∂η)ᵀ V` without forming `∂u/∂η`: entry `(j, c)` is
+/// `slope_j (Σ_{k>j} V_kc - uᵀV_c / S)`, a running sum up each column.
 pub fn apply_eta_jacobian_transpose(v: &DMatrix<f64>, eta: &[f64], u: &[f64], span: f64) -> DMatrix<f64> {
-    apply_eta_jacobian(&v.transpose(), eta, u, span).transpose()
+    let slope = eta_slopes(eta, span);
+    let n = eta.len();
+    let mut out = DMatrix::zeros(n, v.ncols());
+    let rows = v.nrows();
+    for (column, target) in v.as_slice().chunks_exact(rows.max(1)).zip(out.as_mut_slice().chunks_exact_mut(n.max(1))) {
+        let weighted: f64 = column.iter().zip(u).map(|(a, b)| a * b).sum::<f64>() / span;
+        let mut tail = 0.0;
+        for j in (0..n).rev() {
+            tail += column[j + 1];
+            target[j] = slope[j] * (tail - weighted);
+        }
+    }
+    out
 }
 
 /// `(∂u/∂η)ᵀ M ∂u/∂η` without forming `∂u/∂η`.
