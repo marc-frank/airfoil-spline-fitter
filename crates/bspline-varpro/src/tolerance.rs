@@ -264,15 +264,26 @@ impl FreeKnots<'_> {
         let (theta, xi) = (theta.to_vec(), xi.to_vec());
         let u = eta_to_t(eta, self.sections.len() as f64);
         let base = self.problem(&xi).residual(&u, &theta).0;
-        let mut columns = DMatrix::zeros(base.len(), xi.len());
-        for i in 0..xi.len() {
+        // Each column builds and solves a problem of its own (most of a
+        // free-knot step), independent of the others: split over the cores.
+        let (sections, options, gaps) = (self.sections, self.options, &self.gaps);
+        let column = |i: usize| {
             let h = 1e-7 * (1.0 + xi[i].abs());
             let mut shifted = xi.clone();
             shifted[i] += h;
-            let other = self.build(&shifted).expect("knots of the gap parameterization are valid");
-            columns.set_column(i, &((other.residual(&u, &theta).0 - &base) / h));
-        }
-        columns
+            let other = options.problem(sections, gaps.knots(&shifted), gaps.degree).expect("knots of the gap parameterization are valid");
+            (other.residual(&u, &theta).0 - &base) / h
+        };
+        // At least four columns a thread, so few knots do not pay for threads.
+        let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, xi.len().div_ceil(4).max(1));
+        let per_thread = xi.len().div_ceil(threads).max(1);
+        let indices: Vec<usize> = (0..xi.len()).collect();
+        let computed: Vec<DVector<f64>> = std::thread::scope(|scope| {
+            let handles: Vec<_> =
+                indices.chunks(per_thread).map(|chunk| scope.spawn(|| chunk.iter().map(|&i| column(i)).collect::<Vec<_>>())).collect();
+            handles.into_iter().flat_map(|h| h.join().expect("a knot column panicked")).collect()
+        });
+        DMatrix::from_columns(&computed)
     }
 
     fn problem(&mut self, xi: &[f64]) -> &VarProProblem {
