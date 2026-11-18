@@ -369,12 +369,14 @@ fn encode_report(r: &Report) -> Json {
         ]);
     }
     let shape = r.shape.as_ref();
-    fields.extend([
-        ("max_thickness", opt_float(shape.map(|s| s.max_thickness))),
-        ("max_thickness_x", opt_float(shape.map(|s| s.max_thickness_x))),
-        ("max_camber", opt_float(shape.map(|s| s.max_camber))),
-        ("max_camber_x", opt_float(shape.map(|s| s.max_camber_x))),
-    ]);
+    if r.shape_keys {
+        fields.extend([
+            ("max_thickness", opt_float(shape.map(|s| s.max_thickness))),
+            ("max_thickness_x", opt_float(shape.map(|s| s.max_thickness_x))),
+            ("max_camber", opt_float(shape.map(|s| s.max_camber))),
+            ("max_camber_x", opt_float(shape.map(|s| s.max_camber_x))),
+        ]);
+    }
     obj(fields)
 }
 
@@ -695,6 +697,7 @@ fn decode_report(json: &Json, place: &str) -> Result<Report> {
             leading_edge_radius: part.opt_float("leading_edge_radius")?,
         }),
     };
+    let shape_keys = part.json.get("max_thickness").is_some();
     let shape = match part.opt_float("max_thickness")? {
         None => None,
         Some(max_thickness) => Some(ShapeReport {
@@ -716,6 +719,7 @@ fn decode_report(json: &Json, place: &str) -> Result<Report> {
         precision_floor: part.opt_float("precision_floor")?,
         fairness,
         shape,
+        shape_keys,
     })
 }
 
@@ -855,6 +859,36 @@ mod tests {
         ));
         number_runs(&mut p.runs, 0);
         p
+    }
+
+    #[test]
+    fn reports_keep_their_shape_keys_or_their_absence() {
+        for (keys, shape) in [
+            (false, None),
+            (true, None),
+            (true, Some(ShapeReport { max_thickness: 0.12, max_thickness_x: 0.3, max_camber: 0.02, max_camber_x: 0.4 })),
+        ] {
+            let mut p = project();
+            p.runs[0].result.report = Some(Report {
+                max_deviation: 1e-5,
+                rms_deviation: 1e-6,
+                section_max_deviation: vec![1e-5, 9e-6],
+                control_points: 3,
+                section_control_points: vec![2, 2],
+                section_interior_knots: vec![0, 0],
+                degree: 5,
+                tolerance: None,
+                precision_floor: None,
+                fairness: None,
+                shape: shape.clone(),
+                shape_keys: keys,
+            });
+            let text = project_text(&p);
+            // A report saved before the shape keys (Python passes it through).
+            assert_eq!(text.contains("\"max_thickness\""), keys, "{keys} {shape:?}");
+            let loaded = parse_project(&text).unwrap().project;
+            assert_eq!(loaded.runs[0].result.report, p.runs[0].result.report);
+        }
     }
 
     #[test]

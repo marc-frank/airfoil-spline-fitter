@@ -56,6 +56,9 @@ pub struct Report {
     pub fairness: Option<FairnessReport>,
     /// `None` for a chain that is not an airfoil.
     pub shape: Option<ShapeReport>,
+    /// The report carries the shape keys (reports saved before them do not;
+    /// a project keeps them that way, and the fit report adds them).
+    pub shape_keys: bool,
 }
 
 /// Measures a fit against the sections it was fitted to.
@@ -102,6 +105,7 @@ pub fn fit_report(sections: &[Vec<Vec2>], fit: &FitResult, precision: Option<i32
         precision_floor: precision.map(|p| 0.5 * 2f64.sqrt() * 10f64.powi(-p)),
         fairness,
         shape: airfoil_shape(&curves),
+        shape_keys: true,
     }
 }
 

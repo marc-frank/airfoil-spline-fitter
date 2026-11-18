@@ -11,6 +11,7 @@ pub fn shortest(v: f64) -> String {
         return non_finite(v);
     }
     let (negative, digits, exponent) = decompose(&format!("{v:e}"));
+    let digits = tie_to_even(v, digits, exponent);
     let sign = if negative { "-" } else { "" };
     if !(-4..16).contains(&exponent) {
         let mantissa = if digits.len() > 1 { format!("{}.{}", &digits[..1], &digits[1..]) } else { digits };
@@ -113,6 +114,38 @@ fn strip_zeros(text: &str) -> &str {
 }
 
 /// Sign, significant digits and decimal exponent of Rust's `{:e}` text.
+/// Python's choice between two shortest digit strings that are equally close
+/// to `v`: the one ending in an even digit (Rust takes the upper one).
+/// `1157348994281339.25` is `1157348994281339.2` in Python.
+fn tie_to_even(v: f64, digits: String, exponent: i32) -> String {
+    let n = digits.len();
+    // The exact value of v, digit by digit (a double has at most 767).
+    let (_, exact, exact_exponent) = decompose(&format!("{v:.800e}"));
+    let tail = &exact.as_bytes()[n..];
+    let halfway = exact_exponent == exponent && tail.first() == Some(&b'5') && tail[1..].iter().all(|&d| d == b'0');
+    let last = digits.as_bytes()[n - 1] - b'0';
+    if !halfway || last % 2 == 0 {
+        return digits;
+    }
+    // The two candidates are the exact digits cut at n, and that plus one in
+    // the last place; ours is odd, so take the other if it also reads back.
+    let lower = &exact[..n];
+    let other = if digits == lower {
+        if last == 9 {
+            return digits;
+        }
+        format!("{}{}", &digits[..n - 1], last + 1)
+    } else {
+        lower.to_string()
+    };
+    let reads_back = format!("{}.{}e{exponent}", &other[..1], &other[1..]).parse::<f64>().is_ok_and(|w| w == v.abs());
+    if reads_back {
+        other
+    } else {
+        digits
+    }
+}
+
 fn decompose(text: &str) -> (bool, String, i32) {
     let (mantissa, exp) = text.split_once('e').unwrap();
     let negative = mantissa.starts_with('-');
@@ -161,6 +194,17 @@ mod tests {
         ] {
             assert_eq!(shortest(v), text);
         }
+    }
+
+    #[test]
+    fn halfway_digits_round_to_even_as_in_python() {
+        // Exactly 1157348994281339.25: .2 and .3 are equally close.
+        assert_eq!(shortest(1157348994281339.25), "1157348994281339.2");
+        assert_eq!(shortest(-1157348994281339.25), "-1157348994281339.2");
+        // Not halfway: unchanged.
+        assert_eq!(shortest(1157348994281339.5), "1157348994281339.5");
+        assert_eq!(shortest(0.1), "0.1");
+        assert_eq!(shortest(2.0 / 3.0), "0.6666666666666666");
     }
 
     #[test]
