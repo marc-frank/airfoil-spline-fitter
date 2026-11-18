@@ -277,11 +277,12 @@ impl Model for Reduced<'_> {
 
     fn normal_equations(&mut self, x: &DVector<f64>, r: &DVector<f64>) -> Result<(DMatrix<f64>, DVector<f64>), Stopped> {
         let n_eta = self.problem.num_points() - 1;
-        Ok(reduced_normal_equations(self.problem, &x.as_slice()[..n_eta], &x.as_slice()[n_eta..], r))
+        Ok(reduced_normal_equations(self.problem, &x.as_slice()[..n_eta], &x.as_slice()[n_eta..], r, None))
     }
 }
 
-/// `(JᵀJ, Jᵀr)` of the reduced residual with respect to `[η, θ]`, the
+/// `(JᵀJ, Jᵀr)` of the reduced residual with respect to `[η, θ]` (and the
+/// unknowns behind the `extra` columns of `J`, after `θ`), the
 /// `η` block from the structure of `∂r/∂u` (`J` is never formed: it is
 /// most of the cost of a step when there are many points).
 pub(crate) fn reduced_normal_equations(
@@ -289,10 +290,21 @@ pub(crate) fn reduced_normal_equations(
     eta: &[f64],
     theta: &[f64],
     r: &DVector<f64>,
+    extra: Option<&DMatrix<f64>>,
 ) -> (DMatrix<f64>, DVector<f64>) {
     let s = problem.num_sections() as f64;
     let u = eta_to_t(eta, s);
-    let jt = problem.parameter_jacobian(&u, theta);
+    // The dense columns: ∂r/∂θ, then any the caller adds.
+    let parameters = problem.parameter_jacobian(&u, theta);
+    let jt = match extra {
+        Some(extra) => {
+            let mut both = DMatrix::zeros(r.len(), parameters.ncols() + extra.ncols());
+            both.columns_mut(0, parameters.ncols()).copy_from(&parameters);
+            both.columns_mut(parameters.ncols(), extra.ncols()).copy_from(extra);
+            both
+        }
+        None => parameters,
+    };
     let (n, m) = (eta.len(), jt.ncols());
     let mut x = DMatrix::zeros(r.len(), 1 + m);
     x.set_column(0, r);
@@ -391,7 +403,7 @@ mod tests {
         let u = eta_to_t(&eta, problem.num_sections() as f64);
         let r = problem.residual(&u, &theta).0;
         let j = reduced_jacobian(&problem, &eta, &theta);
-        let (a, g) = reduced_normal_equations(&problem, &eta, &theta, &r);
+        let (a, g) = reduced_normal_equations(&problem, &eta, &theta, &r, None);
         let expected = j.transpose() * &j;
         assert!((&a - &expected).amax() <= 1e-10 * expected.amax(), "JᵀJ {}", (&a - &expected).amax());
         let expected = j.transpose() * &r;

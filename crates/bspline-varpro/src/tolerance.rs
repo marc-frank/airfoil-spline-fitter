@@ -15,8 +15,8 @@ use crate::basis::{clamped_knots, distinct, interior_knots, num_control_points, 
 use crate::chain::{chain_data, chain_deviations, groups, Parameters};
 use crate::constraints::minimum_control_points;
 use crate::fitting::{
-    reduced_jacobian, result_from_problem, solve_problem, start_parameters, validate_min_knot_gap, validate_sections, ChainOptions,
-    FitResult, KnotPlacement, LM_TOLERANCE, MIN_KNOT_GAP,
+    reduced_jacobian, reduced_normal_equations, result_from_problem, solve_problem, start_parameters, validate_min_knot_gap,
+    validate_sections, ChainOptions, FitResult, KnotPlacement, LM_TOLERANCE, MIN_KNOT_GAP,
 };
 use crate::lm::{levenberg_marquardt, Model, Stopped};
 use crate::problem::VarProProblem;
@@ -258,6 +258,23 @@ impl FreeKnots<'_> {
         self.options.problem(self.sections, self.gaps.knots(xi), self.gaps.degree)
     }
 
+    /// `∂r/∂ξ` by forward differences.
+    fn knot_columns(&mut self, x: &DVector<f64>) -> DMatrix<f64> {
+        let (eta, theta, xi) = self.split(x);
+        let (theta, xi) = (theta.to_vec(), xi.to_vec());
+        let u = eta_to_t(eta, self.sections.len() as f64);
+        let base = self.problem(&xi).residual(&u, &theta).0;
+        let mut columns = DMatrix::zeros(base.len(), xi.len());
+        for i in 0..xi.len() {
+            let h = 1e-7 * (1.0 + xi[i].abs());
+            let mut shifted = xi.clone();
+            shifted[i] += h;
+            let other = self.build(&shifted).expect("knots of the gap parameterization are valid");
+            columns.set_column(i, &((other.residual(&u, &theta).0 - &base) / h));
+        }
+        columns
+    }
+
     fn problem(&mut self, xi: &[f64]) -> &VarProProblem {
         if self.cached.as_ref().is_none_or(|(k, _)| k != xi) {
             let problem = self.build(xi).expect("knots of the gap parameterization are valid");
@@ -290,21 +307,19 @@ impl Model for FreeKnots<'_> {
     fn jacobian(&mut self, x: &DVector<f64>) -> Result<DMatrix<f64>, Stopped> {
         let (eta, theta, xi) = self.split(x);
         let (eta, theta, xi) = (eta.to_vec(), theta.to_vec(), xi.to_vec());
-        let u = eta_to_t(&eta, self.sections.len() as f64);
-        let problem = self.problem(&xi);
-        let base = problem.residual(&u, &theta).0;
-        let exact = reduced_jacobian(problem, &eta, &theta);
-        let mut j = DMatrix::zeros(base.len(), x.len());
+        let knots = self.knot_columns(x);
+        let exact = reduced_jacobian(self.problem(&xi), &eta, &theta);
+        let mut j = DMatrix::zeros(exact.nrows(), x.len());
         j.view_mut((0, 0), exact.shape()).copy_from(&exact);
-        for i in 0..xi.len() {
-            let h = 1e-7 * (1.0 + xi[i].abs());
-            let mut shifted = xi.clone();
-            shifted[i] += h;
-            let other = self.build(&shifted).expect("knots of the gap parameterization are valid");
-            let column = (other.residual(&u, &theta).0 - &base) / h;
-            j.set_column(self.n_eta + self.n_theta + i, &column);
-        }
+        j.columns_mut(self.n_eta + self.n_theta, xi.len()).copy_from(&knots);
         Ok(j)
+    }
+
+    fn normal_equations(&mut self, x: &DVector<f64>, r: &DVector<f64>) -> Result<(DMatrix<f64>, DVector<f64>), Stopped> {
+        let (eta, theta, xi) = self.split(x);
+        let (eta, theta, xi) = (eta.to_vec(), theta.to_vec(), xi.to_vec());
+        let knots = self.knot_columns(x);
+        Ok(reduced_normal_equations(self.problem(&xi), &eta, &theta, r, Some(&knots)))
     }
 }
 
@@ -630,6 +645,43 @@ mod tests {
         let u = [0.1, 0.2, 0.3, 0.6, 0.7, 0.9];
         let dev = [0.0, 0.0, 0.0, 0.5, 0.2, 0.0];
         assert_eq!(new_knots(&knots, &u, &dev, 0.1, MIN_SPAN), vec![0.625]);
+    }
+
+    #[test]
+    fn free_knot_normal_equations_match_the_dense_jacobian() {
+        let points = crate::airfoil::Naca4::new("2412", true).unwrap().points(21);
+        let sections = vec![points[..21].to_vec(), points[20..].to_vec()];
+        let options = ChainOptions {
+            continuity: crate::Continuity::All(crate::Junction { order: 3, geometric: true, fixed: true }),
+            ..Default::default()
+        };
+        let knots = vec![open_uniform_knots(5, 9).unwrap(); 2];
+        let mut u = crate::chain::initial_chain_parameters(&sections);
+        u[5] += 0.02;
+        let gaps = KnotGaps::new(&sections, &knots, 5, &u, 0.05);
+        let theta = [0.2, 0.1, -0.05];
+        let mut xi = gaps.start();
+        xi[1] += 0.1;
+        let x = DVector::from_iterator(u.len() - 1 + 3 + xi.len(), t_to_eta(&u).into_iter().chain(theta).chain(xi.iter().copied()));
+        let mut silent = crate::Silent;
+        let mut model = FreeKnots {
+            sections: &sections,
+            options: &options,
+            gaps,
+            n_eta: u.len() - 1,
+            n_theta: 3,
+            cached: None,
+            observer: &mut silent,
+            nfev: 0,
+            best: None,
+        };
+        let r = model.residual(&x).unwrap();
+        let j = model.jacobian(&x).unwrap();
+        let (a, g) = model.normal_equations(&x, &r).unwrap();
+        let expected = j.transpose() * &j;
+        assert!((&a - &expected).amax() <= 1e-10 * expected.amax(), "JᵀJ {}", (&a - &expected).amax());
+        let expected = j.transpose() * &r;
+        assert!((&g - &expected).amax() <= 1e-10 * expected.amax(), "Jᵀr {}", (&g - &expected).amax());
     }
 
     #[test]
