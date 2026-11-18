@@ -52,6 +52,19 @@ struct Solution {
     constraints: Constraints,
 }
 
+/// `∂r/∂u` in factored form: column `j`'s data rows of coordinate `k` are
+/// `N H w` plus `tangent[(j, k)]` in row `2j + k`, its penalty rows `R H w`,
+/// with `w = weights[k][j]` placed from control `first[j]` on; the active
+/// speed rows are `(row, i, a, b)`: `a`, `-(a + b)`, `b` in columns `i..i+3`.
+struct PointJacobian {
+    nh: DMatrix<f64>,
+    rh: DMatrix<f64>,
+    tangent: DMatrix<f64>,
+    first: Vec<usize>,
+    weights: [Vec<Vec<f64>>; 2],
+    speed: Vec<(usize, usize, f64, f64)>,
+}
+
 /// Reduced residual and exact Jacobians as functions of the chain
 /// parameters `u` and the junction shape parameters `θ`.
 pub struct VarProProblem {
@@ -339,43 +352,18 @@ impl VarProProblem {
     /// A point exactly on a junction (an integer `u`) lies on the section
     /// that starts there, so its column is the derivative from the right.
     pub fn jacobian(&self, u: &[f64], theta: &[f64]) -> DMatrix<f64> {
-        let solution = self.solve(u, theta);
-        let dn = self.block_matrix(u, 1);
-        let n = &solution.n;
-        let tangent = dn.mul(&solution.p);
-        let misfit = &self.data_matrix - n.mul(&solution.p);
-        // dP_jk = H (dN_jᵀ M_jk - N_jᵀ Tg_jk), H the control block of K⁻¹.
-        // The right-hand side is nonzero only on point j's knot span, so the
-        // data and penalty rows of column j combine a few columns of N H and
-        // R H instead of solving and multiplying out a dense column.
-        let total = self.total_controls();
-        let h = solution.kkt.solve(&DMatrix::identity(total, total), None);
-        let nh = n.mul(&h);
-        let rh = &self.penalty_root * &h;
+        let f = self.point_jacobian(u, theta);
         let layout = self.layout();
         let rows = self.num_residuals();
         let mut jac = DMatrix::zeros(rows, self.num_points());
-        let (points, penalties) = (nh.nrows(), rh.nrows());
-        let (nh, rh) = (nh.as_slice(), rh.as_slice());
-        let mut weights = Vec::new();
+        let (points, penalties) = (f.nh.nrows(), f.rh.nrows());
+        let (nh, rh) = (f.nh.as_slice(), f.rh.as_slice());
         for (j, column) in jac.as_mut_slice().chunks_exact_mut(rows).enumerate() {
-            let (d_start, d_values) = dn.row(j);
-            let (n_start, n_values) = n.row(j);
-            let first = d_start.min(n_start);
-            let end = (d_start + d_values.len()).max(n_start + n_values.len());
             let (data, rest) = column.split_at_mut(layout.data);
             let penalty = &mut rest[..layout.penalty];
             for k in 0..2 {
-                weights.clear();
-                weights.resize(end - first, 0.0);
-                for (c, v) in d_values.iter().enumerate() {
-                    weights[d_start - first + c] += v * misfit[(j, k)];
-                }
-                for (c, v) in n_values.iter().enumerate() {
-                    weights[n_start - first + c] -= v * tangent[(j, k)];
-                }
-                for (c, &w) in weights.iter().enumerate() {
-                    let control = first + c;
+                for (c, &w) in f.weights[k][j].iter().enumerate() {
+                    let control = f.first[j] + c;
                     let source = &nh[control * points..(control + 1) * points];
                     for (target, value) in data.iter_mut().skip(k).step_by(2).zip(source) {
                         *target += w * value;
@@ -385,23 +373,132 @@ impl VarProProblem {
                         *target += w * value;
                     }
                 }
-                data[2 * j + k] += tangent[(j, k)];
+                data[2 * j + k] += f.tangent[(j, k)];
             }
         }
-        if layout.speed > 0 {
-            let first = layout.data + layout.penalty + layout.pull;
-            let (change, gaps) = self.speed_change(u);
-            for (row, (&i, (c, reference))) in self.speed_pairs.iter().zip(change.iter().zip(&self.speed_reference)).enumerate() {
-                if (c - reference).abs() <= SPEED_SLACK {
-                    continue;
-                }
-                let (a, b) = (self.speed_pull / gaps[i], self.speed_pull / gaps[i + 1]);
-                jac[(first + row, i)] += a;
-                jac[(first + row, i + 1)] -= a + b;
-                jac[(first + row, i + 2)] += b;
-            }
+        for &(row, i, a, b) in &f.speed {
+            jac[(row, i)] += a;
+            jac[(row, i + 1)] -= a + b;
+            jac[(row, i + 2)] += b;
         }
         jac
+    }
+
+    /// `∂r/∂u` in factored form.
+    ///
+    /// `dP_jk = H (dN_jᵀ M_jk - N_jᵀ Tg_jk)`, with `H` the control block of
+    /// `K⁻¹`. The right-hand side is nonzero only on point `j`'s knot span,
+    /// so the data and penalty rows of column `j` combine a few columns of
+    /// `N H` and `R H` instead of solving and multiplying out a dense column.
+    fn point_jacobian(&self, u: &[f64], theta: &[f64]) -> PointJacobian {
+        let solution = self.solve(u, theta);
+        let dn = self.block_matrix(u, 1);
+        let n = &solution.n;
+        let tangent = dn.mul(&solution.p);
+        let misfit = &self.data_matrix - n.mul(&solution.p);
+        let total = self.total_controls();
+        let h = solution.kkt.solve(&DMatrix::identity(total, total), None);
+        let nh = n.mul(&h);
+        let rh = &self.penalty_root * &h;
+        let points = self.num_points();
+        let mut first = Vec::with_capacity(points);
+        let mut weights = [Vec::with_capacity(points), Vec::with_capacity(points)];
+        for j in 0..points {
+            let (d_start, d_values) = dn.row(j);
+            let (n_start, n_values) = n.row(j);
+            let start = d_start.min(n_start);
+            let end = (d_start + d_values.len()).max(n_start + n_values.len());
+            first.push(start);
+            for (k, weights) in weights.iter_mut().enumerate() {
+                let mut w = vec![0.0; end - start];
+                for (c, v) in d_values.iter().enumerate() {
+                    w[d_start - start + c] += v * misfit[(j, k)];
+                }
+                for (c, v) in n_values.iter().enumerate() {
+                    w[n_start - start + c] -= v * tangent[(j, k)];
+                }
+                weights.push(w);
+            }
+        }
+        let layout = self.layout();
+        let mut speed = Vec::new();
+        if layout.speed > 0 {
+            let first_row = layout.data + layout.penalty + layout.pull;
+            let (change, gaps) = self.speed_change(u);
+            for (row, (&i, (c, reference))) in self.speed_pairs.iter().zip(change.iter().zip(&self.speed_reference)).enumerate() {
+                if (c - reference).abs() > SPEED_SLACK {
+                    speed.push((first_row + row, i, self.speed_pull / gaps[i], self.speed_pull / gaps[i + 1]));
+                }
+            }
+        }
+        PointJacobian { nh, rh, tangent, first, weights, speed }
+    }
+
+    /// `(J_uᵀ J_u, J_uᵀ X)` for `J_u = ∂r/∂u` without forming `J_u`: its
+    /// data and penalty rows are `[N H; R H] W_k` plus the tangents on the
+    /// diagonal, so `J_uᵀ J_u` needs only `G = (N H)ᵀ N H + (R H)ᵀ R H` and
+    /// the few weights of each column. `X` has one row per residual.
+    pub fn normal_equations(&self, u: &[f64], theta: &[f64], x: &DMatrix<f64>) -> (DMatrix<f64>, DMatrix<f64>) {
+        let f = self.point_jacobian(u, theta);
+        let layout = self.layout();
+        let points = self.num_points();
+        let g = f.nh.transpose() * &f.nh + f.rh.transpose() * &f.rh;
+        let mut normal = DMatrix::zeros(points, points);
+        // The tangent-times-basis term; added with its transpose at the end.
+        let mut mixed = DMatrix::zeros(points, points);
+        let mut cross = DMatrix::zeros(points, x.ncols());
+        // `m W_k`: column `j` combines the columns of `m` its weights pick.
+        let weighted = |m: &DMatrix<f64>, k: usize| {
+            let mut out = DMatrix::zeros(m.nrows(), points);
+            for j in 0..points {
+                let mut column = out.column_mut(j);
+                for (c, &w) in f.weights[k][j].iter().enumerate() {
+                    column.axpy(w, &m.column(f.first[j] + c), 1.0);
+                }
+            }
+            out
+        };
+        for k in 0..2 {
+            let gw = weighted(&g, k);
+            let nw = weighted(&f.nh, k);
+            let tangent = f.tangent.column(k);
+            let tangent = tangent.as_slice();
+            let controls = g.nrows();
+            let columns = normal.as_mut_slice().chunks_exact_mut(points).zip(mixed.as_mut_slice().chunks_exact_mut(points));
+            for (j, (normal_j, mixed_j)) in columns.enumerate() {
+                let gw_j = &gw.as_slice()[j * controls..(j + 1) * controls];
+                let nw_j = &nw.as_slice()[j * points..(j + 1) * points];
+                for i in 0..points {
+                    let picked = &gw_j[f.first[i]..];
+                    normal_j[i] += f.weights[k][i].iter().zip(picked).map(|(a, b)| a * b).sum::<f64>();
+                    mixed_j[i] += tangent[i] * nw_j[i];
+                }
+                normal_j[j] += tangent[j] * tangent[j];
+            }
+            // J_uᵀ X: the weights applied to (N H)ᵀ X_data + (R H)ᵀ X_penalty.
+            let data = DMatrix::from_fn(points, x.ncols(), |i, c| x[(2 * i + k, c)]);
+            let penalty = DMatrix::from_fn(f.rh.nrows(), x.ncols(), |i, c| x[(layout.data + 2 * i + k, c)]);
+            let y = f.nh.transpose() * &data + f.rh.transpose() * &penalty;
+            for j in 0..points {
+                for col in 0..x.ncols() {
+                    let picked: f64 = f.weights[k][j].iter().enumerate().map(|(c, w)| w * y[(f.first[j] + c, col)]).sum();
+                    cross[(j, col)] += picked + f.tangent[(j, k)] * data[(j, col)];
+                }
+            }
+        }
+        for &(row, i, a, b) in &f.speed {
+            let entries = [(i, a), (i + 1, -(a + b)), (i + 2, b)];
+            for &(p, vp) in &entries {
+                for &(q, vq) in &entries {
+                    normal[(p, q)] += vp * vq;
+                }
+                for col in 0..x.ncols() {
+                    cross[(p, col)] += vp * x[(row, col)];
+                }
+            }
+        }
+        normal += &mixed + mixed.transpose();
+        (normal, cross)
     }
 
     /// Exact `∂r/∂θ`, shape `(residuals, num_params)`.
@@ -474,5 +571,29 @@ mod tests {
             let err = (fd - jt.column(j)).abs().max();
             assert!(err < 1e-5 * (1.0 + jt.column(j).abs().max()), "theta column {j}: {err}");
         }
+    }
+
+    #[test]
+    fn normal_equations_match_the_dense_jacobian() {
+        let sections = sections();
+        let knots = vec![open_uniform_knots(5, 9).unwrap(); 2];
+        let junction = Junction::new(3, true, true).unwrap();
+        let problem = VarProProblem::new(&sections, knots, 5, vec![junction], (End::default(), End::default()), 1e-3, 1e-12).unwrap();
+        let mut u = problem.initial_parameters();
+        u[5] += 0.02;
+        u[30] -= 0.03;
+        let theta = vec![0.2, 0.1, -0.05];
+        let (r, _, _) = problem.residual(&u, &theta);
+        let jt = problem.parameter_jacobian(&u, &theta);
+        let mut x = DMatrix::zeros(r.len(), 1 + jt.ncols());
+        x.set_column(0, &r);
+        x.view_mut((0, 1), jt.shape()).copy_from(&jt);
+        let ju = problem.jacobian(&u, &theta);
+        assert!(problem.speed_pull > 0.0 && ju.rows(r.len() - problem.num_speed_rows(), problem.num_speed_rows()).amax() > 0.0);
+        let (normal, cross) = problem.normal_equations(&u, &theta, &x);
+        let expected = ju.transpose() * &ju;
+        assert!((&normal - &expected).amax() <= 1e-10 * expected.amax(), "JᵀJ {}", (&normal - &expected).amax());
+        let expected = ju.transpose() * &x;
+        assert!((&cross - &expected).amax() <= 1e-10 * expected.amax(), "JᵀX {}", (&cross - &expected).amax());
     }
 }

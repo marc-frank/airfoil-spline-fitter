@@ -106,14 +106,37 @@ pub fn apply_eta_jacobian(j: &DMatrix<f64>, eta: &[f64], u: &[f64], span: f64) -
     let mut tail = nalgebra::DVector::zeros(j.nrows());
     for c in (0..eta.len()).rev() {
         tail += j.column(c + 1);
-        out.set_column(c, &((&tail - &weighted) * slope[c]));
+        let mut column = out.column_mut(c);
+        column.copy_from(&tail);
+        column.axpy(-slope[c], &weighted, slope[c]);
     }
     out
+}
+
+/// `(∂u/∂η)ᵀ V` without forming `∂u/∂η`.
+pub fn apply_eta_jacobian_transpose(v: &DMatrix<f64>, eta: &[f64], u: &[f64], span: f64) -> DMatrix<f64> {
+    apply_eta_jacobian(&v.transpose(), eta, u, span).transpose()
+}
+
+/// `(∂u/∂η)ᵀ M ∂u/∂η` without forming `∂u/∂η`.
+pub fn eta_congruence(m: &DMatrix<f64>, eta: &[f64], u: &[f64], span: f64) -> DMatrix<f64> {
+    apply_eta_jacobian_transpose(&apply_eta_jacobian(m, eta, u, span), eta, u, span)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn structured_transpose_and_congruence_match() {
+        let eta = [0.3, -1.2, 2.0, 0.1];
+        let u = eta_to_t(&eta, 2.0);
+        let e = eta_jacobian(&eta, &u, 2.0);
+        let v = DMatrix::from_fn(5, 3, |r, c| (r * 3 + c) as f64 * 0.1 - 0.4);
+        assert!((apply_eta_jacobian_transpose(&v, &eta, &u, 2.0) - e.transpose() * &v).amax() < 1e-14);
+        let m = DMatrix::from_fn(5, 5, |r, c| ((r + 1) * (c + 1)) as f64 * 0.1 + if r == c { 1.0 } else { 0.0 });
+        assert!((eta_congruence(&m, &eta, &u, 2.0) - e.transpose() * &m * &e).amax() < 1e-13);
+    }
 
     #[test]
     fn round_trip() {

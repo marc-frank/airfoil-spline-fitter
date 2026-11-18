@@ -13,6 +13,13 @@ pub struct Stopped;
 pub trait Model {
     fn residual(&mut self, x: &DVector<f64>) -> Result<DVector<f64>, Stopped>;
     fn jacobian(&mut self, x: &DVector<f64>) -> Result<DMatrix<f64>, Stopped>;
+
+    /// `(JᵀJ, Jᵀr)` at `x`, where the residual is `r`: all the solve needs
+    /// of the Jacobian. A model that knows its structure can skip `J`.
+    fn normal_equations(&mut self, x: &DVector<f64>, r: &DVector<f64>) -> Result<(DMatrix<f64>, DVector<f64>), Stopped> {
+        let jac = self.jacobian(x)?;
+        Ok((jac.transpose() * &jac, jac.transpose() * r))
+    }
 }
 
 /// Why a solve ended.
@@ -60,9 +67,7 @@ fn run(model: &mut dyn Model, x0: DVector<f64>, max_nfev: Option<usize>, toleran
     let mut cost = 0.5 * r.norm_squared();
     let affordable = |nfev: usize| max_nfev.is_none_or(|m| nfev < m);
 
-    let mut jac = model.jacobian(&x)?;
-    let mut a = jac.transpose() * &jac;
-    let mut g = jac.transpose() * &r;
+    let (mut a, mut g) = model.normal_equations(&x, &r)?;
     let mut scale: DVector<f64> = a.diagonal().map(|v| v.max(1e-300));
     let (mut mu, mut nu) = (1e-3, 2.0);
     let mut status = Status::Budget;
@@ -120,9 +125,7 @@ fn run(model: &mut dyn Model, x0: DVector<f64>, max_nfev: Option<usize>, toleran
                 status = Status::Cost;
                 break;
             }
-            jac = model.jacobian(&x)?;
-            a = jac.transpose() * &jac;
-            g = jac.transpose() * &r;
+            (a, g) = model.normal_equations(&x, &r)?;
             scale = scale.zip_map(&a.diagonal(), f64::max);
             mu *= (1.0 / 3.0f64).max(1.0 - (2.0 * rho - 1.0).powi(3));
             nu = 2.0;

@@ -7,7 +7,7 @@ use crate::chain::{initial_chain_parameters, validate_chain_parameters, Paramete
 use crate::constraints::{End, Junction};
 use crate::lm::{levenberg_marquardt, Model, Stopped};
 use crate::problem::VarProProblem;
-use crate::reparam::{apply_eta_jacobian, eta_to_t, t_to_eta};
+use crate::reparam::{apply_eta_jacobian, apply_eta_jacobian_transpose, eta_congruence, eta_to_t, t_to_eta};
 use crate::tolerance::{grow_to_counts, Setup};
 use crate::{bail, BSpline, Observer, Progress, Result, Vec2, STOPPED};
 
@@ -274,6 +274,41 @@ impl Model for Reduced<'_> {
         let n_eta = self.problem.num_points() - 1;
         Ok(reduced_jacobian(self.problem, &x.as_slice()[..n_eta], &x.as_slice()[n_eta..]))
     }
+
+    fn normal_equations(&mut self, x: &DVector<f64>, r: &DVector<f64>) -> Result<(DMatrix<f64>, DVector<f64>), Stopped> {
+        let n_eta = self.problem.num_points() - 1;
+        Ok(reduced_normal_equations(self.problem, &x.as_slice()[..n_eta], &x.as_slice()[n_eta..], r))
+    }
+}
+
+/// `(JᵀJ, Jᵀr)` of the reduced residual with respect to `[η, θ]`, the
+/// `η` block from the structure of `∂r/∂u` (`J` is never formed: it is
+/// most of the cost of a step when there are many points).
+pub(crate) fn reduced_normal_equations(
+    problem: &VarProProblem,
+    eta: &[f64],
+    theta: &[f64],
+    r: &DVector<f64>,
+) -> (DMatrix<f64>, DVector<f64>) {
+    let s = problem.num_sections() as f64;
+    let u = eta_to_t(eta, s);
+    let jt = problem.parameter_jacobian(&u, theta);
+    let (n, m) = (eta.len(), jt.ncols());
+    let mut x = DMatrix::zeros(r.len(), 1 + m);
+    x.set_column(0, r);
+    x.view_mut((0, 1), jt.shape()).copy_from(&jt);
+    let (normal, cross) = problem.normal_equations(&u, theta, &x);
+    let cross = apply_eta_jacobian_transpose(&cross, eta, &u, s);
+    let mut a = DMatrix::zeros(n + m, n + m);
+    a.view_mut((0, 0), (n, n)).copy_from(&eta_congruence(&normal, eta, &u, s));
+    let eta_theta = cross.columns(1, m);
+    a.view_mut((0, n), (n, m)).copy_from(&eta_theta);
+    a.view_mut((n, 0), (m, n)).copy_from(&eta_theta.transpose());
+    a.view_mut((n, n), (m, m)).copy_from(&(jt.transpose() * &jt));
+    let mut g = DVector::zeros(n + m);
+    g.rows_mut(0, n).copy_from(&cross.column(0));
+    g.rows_mut(n, m).copy_from(&(jt.transpose() * r));
+    (a, g)
 }
 
 /// Jacobian of the reduced residual with respect to `[η, θ]`.
@@ -334,5 +369,32 @@ pub(crate) fn result_from_problem(
         stopped: false,
         theta: theta.to_vec(),
         max_deviation: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::airfoil::Naca4;
+
+    #[test]
+    fn reduced_normal_equations_match_the_dense_jacobian() {
+        let points = Naca4::new("2412", true).unwrap().points(21);
+        let sections = vec![points[..21].to_vec(), points[20..].to_vec()];
+        let options =
+            ChainOptions { continuity: Continuity::All(Junction { order: 3, geometric: true, fixed: true }), ..Default::default() };
+        let problem = options.problem(&sections, vec![open_uniform_knots(5, 9).unwrap(); 2], 5).unwrap();
+        let mut u = problem.initial_parameters();
+        u[5] += 0.02;
+        let eta = t_to_eta(&u);
+        let theta = vec![0.2, 0.1, -0.05];
+        let u = eta_to_t(&eta, problem.num_sections() as f64);
+        let r = problem.residual(&u, &theta).0;
+        let j = reduced_jacobian(&problem, &eta, &theta);
+        let (a, g) = reduced_normal_equations(&problem, &eta, &theta, &r);
+        let expected = j.transpose() * &j;
+        assert!((&a - &expected).amax() <= 1e-10 * expected.amax(), "JᵀJ {}", (&a - &expected).amax());
+        let expected = j.transpose() * &r;
+        assert!((&g - &expected).amax() <= 1e-10 * expected.amax(), "Jᵀr {}", (&g - &expected).amax());
     }
 }
