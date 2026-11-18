@@ -86,6 +86,8 @@ pub struct Axes<'a> {
     pub log_y: bool,
     /// Text labels at positions of the x axis (a categorical axis).
     pub x_ticks: Option<&'a [(f64, String)]>,
+    /// The x values are whole numbers: no ticks between them.
+    pub whole_x: bool,
     pub equal_aspect: bool,
     /// Pixels an automatic range keeps around the data for its largest
     /// marker (0.7072 of its outer width, as pyqtgraph pads a scatter).
@@ -122,6 +124,7 @@ fn axis_ticks(
     length: f32,
     log: bool,
     labels: Option<&[(f64, String)]>,
+    whole: bool,
     to_screen: impl Fn(f64) -> f32,
     measure: impl Fn(&str) -> f32,
     fits: impl Fn(f32, f32) -> bool,
@@ -130,7 +133,9 @@ fn axis_ticks(
         Some(given) => vec![(given.iter().map(|g| g.0).collect(), given.iter().map(|g| g.1.clone()).collect())],
         None => {
             let decade = axes::decade_in_view(range.0, range.1);
-            axes::tick_values(range.0, range.1, length as f64, log)
+            let levels = axes::tick_values(range.0, range.1, length as f64, log);
+            let levels = if whole && !log { axes::whole_number_levels(levels, range.0, range.1) } else { levels };
+            levels
                 .into_iter()
                 .map(|l| {
                     let strings = axes::tick_strings(&l.values, l.spacing, log, decade);
@@ -303,6 +308,7 @@ pub fn show_plot(
         frame.width(),
         log_x,
         axes.x_ticks,
+        axes.whole_x,
         |v| transform.position_from_point_x(v),
         |s| measure(s).x,
         // With a grid, a label shows only within the plot's extent.
@@ -313,6 +319,7 @@ pub fn show_plot(
         frame.height(),
         log_y,
         None,
+        false,
         |v| transform.position_from_point_y(v),
         |s| measure(s).y * 0.8,
         |y, h| y - h / 2.0 >= frame.top() - 0.5 && y + h / 2.0 <= frame.bottom() + 0.5,
@@ -642,7 +649,16 @@ impl MainPlot {
 
     pub fn show(&mut self, ui: &mut Ui, p: &Palette, motion_ms: u64) {
         let pad = marker_pad(size::CONTROL_SIZE, 1.0);
-        let axes = Axes { x_label: "x", y_label: "y", log_x: false, log_y: false, x_ticks: None, equal_aspect: true, marker_pad: pad };
+        let axes = Axes {
+            x_label: "x",
+            y_label: "y",
+            log_x: false,
+            log_y: false,
+            x_ticks: None,
+            whole_x: false,
+            equal_aspect: true,
+            marker_pad: pad,
+        };
         show_plot(ui, p, "main_plot", &mut self.view, &axes, motion_ms, |c| {
             let draw_strokes = |strokes: &[Strokes; 2], dots: Option<&[Vec<Vec2>; 2]>, color: &dyn Fn(usize) -> Color32| {
                 for (parity, s) in strokes.iter().enumerate() {
@@ -745,7 +761,7 @@ impl LossPlot {
         }
         let x_label = if self.x_axis == 0 { "Iterations" } else { "Time (s)" };
         let pad = marker_pad(size::TRACE_POINT, 0.0);
-        let axes = Axes { x_label, y_label: "Error", log_x, log_y, x_ticks: None, equal_aspect: false, marker_pad: pad };
+        let axes = Axes { x_label, y_label: "Error", log_x, log_y, x_ticks: None, whole_x: false, equal_aspect: false, marker_pad: pad };
         show_plot(ui, p, "loss_plot", &mut self.view, &axes, motion_ms, |c| {
             c.markers(points.iter().copied(), Marker::Circle, size::TRACE_POINT, p.trace(), Stroke::NONE);
         });
@@ -787,6 +803,7 @@ impl ComparisonPlot {
             log_x: self.log_x,
             log_y: self.log_y,
             x_ticks: ticks.as_deref(),
+            whole_x: self.ticks.is_none() && !self.points.is_empty() && self.points.iter().all(|q| q[0].fract() == 0.0),
             equal_aspect: false,
             // Room for the run marker around every point, so moving the
             // marker never rescales the plot.
@@ -825,6 +842,7 @@ pub fn shape_plot(ui: &mut Ui, p: &Palette, shape: &spline_fitter::bspline_varpr
         log_x: false,
         log_y: false,
         x_ticks: None,
+        whole_x: false,
         equal_aspect: false,
         marker_pad: marker_pad(7.0, 2.0),
     };

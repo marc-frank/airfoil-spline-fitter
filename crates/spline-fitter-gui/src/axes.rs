@@ -84,6 +84,20 @@ pub fn tick_values(min: f64, max: f64, size: f64, log: bool) -> Vec<Level> {
     kept
 }
 
+/// The levels of an axis whose values are whole numbers (control points,
+/// sections): no ticks between them, and one at every whole number in view
+/// when every level is finer than that.
+pub fn whole_number_levels(levels: Vec<Level>, min: f64, max: f64) -> Vec<Level> {
+    // Spacings are 1, 2 or 5 times a power of ten: from 1 up they are whole.
+    let mut kept: Vec<Level> = levels.into_iter().filter(|l| l.spacing.is_some_and(|s| s >= 1.0 - 1e-9)).collect();
+    if kept.is_empty() {
+        let (min, max) = if min <= max { (min, max) } else { (max, min) };
+        let values = ((min.ceil() as i64)..=(max.floor() as i64)).map(|v| v as f64).collect();
+        kept.push(Level { spacing: Some(1.0), values });
+    }
+    kept
+}
+
 const SUPERSCRIPT: [char; 10] = ['⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹'];
 
 /// `%g` of C with `digits` significant digits.
@@ -239,6 +253,20 @@ mod tests {
         assert_eq!(labelled_levels(&[major.clone(), minor.clone(), vec![(20.0, true); 40]], 415.0), 2);
         let all_fit: Vec<(f32, bool)> = major.iter().map(|m| (m.0, true)).collect();
         assert_eq!(labelled_levels(&[all_fit, minor, vec![(20.0, true); 40]], 415.0), 1);
+    }
+
+    #[test]
+    fn whole_number_axes_tick_only_whole_numbers() {
+        // 25 to 26 on 400 px would tick every 0.2.
+        let levels = whole_number_levels(tick_values(24.95, 26.05, 400.0, false), 24.95, 26.05);
+        assert_eq!(levels.len(), 1);
+        assert_eq!(levels[0].values, vec![25.0, 26.0]);
+        assert_eq!(tick_strings(&levels[0].values, levels[0].spacing, false, false), vec!["25", "26"]);
+        // A wide range keeps its whole-number levels as they are.
+        let wide = tick_values(0.0, 60.0, 400.0, false);
+        let kept = whole_number_levels(wide.clone(), 0.0, 60.0);
+        assert!(kept.iter().all(|l| l.values.iter().all(|v| v.fract() == 0.0)));
+        assert_eq!(kept[0].values, wide[0].values);
     }
 
     #[test]
