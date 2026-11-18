@@ -136,6 +136,7 @@ fn axis_ticks(
     measure: impl Fn(&str) -> f32,
     fits: impl Fn(f32, f32) -> bool,
 ) -> AxisTicks {
+    let given = matches!(source, TickSource::Labels(_));
     let levels: Vec<(Vec<f64>, Vec<String>)> = match source {
         TickSource::Labels(given) => vec![(given.iter().map(|g| g.0).collect(), given.iter().map(|g| g.1.clone()).collect())],
         TickSource::Auto { whole } => {
@@ -176,7 +177,7 @@ fn axis_ticks(
                 .collect()
         })
         .collect();
-    let labelled = if labels.is_some() { positioned.len() } else { axes::labelled_levels(&extents, length) };
+    let labelled = if given { positioned.len() } else { axes::labelled_levels(&extents, length) };
     AxisTicks {
         levels: positioned
             .into_iter()
