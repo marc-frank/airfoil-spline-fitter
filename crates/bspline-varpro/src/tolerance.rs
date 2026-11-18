@@ -25,6 +25,11 @@ use crate::{bail, Observer, Progress, Result, Vec2, STOPPED};
 
 /// Smallest knot span an insertion of uniform knots may create.
 const MIN_SPAN: f64 = 1e-4;
+/// Insertion rounds without a gain of [`STALL_GAIN`] in the largest
+/// deviation after which the search stops.
+const STALL_ROUNDS: usize = 5;
+/// The relative drop of the largest deviation that counts as a gain.
+const STALL_GAIN: f64 = 0.01;
 
 /// What every fit of one procedure shares: the data, degree, constraints,
 /// budget and the knot setting.
@@ -554,6 +559,10 @@ pub fn fit_to_tolerance(
 
     let mut met = None;
     let mut last = None;
+    // The lowest largest deviation so far, its fit and worst point, and the
+    // rounds since it last dropped by STALL_GAIN.
+    let mut best: Option<(FitResult, f64, usize)> = None;
+    let mut stalled = 0;
     for _ in 0..options.max_iterations {
         let fitted = setup.refit(knots.clone(), &u, theta.as_deref(), !uniform, &mut steps)?;
         u = fitted.parameters.clone();
@@ -567,6 +576,25 @@ pub fn fit_to_tolerance(
         if deviation <= tolerance {
             met = Some((fitted, deviation));
             break;
+        }
+        // A kink or noise in the data holds the largest deviation where more
+        // control points cannot lower it: stop with the best fit instead of
+        // adding them until max_iterations.
+        match &best {
+            Some((_, lowest, _)) if deviation > (1.0 - STALL_GAIN) * lowest => stalled += 1,
+            _ => {
+                best = Some((fitted.clone(), deviation, argmax(&devs)));
+                stalled = 0;
+            }
+        }
+        if stalled >= STALL_ROUNDS {
+            let (result, lowest, worst) = best.expect("set on the first round");
+            let p = data[worst];
+            let message = format!(
+                "Tolerance not reached: {STALL_ROUNDS} more rounds of control points did not lower the largest deviation, which stays near ({:.4}, {:.4}); the data may have a kink or noise there.",
+                p.x, p.y
+            );
+            return finish(result, lowest, false, message);
         }
         let mut inserted = false;
         let mut narrow = false;
@@ -712,6 +740,27 @@ mod tests {
         assert!((&a - &expected).amax() <= 1e-10 * expected.amax(), "JᵀJ {}", (&a - &expected).amax());
         let expected = j.transpose() * &r;
         assert!((&g - &expected).amax() <= 1e-10 * expected.amax(), "Jᵀr {}", (&g - &expected).amax());
+    }
+
+    #[test]
+    fn a_search_that_stops_gaining_ends_with_its_best_fit() {
+        // A quarter circle with alternating noise of 1e-3: no smooth curve
+        // gets within 1e-4 of every point, so the largest deviation stalls.
+        let points: Vec<Vec2> = (0..201)
+            .map(|i| {
+                let a = std::f64::consts::FRAC_PI_2 * i as f64 / 200.0;
+                let r = 1.0 + if i % 2 == 0 { 1e-3 } else { -1e-3 };
+                Vec2::new(r * a.cos(), r * a.sin())
+            })
+            .collect();
+        let options = ToleranceOptions { knot_placement: KnotPlacement::Uniform, ..Default::default() };
+        let result = fit_to_tolerance(&[points], 1e-4, 3, &options, &mut crate::Silent).unwrap();
+        assert!(!result.success);
+        assert!(result.message.starts_with("Tolerance not reached: 5 more rounds of control points did not lower"), "{}", result.message);
+        assert!(result.message.ends_with("the data may have a kink or noise there."), "{}", result.message);
+        // Long before the 40 rounds, or one control point per data point.
+        assert!(result.control_points[0].len() < 30, "{} control points", result.control_points[0].len());
+        assert!(result.max_deviation.unwrap() > 9e-4);
     }
 
     #[test]

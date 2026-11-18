@@ -117,9 +117,10 @@ pub fn fit(config: &SplineConfig, options: &OptimizationConfig, sections: &[Vec<
     let error = result.max_deviation.unwrap_or(result.rms_error);
     let mut refits = std::mem::take(&mut relay.refits);
     let count = refits.len().max(1);
-    // The search ends on one of its refits; the others are fits of their own.
-    if refits.last().is_some_and(|r| r.result.control_points == result.control_points && r.result.knots == result.knots) {
-        refits.pop();
+    // The search ends on one of its refits (the last, or the best when it
+    // stalled); the others are fits of their own.
+    if let Some(i) = refits.iter().rposition(|r| r.result.control_points == result.control_points && r.result.knots == result.knots) {
+        refits.remove(i);
     }
     let mut final_fit = raw(result, error, count, relay.evaluations);
     final_fit.earlier = refits

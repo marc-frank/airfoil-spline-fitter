@@ -119,6 +119,10 @@ Python results), and differs on purpose where the behaviour was a defect:
   already as narrow as the knot spacing allows says so ("the worst knot
   spans are as narrow as the knot spacing 0.05 allows") instead of Python's
   "no knot span can be refined further".
+- A tolerance search whose largest deviation drops by less than 1 % in
+  five rounds of added control points stops with the best fit and names the
+  point where the deviation stays (a kink or noise in the data); Python kept
+  adding control points for all 40 rounds.
 - Enter in a dialog presses its accept button (or the push button that has
   the focus). In the Python window the segmented choices were push buttons
   that took the default: Enter chose "Closed" in New NACA airfoil and "mm"
