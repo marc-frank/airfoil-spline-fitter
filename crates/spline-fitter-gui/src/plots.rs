@@ -119,19 +119,26 @@ struct AxisTicks {
 
 /// The ticks of an axis showing `range` on `length` pixels, or the given
 /// labels of a categorical axis.
+/// Where an axis puts its ticks.
+enum TickSource<'a> {
+    /// At these positions, with these labels.
+    Labels(&'a [(f64, String)]),
+    /// Chosen for the range; `whole` keeps only whole numbers.
+    Auto { whole: bool },
+}
+
 fn axis_ticks(
     range: (f64, f64),
     length: f32,
     log: bool,
-    labels: Option<&[(f64, String)]>,
-    whole: bool,
+    source: TickSource,
     to_screen: impl Fn(f64) -> f32,
     measure: impl Fn(&str) -> f32,
     fits: impl Fn(f32, f32) -> bool,
 ) -> AxisTicks {
-    let levels: Vec<(Vec<f64>, Vec<String>)> = match labels {
-        Some(given) => vec![(given.iter().map(|g| g.0).collect(), given.iter().map(|g| g.1.clone()).collect())],
-        None => {
+    let levels: Vec<(Vec<f64>, Vec<String>)> = match source {
+        TickSource::Labels(given) => vec![(given.iter().map(|g| g.0).collect(), given.iter().map(|g| g.1.clone()).collect())],
+        TickSource::Auto { whole } => {
             let decade = axes::decade_in_view(range.0, range.1);
             let levels = axes::tick_values(range.0, range.1, length as f64, log);
             let levels = if whole && !log { axes::whole_number_levels(levels, range.0, range.1) } else { levels };
@@ -307,8 +314,7 @@ pub fn show_plot(
         (bounds.min()[0], bounds.max()[0]),
         frame.width(),
         log_x,
-        axes.x_ticks,
-        axes.whole_x,
+        axes.x_ticks.map_or(TickSource::Auto { whole: axes.whole_x }, TickSource::Labels),
         |v| transform.position_from_point_x(v),
         |s| measure(s).x,
         // With a grid, a label shows only within the plot's extent.
@@ -318,8 +324,7 @@ pub fn show_plot(
         (bounds.min()[1], bounds.max()[1]),
         frame.height(),
         log_y,
-        None,
-        false,
+        TickSource::Auto { whole: false },
         |v| transform.position_from_point_y(v),
         |s| measure(s).y * 0.8,
         |y, h| y - h / 2.0 >= frame.top() - 0.5 && y + h / 2.0 <= frame.bottom() + 0.5,
