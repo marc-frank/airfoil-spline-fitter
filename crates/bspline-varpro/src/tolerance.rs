@@ -98,6 +98,13 @@ fn new_knots(knots: &[f64], u: &[f64], dev: &[f64], tol: f64, min_span: f64) -> 
     new.into_iter().map(|(_, v)| v).collect()
 }
 
+/// Whether a span holding a point beyond `tol` is too narrow to split at
+/// `min_span`.
+fn too_narrow(knots: &[f64], u: &[f64], dev: &[f64], tol: f64, min_span: f64) -> bool {
+    let (breaks, index) = spans(knots, u);
+    (0..breaks.len() - 1).any(|i| breaks[i + 1] - breaks[i] < 2.0 * min_span && (0..u.len()).any(|k| index[k] == i && dev[k] > tol))
+}
+
 /// Interior knots ordered by the largest deviation in their two adjacent spans.
 fn removal_order(knots: &[f64], degree: usize, u: &[f64], dev: &[f64], tol: f64) -> Vec<f64> {
     let (breaks, index) = spans(knots, u);
@@ -562,6 +569,7 @@ pub fn fit_to_tolerance(
             break;
         }
         let mut inserted = false;
+        let mut narrow = false;
         for (s, (rows, local)) in groups(&u, num_sections).into_iter().enumerate() {
             let dev: Vec<f64> = rows.iter().map(|&i| devs[i]).collect();
             if dev.iter().copied().fold(0.0, f64::max) <= tolerance {
@@ -570,6 +578,7 @@ pub fn fit_to_tolerance(
             let count = num_control_points(&knots[s], degree);
             let room = limits[s] as i64 - count as i64;
             let mut new = new_knots(&knots[s], &local, &dev, tolerance, min_span);
+            narrow |= room > 0 && new.is_empty() && too_narrow(&knots[s], &local, &dev, tolerance, min_span);
             new.truncate(room.max(0) as usize);
             if uniform && room > 0 {
                 knots[s] = open_uniform_knots(degree, count + new.len().max(1))?;
@@ -580,7 +589,17 @@ pub fn fit_to_tolerance(
             }
         }
         if !inserted {
-            return finish(fitted, deviation, false, "Tolerance not reached: no knot span can be refined further.".into());
+            // Free knots crowd where the curve is hard to fit, down to the
+            // knot spacing the user chose: say so, it is the setting to change.
+            let message = if !uniform && narrow && options.min_knot_gap > MIN_SPAN {
+                format!(
+                    "Tolerance not reached: the worst knot spans are as narrow as the knot spacing {} allows.",
+                    crate::numfmt::general6(options.min_knot_gap)
+                )
+            } else {
+                "Tolerance not reached: no knot span can be refined further.".into()
+            };
+            return finish(fitted, deviation, false, message);
         }
         last = Some((fitted, deviation));
     }
@@ -693,6 +712,18 @@ mod tests {
         assert!((&a - &expected).amax() <= 1e-10 * expected.amax(), "JᵀJ {}", (&a - &expected).amax());
         let expected = j.transpose() * &r;
         assert!((&g - &expected).amax() <= 1e-10 * expected.amax(), "Jᵀr {}", (&g - &expected).amax());
+    }
+
+    #[test]
+    fn a_span_narrower_than_twice_the_spacing_is_too_narrow() {
+        let knots = clamped_knots(3, &[0.5, 0.515]);
+        let u = [0.1, 0.505, 0.51, 0.9];
+        // The worst point is in [0.5, 0.515], 0.015 wide: too narrow at 0.01.
+        let dev = [0.0, 0.5, 0.2, 0.0];
+        assert!(too_narrow(&knots, &u, &dev, 0.1, 0.01));
+        assert!(!too_narrow(&knots, &u, &dev, 0.1, 0.005));
+        // Within the tolerance it does not matter how narrow the span is.
+        assert!(!too_narrow(&knots, &u, &dev, 0.6, 0.01));
     }
 
     #[test]

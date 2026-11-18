@@ -115,6 +115,10 @@ Python results), and differs on purpose where the behaviour was a defect:
   of refining the previous step's: the solver's steps move a point's
   parameter anywhere on the curve, and the refined feet then joined points to
   the wrong part of it (whiskers across the airfoil).
+- A free-knot tolerance search that stops because the worst knot spans are
+  already as narrow as the knot spacing allows says so ("the worst knot
+  spans are as narrow as the knot spacing 0.05 allows") instead of Python's
+  "no knot span can be refined further".
 - Enter in a dialog presses its accept button (or the push button that has
   the focus). In the Python window the segmented choices were push buttons
   that took the default: Enter chose "Closed" in New NACA airfoil and "mm"
