@@ -106,10 +106,11 @@ Python results), and differs on purpose where the behaviour was a defect:
   of a sweep) are one undo step because the settings settle once per frame,
   not through an explicit history group.
 - The fit report is a native table, not HTML.
-- The deviation overlay is magnified so the larger of the tolerance and the
-  largest deviation is drawn at its height. Python used the tolerance alone,
-  so a live step far outside it (a tolerance fit starting from few control
-  points) drew whiskers many chords long.
+- The deviation overlay draws every whisker outward, its length the size of
+  the deviation, in sky blue for a point inside the curve and rose for one
+  outside; Python drew signed whiskers on both sides in the section colors.
+  The tolerance is one dashed line outside the curve, always at the height
+  setting, not one on each side.
 - The live deviation searches the foot points on each step's curve instead
   of refining the previous step's: the solver's steps move a point's
   parameter anywhere on the curve, and the refined feet then joined points to

@@ -189,27 +189,47 @@ pub fn comb(curves: &[BSpline], quantity: usize, height: f64, density: usize) ->
     strokes
 }
 
-/// The deviation overlay and the tolerance band.
+/// Index of the points inside the curve in [`Deviation`]'s strokes and dots.
+pub const INSIDE: usize = 0;
+/// Index of the points outside the curve.
+pub const OUTSIDE: usize = 1;
+
+/// The deviation overlay and the tolerance line.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Deviation {
-    pub strokes: ParityStrokes,
-    /// Tips of the whiskers, one dot per data point and parity.
+    /// Whiskers and envelopes of the points inside and outside the curve.
+    pub strokes: [Strokes; 2],
+    /// Tips of the whiskers, one dot per data point, by side.
     pub dots: [Vec<Vec2>; 2],
-    /// Dashed lines at the tolerance on both sides of every section.
+    /// Dashed line at the tolerance outside every section.
     pub band: Vec<Vec<Vec2>>,
 }
 
-/// Every data point's distance from the curve, magnified along the normal
-/// so the larger of the tolerance and the largest deviation is drawn
-/// `height` chords from the curve: a fit within the tolerance shows the
-/// band at `height`, one far outside it (a live step) keeps its whiskers
-/// on the plot and the band shrinks to the same magnification.
+/// +1 when the points run counterclockwise (the right-hand normal points
+/// out of the shape they enclose), else -1.
+fn orientation(coords: &[Vec2]) -> f64 {
+    let n = coords.len();
+    let area: f64 = (0..n).map(|i| coords[i].x * coords[(i + 1) % n].y - coords[(i + 1) % n].x * coords[i].y).sum();
+    if area < 0.0 {
+        -1.0
+    } else {
+        1.0
+    }
+}
+
+/// Every data point's distance from the curve, drawn outward whatever its
+/// sign: a whisker of length `scale · |distance|` along the outward normal,
+/// in the color of its side (inside or outside the curve). The tolerance is
+/// one dashed line `height` chords outside the curve, and the whiskers use
+/// the same magnification, so a point beyond the line is beyond the
+/// tolerance. Without a tolerance the largest deviation is drawn at
+/// `height`.
 pub fn deviation(coords: &[Vec2], curves: &[BSpline], feet: &FootPoints, height: f64, tolerance: Option<f64>) -> Option<Deviation> {
     if coords.len() < 2 {
         return None;
     }
     let largest = feet.distance.iter().fold(0.0, |m: f64, d| m.max(d.abs()));
-    let reference = tolerance.map_or(largest, |t| t.max(largest));
+    let reference = tolerance.unwrap_or(largest);
     let (lo, hi) = coords.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), p| (l.min(p.x), h.max(p.x)));
     let chord = hi - lo;
     let positive = |v: f64| v.is_finite() && v > 0.0;
@@ -217,43 +237,45 @@ pub fn deviation(coords: &[Vec2], curves: &[BSpline], feet: &FootPoints, height:
         return None;
     }
     let scale = height * chord / reference;
-    let tips: Vec<Vec2> = (0..coords.len()).map(|i| feet.foot[i] + feet.normal[i] * (scale * feet.distance[i])).collect();
+    let out_sign = orientation(coords);
+    // Signed toward the outside, so the side is the sign.
+    let outward: Vec<f64> = feet.distance.iter().map(|d| d * out_sign).collect();
+    let side = |v: f64| if v > 0.0 { OUTSIDE } else { INSIDE };
+    let normal = |i: usize| feet.normal[i] * out_sign;
+    let tips: Vec<Vec2> = (0..coords.len()).map(|i| feet.foot[i] + normal(i) * (scale * outward[i].abs())).collect();
     let mut out = Deviation::default();
-    // Runs of equal nearest section; each run after the first starts at the
-    // last point of the previous one.
-    let mut start = 0;
-    while start < coords.len() {
-        let section = feet.section[start];
-        let mut end = start;
-        while end + 1 < coords.len() && feet.section[end + 1] == section {
-            end += 1;
+    let mut run = vec![tips[0]];
+    for i in 0..coords.len() {
+        let s = side(outward[i]);
+        out.strokes[s].teeth.push([feet.foot[i], tips[i]]);
+        out.dots[s].push(tips[i]);
+        let next = i + 1;
+        if next == coords.len() {
+            out.strokes[s].envelopes.push(std::mem::take(&mut run));
+        } else if side(outward[next]) != s {
+            // The envelope meets the curve where the deviation changes sign.
+            let t = outward[i].abs() / (outward[i].abs() + outward[next].abs()).max(1e-300);
+            let zero = feet.foot[i] + (feet.foot[next] - feet.foot[i]) * t;
+            run.push(zero);
+            out.strokes[s].envelopes.push(std::mem::replace(&mut run, vec![zero, tips[next]]));
+        } else {
+            run.push(tips[next]);
         }
-        let first = if start > 0 { start - 1 } else { start };
-        let parity = section % 2;
-        let strokes = &mut out.strokes[parity];
-        for i in first..=end {
-            strokes.teeth.push([feet.foot[i], tips[i]]);
-            out.dots[parity].push(tips[i]);
-        }
-        strokes.envelopes.push(tips[first..=end].to_vec());
-        start = end + 1;
     }
-    if let Some(t) = tolerance {
-        let reach = scale * t;
+    if tolerance.is_some() {
+        let reach = height * chord;
         for curve in curves {
             let (a, b) = curve.domain();
-            for sign in [1.0, -1.0] {
-                out.band.push(
-                    linspace(a, b, 400)
-                        .into_iter()
-                        .map(|u| {
-                            let d = curve.derivatives(u, 1);
-                            let normal = Vec2::new(d[1].y, -d[1].x) / d[1].norm().max(1e-300);
-                            d[0] + normal * (sign * reach)
-                        })
-                        .collect(),
-                );
-            }
+            out.band.push(
+                linspace(a, b, 400)
+                    .into_iter()
+                    .map(|u| {
+                        let d = curve.derivatives(u, 1);
+                        let normal = Vec2::new(d[1].y, -d[1].x) / d[1].norm().max(1e-300);
+                        d[0] + normal * (out_sign * reach)
+                    })
+                    .collect(),
+            );
         }
     }
     Some(out)
@@ -314,22 +336,74 @@ mod tests {
         d.strokes.iter().flat_map(|s| &s.teeth).map(|[a, b]| (b - a).norm()).fold(0.0, f64::max)
     }
 
+    fn chord(coords: &[Vec2]) -> f64 {
+        coords.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max) - coords.iter().map(|p| p.x).fold(f64::INFINITY, f64::min)
+    }
+
     #[test]
-    fn deviation_is_drawn_at_the_larger_of_tolerance_and_largest_deviation() {
+    fn tolerance_line_stays_at_the_height_and_sets_the_magnification() {
         let c = arc();
         let (coords, feet) = off_arc(&c, 1e-3);
-        let chord = coords.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max) - coords.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
-        // Within the tolerance: the tolerance is at the height.
-        let d = deviation(&coords, std::slice::from_ref(&c), &feet, 0.05, Some(1e-2)).unwrap();
-        assert!((longest_whisker(&d) - 0.05 * chord * 0.1).abs() < 1e-9);
-        // Far outside it (a live step): the largest deviation is at the height
-        // and the band is drawn at the same magnification, 1/100 of it.
-        let d = deviation(&coords, std::slice::from_ref(&c), &feet, 0.05, Some(1e-5)).unwrap();
-        assert!((longest_whisker(&d) - 0.05 * chord).abs() < 1e-9);
-        let reach = (d.band[0][200] - c.point(linspace(0.0, 1.0, 400)[200])).norm();
-        assert!((reach - 0.05 * chord / 100.0).abs() < 1e-6, "band at {reach}");
-        // Without a tolerance the largest deviation sets the scale.
+        let chord = chord(&coords);
+        for tolerance in [1e-2, 1e-5] {
+            let d = deviation(&coords, std::slice::from_ref(&c), &feet, 0.05, Some(tolerance)).unwrap();
+            // One line, outside the curve, `height` chords away.
+            assert_eq!(d.band.len(), 1);
+            let on_curve = c.point(linspace(0.0, 1.0, 400)[200]);
+            let line = d.band[0][200];
+            assert!(((line - on_curve).norm() - 0.05 * chord).abs() < 1e-9);
+            assert!(line.norm() > on_curve.norm());
+            // A deviation of `tolerance` would reach the line.
+            assert!((longest_whisker(&d) - 0.05 * chord * 1e-3 / tolerance).abs() < 1e-9);
+        }
+        // Without a tolerance the largest deviation is at the height.
         let d = deviation(&coords, std::slice::from_ref(&c), &feet, 0.05, None).unwrap();
+        assert!(d.band.is_empty());
         assert!((longest_whisker(&d) - 0.05 * chord).abs() < 1e-9);
+    }
+
+    #[test]
+    fn whiskers_point_outward_and_take_the_color_of_their_side() {
+        let c = arc();
+        for (offset, side) in [(1e-3, OUTSIDE), (-1e-3, INSIDE)] {
+            let (coords, feet) = off_arc(&c, offset);
+            let d = deviation(&coords, std::slice::from_ref(&c), &feet, 0.05, None).unwrap();
+            assert_eq!(d.strokes[side].teeth.len(), coords.len());
+            assert!(d.strokes[1 - side].teeth.is_empty() && d.dots[1 - side].is_empty());
+            for [foot, tip] in &d.strokes[side].teeth {
+                assert!(tip.norm() > foot.norm() + 1e-3, "{offset}: {foot} -> {tip}");
+            }
+        }
+        // The same points in clockwise order still draw outward.
+        let (mut coords, mut feet) = off_arc(&c, -1e-3);
+        coords.reverse();
+        feet.foot.reverse();
+        feet.normal = feet.normal.iter().rev().map(|n| -n).collect();
+        feet.distance = feet.distance.iter().map(|d| -d).collect();
+        let d = deviation(&coords, std::slice::from_ref(&c), &feet, 0.05, None).unwrap();
+        assert_eq!(d.dots[INSIDE].len(), coords.len());
+        for [foot, tip] in &d.strokes[INSIDE].teeth {
+            assert!(tip.norm() > foot.norm() + 1e-3);
+        }
+    }
+
+    #[test]
+    fn envelope_meets_the_curve_where_the_deviation_changes_sign() {
+        let c = arc();
+        let (_, mut feet) = off_arc(&c, 1e-3);
+        // Outside for the first four points, inside for the rest.
+        for (i, d) in feet.distance.iter_mut().enumerate() {
+            *d = if i < 4 { 1e-3 } else { -3e-3 };
+        }
+        let coords: Vec<Vec2> = (0..feet.foot.len()).map(|i| feet.foot[i] + feet.normal[i] * feet.distance[i]).collect();
+        let d = deviation(&coords, std::slice::from_ref(&c), &feet, 0.05, None).unwrap();
+        let (outside, inside) = (&d.strokes[OUTSIDE].envelopes, &d.strokes[INSIDE].envelopes);
+        assert_eq!((outside.len(), inside.len()), (1, 1));
+        let zero = *outside[0].last().unwrap();
+        assert_eq!(zero, inside[0][0]);
+        // A quarter of the way from foot 3 to foot 4: |1e-3| / (|1e-3| + |-3e-3|).
+        assert!((zero - (feet.foot[3] + (feet.foot[4] - feet.foot[3]) * 0.25)).norm() < 1e-12);
+        assert_eq!(outside[0].len(), 5);
+        assert_eq!(inside[0].len(), 6);
     }
 }

@@ -162,12 +162,22 @@ impl Palette {
         self.text_2
     }
 
-    /// Comb (and deviation) colour of a section.
+    /// Comb colour of a section.
     pub fn comb(&self, section: usize) -> Color32 {
         if section % 2 == 0 {
             self.comb_even
         } else {
             self.comb_odd
+        }
+    }
+
+    /// Deviation colour of the points inside (sky blue) or outside (rose)
+    /// the curve.
+    pub fn deviation(&self, outside: bool) -> Color32 {
+        if outside {
+            self.comb_odd
+        } else {
+            self.comb_even
         }
     }
 }

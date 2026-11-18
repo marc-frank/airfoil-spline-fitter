@@ -761,7 +761,7 @@ pub fn deviation_toggle(app: &mut App, ui: &mut Ui) {
     let mut height = plot.deviation_height;
     let toggle = SplitToggle {
         text: "Deviation",
-        tooltip: "Display the distance of every data point from the curve, magnified\nalong the normal, outward for a point outside, in the color of its\nnearest spline section (as the curvature comb). The dashed lines\nare the tolerance. Use the arrow for the height.",
+        tooltip: "Display the distance of every data point from the curve, magnified\nand drawn outward: rose for a point outside the curve, sky blue for\none inside. The dashed line is the tolerance. Use the arrow for\nthe height.",
         arrow_tooltip: "Deviation settings",
         id: "deviation_settings",
     };
@@ -780,7 +780,7 @@ pub fn deviation_toggle(app: &mut App, ui: &mut Ui) {
                 (0.001, 1.0),
                 Field::new(
                     widgets::spin_width(ui, &[&fmt(0.001), &fmt(1.0)]),
-                    "How far from the curve the tolerance is drawn, as a share of the chord\n(the largest deviation when there is no tolerance or it is larger).",
+                    "How far outside the curve the tolerance is drawn, as a share of the chord\n(the largest deviation when there is no tolerance).",
                 ),
                 &f,
             );

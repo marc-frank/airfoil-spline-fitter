@@ -123,7 +123,7 @@ Named by what they draw, never by hue.
 | `knots` | sulfur diamonds with a canvas outline | Knots (the ducks that hold the batten) |
 | `comb_even` | sky blue | Comb on the first, third, ... spline section (a single section is all sky blue) |
 | `comb_odd` | rose | Comb on the second, fourth, ... spline section |
-| `comb(section)` for the deviation | the comb's colors: faint whiskers from the curve, an envelope through their tips with a dot at each tip | Signed deviation of each data point from its nearest section, magnified along the normal; the tolerance band is faint dashed `construction` |
+| `deviation(outside)` | the comb's colors by side: rose outside the curve, sky blue inside; faint whiskers drawn outward from the curve, an envelope through their tips with a dot at each tip | Size of each data point's deviation from the curve, magnified along the outward normal; the tolerance is one faint dashed `construction` line outside the curve, at the height setting |
 | `trace()` | light grey dots or line | Convergence and comparison traces |
 | `INK` marker | ink dot with a canvas ring | The current run in a trace |
 

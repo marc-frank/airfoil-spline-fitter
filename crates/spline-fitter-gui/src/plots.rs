@@ -17,7 +17,7 @@ use spline_fitter::bspline_varpro::basis::{distinct, linspace};
 use spline_fitter::{BSpline, Vec2};
 
 use crate::axes;
-use crate::overlays::{comb, deviation, Deviation, ParityStrokes, Strokes};
+use crate::overlays::{comb, deviation, Deviation, ParityStrokes, Strokes, OUTSIDE};
 use crate::theme::{alpha, size, typeface, Palette, INK, TEETH_ALPHA};
 
 /// A running zoom glide.
@@ -644,9 +644,9 @@ impl MainPlot {
         let pad = marker_pad(size::CONTROL_SIZE, 1.0);
         let axes = Axes { x_label: "x", y_label: "y", log_x: false, log_y: false, x_ticks: None, equal_aspect: true, marker_pad: pad };
         show_plot(ui, p, "main_plot", &mut self.view, &axes, motion_ms, |c| {
-            let draw_strokes = |strokes: &ParityStrokes, dots: Option<&[Vec<Vec2>; 2]>| {
+            let draw_strokes = |strokes: &[Strokes; 2], dots: Option<&[Vec<Vec2>; 2]>, color: &dyn Fn(usize) -> Color32| {
                 for (parity, s) in strokes.iter().enumerate() {
-                    let color = p.comb(parity);
+                    let color = color(parity);
                     let Strokes { teeth, envelopes } = s;
                     c.segments(teeth, Stroke::new(1.0, alpha(color, TEETH_ALPHA)));
                     for env in envelopes {
@@ -658,10 +658,10 @@ impl MainPlot {
                 }
             };
             if let Some(strokes) = &self.comb_strokes {
-                draw_strokes(strokes, None);
+                draw_strokes(strokes, None, &|parity| p.comb(parity));
             }
             if let Some(d) = &self.deviation {
-                draw_strokes(&d.strokes, Some(&d.dots));
+                draw_strokes(&d.strokes, Some(&d.dots), &|side| p.deviation(side == OUTSIDE));
                 for line in &d.band {
                     c.polyline(line.iter().map(xy), Stroke::new(1.0, alpha(p.construction, 110)), true);
                 }

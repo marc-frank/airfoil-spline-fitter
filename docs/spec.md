@@ -1604,7 +1604,7 @@ A reflowing row (spacing 6) of two groups: (a) `Knots` toggle (tool button, chec
 
 Curvature comb toggle tooltip: `Display curvature as perpendicular lines from the curve,` / `blue and pink on alternate spline sections.` / `Use the arrow for quantity, height and density.` Its drop-down (arrow tooltip `Curvature comb settings`) holds a form (12 px padding): `Quantity` combo `Curvature (κ)` (0), `Gradient (dκ/ds)` (1), `Acceleration (d²κ/ds²)` (2), `Jerk (d³κ/ds³)` (3); `Height` spin 0..1000, 4 decimals, step 0.01, default 0.05, tooltip `Length of a tooth, in chords, where the quantity is 1 on the airfoil` / `scaled to a unit chord. The comb looks the same at any size of the data.`; `Density` spin 5..2000, default 250.
 
-Deviation toggle tooltip: `Display the distance of every data point from the curve, magnified` / `along the normal, outward for a point outside, in the color of its` / `nearest spline section (as the curvature comb). The dashed lines` / `are the tolerance. Use the arrow for the height.` Drop-down (arrow tooltip `Deviation settings`): `Height` spin 0.001..1.0, 3 decimals, step 0.01, default 0.05, tooltip `How far from the curve the tolerance is drawn, as a share of the chord` / `(the largest deviation when there is no tolerance or it is larger).`
+Deviation toggle tooltip: `Display the distance of every data point from the curve, magnified` / `along the normal, outward for a point outside, in the color of its` / `nearest spline section (as the curvature comb). The dashed lines` / `are the tolerance. Use the arrow for the height.` [Rust: `Display the distance of every data point from the curve, magnified` / `and drawn outward: rose for a point outside the curve, sky blue for` / `one inside. The dashed line is the tolerance. Use the arrow for` / `the height.`] Drop-down (arrow tooltip `Deviation settings`): `Height` spin 0.001..1.0, 3 decimals, step 0.01, default 0.05, tooltip `How far outside the curve the tolerance is drawn, as a share of the chord` / `(the largest deviation when there is no tolerance).`
 
 Drop-downs are `DropDownPanel`s (19.21 item 7).
 
@@ -1654,10 +1654,12 @@ Curves from `preview = (control points per section, knots per section or None, d
 Hidden when the height is none or fewer than 2 data points. With the data `coords` and a fit:
 
 1. Foot points (12.5): live mode refines the previous live step's parameters (`start`) and stores the new ones; finished fits are measured once and cached per (fit, coords). [Rust: every shown curve, live or finished, is searched once and cached until the curves change.]
-2. `reference = max(tolerance, max|signed distance|)` (without a tolerance, `max|signed distance|`) [Rust: Python used the tolerance alone, which drew a live step far outside it many chords long]; `chord` = x range of `coords`; if either `<= 0`, hide.
+2. `reference = tolerance` (without a tolerance, `max|signed distance|`); `chord` = x range of `coords`; if either `<= 0`, hide.
 3. `scale = height·chord/reference`; tips `foot + scale·distance·normal`.
 4. Split the points into runs of equal nearest section; each run after the first begins at the last point of the previous run; a run goes to the parity of its section. Whiskers foot→tip, laid out exactly like the comb teeth of 19.14.3 step 4 (`foot, tip, NaN` per point, one further NaN between runs); envelope through the tips, like the comb envelope (runs joined with one NaN).
 5. Tolerance band (only with a tolerance): for each section, 400 parameters over its domain; offsets `±(scale·tolerance)` along the right normal `(y', -x')/|C'|` (denominator floored at 1e-300); the lines in the order section 1 `+`, section 1 `-`, section 2 `+`, ..., joined with one NaN between consecutive lines.
+
+[Rust: steps 3 to 5 differ. Every whisker is drawn outward: `outward = ±1` (+1 when `coords` run counterclockwise by their shoelace area, so the right normal points out), tip `foot + scale·|distance|·outward·normal`. A point with `outward·distance > 0` is outside the curve and drawn in rose (`comb_odd`), any other inside in sky blue (`comb_even`), not in its section's color. The envelope runs through the tips in data order and is split where the side changes, both pieces ending at the foot interpolated where the distance crosses zero. The tolerance is one line per section at `outward·height·chord` along the right normal.]
 6. Any exception hides the deviation.
 
 For a finished fit, the tolerance is `report["tolerance"]` (none without a report); live, the running fit's tolerance.
