@@ -1,12 +1,14 @@
 //! Times the optimizers on NACA airfoils: the cases of the Python
 //! version's `scripts/benchmark_new_optimizers.py`, plus the app's default
-//! fit. Each fit runs several times; the median time is printed.
+//! fit (each run several times; the median time is printed), then tolerance
+//! searches on a finely sampled airfoil.
 //!
 //! cargo run --release -p spline-fitter --example benchmark
 
 use std::time::Instant;
 
 use spline_fitter::bspline_varpro::airfoil::Naca4;
+use spline_fitter::bspline_varpro::KnotPlacement;
 use spline_fitter::geometry::AirfoilData;
 use spline_fitter::models::{ContinuityMode, OptimizationConfig, OptimizerType, SplineConfig};
 use spline_fitter::optimize::{run_optimization, Unmonitored};
@@ -41,5 +43,24 @@ fn main() {
             let r = result.unwrap();
             println!("{name:30} | {:12} | {:9.2} ms | error {:.3e} | evals {}", optimizer.display_name(), times[3], r.error, r.evaluations);
         }
+    }
+    // Tolerance searches on a finely sampled airfoil (130 points a side, the
+    // size of a measured section): thousands of evaluations, where the cost
+    // of one solver step shows. Run once each.
+    let fine = airfoil("2412", 130);
+    let grow = |sections| SplineConfig { num_control_points: 6, num_sections: sections, ..Default::default() };
+    let tolerance =
+        |knot_placement| OptimizationConfig { tolerance: Some(1e-5), grow_control_points: true, knot_placement, ..Default::default() };
+    let searches = [
+        ("NACA2412 259 pts, 1 section", grow(1), tolerance(KnotPlacement::Uniform)),
+        ("NACA2412 259 pts, 2 sections", grow(2), tolerance(KnotPlacement::Uniform)),
+        ("NACA2412 259 pts, 2 sec, free", grow(2), tolerance(KnotPlacement::Free)),
+    ];
+    for (name, config, options) in searches {
+        let data = AirfoilData::new(fine.coordinates.clone(), config.num_sections, "NACA2412.dat", "NACA2412", 6).unwrap();
+        let start = Instant::now();
+        let r = run_optimization(&config, &options, &data, &mut Unmonitored).unwrap();
+        let seconds = start.elapsed().as_secs_f64();
+        println!("{name:30} | tolerance    | {:9.2} s  | error {:.3e} | evals {}", seconds, r.error, r.evaluations);
     }
 }
