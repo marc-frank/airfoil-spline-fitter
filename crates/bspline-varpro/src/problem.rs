@@ -344,28 +344,50 @@ impl VarProProblem {
         let n = &solution.n;
         let tangent = dn.mul(&solution.p);
         let misfit = &self.data_matrix - n.mul(&solution.p);
-        // Column j of the right-hand side: dN_jᵀ M_jk - N_jᵀ Tg_jk.
-        let dp = [0, 1].map(|k| {
-            let mut rhs = DMatrix::zeros(self.total_controls(), self.num_points());
-            for j in 0..self.num_points() {
-                let (start, values) = dn.row(j);
-                for (c, v) in values.iter().enumerate() {
-                    rhs[(start + c, j)] += v * misfit[(j, k)];
-                }
-                let (start, values) = n.row(j);
-                for (c, v) in values.iter().enumerate() {
-                    rhs[(start + c, j)] -= v * tangent[(j, k)];
-                }
-            }
-            solution.kkt.solve(&rhs, None)
-        });
-        let mut jac = self.stack(n, dp);
-        for i in 0..self.num_points() {
+        // dP_jk = H (dN_jᵀ M_jk - N_jᵀ Tg_jk), H the control block of K⁻¹.
+        // The right-hand side is nonzero only on point j's knot span, so the
+        // data and penalty rows of column j combine a few columns of N H and
+        // R H instead of solving and multiplying out a dense column.
+        let total = self.total_controls();
+        let h = solution.kkt.solve(&DMatrix::identity(total, total), None);
+        let nh = n.mul(&h);
+        let rh = &self.penalty_root * &h;
+        let layout = self.layout();
+        let rows = self.num_residuals();
+        let mut jac = DMatrix::zeros(rows, self.num_points());
+        let (points, penalties) = (nh.nrows(), rh.nrows());
+        let (nh, rh) = (nh.as_slice(), rh.as_slice());
+        let mut weights = Vec::new();
+        for (j, column) in jac.as_mut_slice().chunks_exact_mut(rows).enumerate() {
+            let (d_start, d_values) = dn.row(j);
+            let (n_start, n_values) = n.row(j);
+            let first = d_start.min(n_start);
+            let end = (d_start + d_values.len()).max(n_start + n_values.len());
+            let (data, rest) = column.split_at_mut(layout.data);
+            let penalty = &mut rest[..layout.penalty];
             for k in 0..2 {
-                jac[(2 * i + k, i)] += tangent[(i, k)];
+                weights.clear();
+                weights.resize(end - first, 0.0);
+                for (c, v) in d_values.iter().enumerate() {
+                    weights[d_start - first + c] += v * misfit[(j, k)];
+                }
+                for (c, v) in n_values.iter().enumerate() {
+                    weights[n_start - first + c] -= v * tangent[(j, k)];
+                }
+                for (c, &w) in weights.iter().enumerate() {
+                    let control = first + c;
+                    let source = &nh[control * points..(control + 1) * points];
+                    for (target, value) in data.iter_mut().skip(k).step_by(2).zip(source) {
+                        *target += w * value;
+                    }
+                    let source = &rh[control * penalties..(control + 1) * penalties];
+                    for (target, value) in penalty.iter_mut().skip(k).step_by(2).zip(source) {
+                        *target += w * value;
+                    }
+                }
+                data[2 * j + k] += tangent[(j, k)];
             }
         }
-        let layout = self.layout();
         if layout.speed > 0 {
             let first = layout.data + layout.penalty + layout.pull;
             let (change, gaps) = self.speed_change(u);
