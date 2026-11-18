@@ -128,6 +128,9 @@ Python results), and differs on purpose where the behaviour was a defect:
   run at the start count they share. The column still shows the start count.
 - The runs plot ticks only whole numbers when every run's x value is one
   (control points, sections, degree); pyqtgraph also ticked 25.2, 25.4, ...
+- A tolerance fit of a section with too few points names the section and
+  the counts ("Section 2 has 4 points, too few for its end conditions: they
+  need 8 control points, so at least 9 points.").
 - Enter in a dialog presses its accept button (or the push button that has
   the focus). In the Python window the segmented choices were push buttons
   that took the default: Enter chose "Closed" in New NACA airfoil and "mm"

@@ -535,8 +535,17 @@ pub fn fit_to_tolerance(
     let mut knots: Vec<Vec<f64>> =
         need.iter().map(|&n| open_uniform_knots(degree, options.initial_control_points.map_or(n, |c| c.max(n)))).collect::<Result<_>>()?;
     let limits: Vec<usize> = sections.iter().map(|s| (s.len() - 1).min(options.max_control_points.unwrap_or(s.len()))).collect();
-    if need.iter().zip(&limits).any(|(n, l)| n > l) {
-        bail!("Sections have too few points for the requested end conditions.");
+    // Name the section and the counts, so the user sees what to change.
+    if let Some((s, (&n, &limit))) = need.iter().zip(&limits).enumerate().find(|(_, (n, l))| n > l) {
+        let points = sections[s].len();
+        if limit == points - 1 {
+            bail!(
+                "Section {} has {points} points, too few for its end conditions: they need {n} control points, so at least {} points.",
+                s + 1,
+                n + 1
+            );
+        }
+        bail!("Section {} needs {n} control points for its end conditions, more than the limit of {limit}.", s + 1);
     }
     let mut u = start_parameters(options.initial_parameters.as_ref(), sections)?;
     let data = chain_data(sections);
@@ -740,6 +749,23 @@ mod tests {
         assert!((&a - &expected).amax() <= 1e-10 * expected.amax(), "JᵀJ {}", (&a - &expected).amax());
         let expected = j.transpose() * &r;
         assert!((&g - &expected).amax() <= 1e-10 * expected.amax(), "Jᵀr {}", (&g - &expected).amax());
+    }
+
+    #[test]
+    fn too_few_points_name_the_section_and_the_counts() {
+        let arc = |n: usize, from: f64| -> Vec<Vec2> {
+            (0..n).map(|i| Vec2::new((from + i as f64 / 10.0).cos(), (from + i as f64 / 10.0).sin())).collect()
+        };
+        let first = arc(30, 0.0);
+        let second = arc(4, first.len() as f64 / 10.0 - 0.1);
+        let sections = [first, second];
+        let options = ToleranceOptions::default();
+        let error = fit_to_tolerance(&sections, 1e-4, 5, &options, &mut crate::Silent).unwrap_err().to_string();
+        assert!(error.starts_with("Section 2 has 4 points, too few for its end conditions: they need "), "{error}");
+        let limited = ToleranceOptions { max_control_points: Some(5), ..Default::default() };
+        let error = fit_to_tolerance(&sections[..1], 1e-4, 5, &limited, &mut crate::Silent).unwrap_err().to_string();
+        assert!(error.starts_with("Section 1 needs "), "{error}");
+        assert!(error.ends_with("more than the limit of 5."), "{error}");
     }
 
     #[test]
