@@ -199,8 +199,8 @@ mod tests {
     #[test]
     fn halfway_digits_round_to_even_as_in_python() {
         // Exactly 1157348994281339.25: .2 and .3 are equally close.
-        assert_eq!(shortest(1157348994281339.25), "1157348994281339.2");
-        assert_eq!(shortest(-1157348994281339.25), "-1157348994281339.2");
+        assert_eq!(shortest(1157348994281339.0 + 0.25), "1157348994281339.2");
+        assert_eq!(shortest(-(1157348994281339.0 + 0.25)), "-1157348994281339.2");
         // Not halfway: unchanged.
         assert_eq!(shortest(1157348994281339.5), "1157348994281339.5");
         assert_eq!(shortest(0.1), "0.1");
