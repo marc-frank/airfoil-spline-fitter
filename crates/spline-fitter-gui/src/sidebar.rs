@@ -57,7 +57,7 @@ impl App {
         let frame = egui::Frame::new().fill(p.panel);
         let mut panel = egui::Panel::left("sidebar")
             .resizable(true)
-            .default_size(size::SIDEBAR_WIDTH + size::SPLITTER)
+            .default_size(self.store.float("panels/sidebar_width", f64::from(size::SIDEBAR_WIDTH + size::SPLITTER)) as f32)
             .min_size(size::SIDEBAR_MIN_WIDTH)
             .frame(frame);
         if std::mem::take(&mut self.reset_sidebar) {
@@ -83,6 +83,7 @@ impl App {
         });
         let rect = shown.response.rect;
         self.sidebar_rect = rect;
+        self.remember_width(ui.ctx(), "panels/sidebar_width", rect.width());
         // Double-clicking the edge puts the default width back.
         if widgets::edge_double_clicked(ui.ctx(), rect, rect.right()) {
             self.reset_sidebar = true;

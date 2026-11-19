@@ -157,8 +157,8 @@ Python results), and differs on purpose where the behaviour was a defect:
 - Ctrl+Enter fits (also from a field you are typing in: the typed value
   counts), Esc cancels a running fit; Python had no keys for either.
 - The sidebar hides to a rail as the explorer does (the chevron on its Data
-  caption, View > Sidebar or Ctrl+B), and both panels stay shown or hidden
-  between sessions.
+  caption, View > Sidebar or Ctrl+B), and both panels keep their width and
+  whether they are shown between sessions.
 - Pivot is a small icon toggle beside Invert and stays on or off between
   sessions.
 - Unsaved runs, replacing a project file and deleting runs ask in a dialog

@@ -470,10 +470,15 @@ fn settings_and_panels_behave_as_in_python() {
     drag(&mut h, egui::pos2(edge, 600.0), egui::pos2(edge + 80.0, 600.0));
     let wide = h.state().sidebar_rect.width();
     assert!(wide > crate::theme::size::SIDEBAR_WIDTH + 40.0, "{wide}");
+    h.run_steps(2);
+    // Kept for the next session once the mouse lets go.
+    assert_eq!(h.state().store.float("panels/sidebar_width", 0.0) as f32, wide);
     let edge = h.state().sidebar_rect.right();
     double_click_at(&mut h, edge, 600.0);
     h.run_steps(4);
-    assert_eq!(h.state().sidebar_rect.width(), crate::theme::size::SIDEBAR_WIDTH + crate::theme::size::SPLITTER);
+    let default = crate::theme::size::SIDEBAR_WIDTH + crate::theme::size::SPLITTER;
+    assert_eq!(h.state().sidebar_rect.width(), default);
+    assert_eq!(h.state().store.float("panels/sidebar_width", 0.0) as f32, default);
 
     // The comb settings stay open while the plot is used.
     click_at(&mut h, 615.0, 45.0);

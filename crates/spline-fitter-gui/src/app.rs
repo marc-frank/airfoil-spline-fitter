@@ -239,6 +239,18 @@ impl App {
         self.before = self.settings.clone();
     }
 
+    /// Keeps a side panel's width between sessions, once the mouse lets go
+    /// of its edge (not on every frame of a drag).
+    pub fn remember_width(&mut self, ctx: &egui::Context, key: &str, width: f32) {
+        if ctx.input(|i| i.pointer.any_down()) || width <= 0.0 {
+            return;
+        }
+        let stored = self.store.float(key, -1.0) as f32;
+        if (stored - width).abs() > 0.5 {
+            self.store.set_float(key, f64::from(width));
+        }
+    }
+
     /// Shows or hides the project explorer; kept between sessions.
     pub fn set_explorer_visible(&mut self, visible: bool) {
         self.explorer_visible = visible;

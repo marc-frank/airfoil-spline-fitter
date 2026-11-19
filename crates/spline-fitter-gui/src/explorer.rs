@@ -464,7 +464,7 @@ impl App {
         let p = self.palette.clone();
         let mut panel = egui::Panel::right("explorer")
             .resizable(true)
-            .default_size(size::EXPLORER_WIDTH + size::SPLITTER)
+            .default_size(self.store.float("panels/explorer_width", f64::from(size::EXPLORER_WIDTH + size::SPLITTER)) as f32)
             .size_range(size::EXPLORER_MIN_WIDTH..=ui.available_width() * 0.6)
             .frame(egui::Frame::new().fill(p.panel).inner_margin(egui::Margin { left: 12, right: 12, top: 10, bottom: 12 }));
         if std::mem::take(&mut self.reset_explorer) {
@@ -555,6 +555,7 @@ impl App {
         });
         // Double-clicking the edge puts the default width back.
         let rect = shown.response.rect;
+        self.remember_width(ui.ctx(), "panels/explorer_width", rect.width());
         if widgets::edge_double_clicked(ui.ctx(), rect, rect.left()) {
             self.reset_explorer = true;
             ui.ctx().request_repaint();
