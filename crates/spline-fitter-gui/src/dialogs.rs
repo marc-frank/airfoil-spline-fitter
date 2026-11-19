@@ -31,8 +31,25 @@ pub struct CadChoice {
     pub close_te: bool,
 }
 
+/// A question before an action: the accept button does it (after saving
+/// the project, for `save_first`), `other` does it without saving, Cancel
+/// or closing leaves things as they are with the status `cancelled`.
+pub struct Confirm {
+    pub title: String,
+    pub message: String,
+    pub accept: String,
+    pub other: Option<String>,
+    pub save_first: bool,
+    /// Enter answers with the accept button; else with Cancel (replacing
+    /// a file, as Qt's question defaulted to No).
+    pub default_accept: bool,
+    pub cancelled: String,
+    pub then: Box<dyn FnOnce(&mut App)>,
+}
+
 /// An open dialog.
 pub enum Dialog {
+    Confirm(Confirm),
     Naca { code: String, per_side: usize, closed: bool },
     Cad(CadChoice),
     Batch,
@@ -427,6 +444,63 @@ impl App {
                     self.set_motion(scroll as u64, zoom as u64);
                 }
                 !matches!(answer, Answer::Reject)
+            }
+            Dialog::Confirm(c) => {
+                const WIDTH: f32 = 380.0;
+                let mut other = false;
+                let answer = open_dialog(ctx, &c.title, WIDTH, DIALOG_MARGIN, |ui| {
+                    ui.add(egui::Label::new(RichText::new(&c.message).color(p.text)).wrap());
+                    ui.add_space(size::GROUP - size::GAP);
+                    // At the right, as Windows orders them: the accept button
+                    // first (it takes the focus and answers Enter), the other
+                    // choice, then Cancel.
+                    let (mut a, mut r) = (false, false);
+                    let row = egui::vec2(ui.available_width(), size::CONTROL_HEIGHT);
+                    ui.allocate_ui_with_layout(row, Layout::left_to_right(Align::Center), |ui| {
+                        let width = |t: &str| widgets::push_button_width(ui, t);
+                        let gap = ui.spacing().item_spacing.x;
+                        let right = width(&c.accept) + gap + c.other.as_deref().map_or(0.0, |o| width(o) + gap) + width("Cancel");
+                        ui.add_space((ui.available_width() - right).max(0.0));
+                        a = dialog_button(ui, &p, &c.accept, c.default_accept, true);
+                        if let Some(o) = &c.other {
+                            other = dialog_button(ui, &p, o, false, true);
+                        }
+                        r = dialog_button(ui, &p, "Cancel", !c.default_accept, true);
+                    });
+                    // Cancel as the default: the first button does not keep
+                    // the focus the dialog gave it on opening.
+                    let opened = ui.ctx().data(|d| d.get_temp::<u8>(opened_id(&c.title))).unwrap_or(0);
+                    if !c.default_accept && opened == 3 {
+                        ui.memory_mut(|m| {
+                            if let Some(id) = m.focused() {
+                                m.surrender_focus(id);
+                            }
+                        });
+                        ui.ctx().data_mut(|d| d.insert_temp(opened_id(&c.title), 4u8));
+                    }
+                    answer_of(a, r)
+                });
+                match answer {
+                    Answer::Open if !other => true,
+                    Answer::Accept | Answer::Open => {
+                        let Dialog::Confirm(c) = dialog else { unreachable!() };
+                        if c.save_first && !other {
+                            self.on_save_project();
+                            if self.projects.modified {
+                                // Not saved (Save as was cancelled): nothing goes on.
+                                return;
+                            }
+                        }
+                        (c.then)(self);
+                        return;
+                    }
+                    Answer::Reject => {
+                        if !c.cancelled.is_empty() {
+                            self.set_status(c.cancelled.clone());
+                        }
+                        false
+                    }
+                }
             }
             Dialog::PointsPerSide { value } => {
                 const WIDTH: f32 = 370.0;

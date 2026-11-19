@@ -62,6 +62,10 @@ pub struct App {
     open_submenu: Option<egui::Id>,
     /// Ctrl+Enter was pressed: fit once the sidebar has taken its fields.
     fit_requested: bool,
+    /// The user chose to lose the unsaved runs for the action now repeated.
+    pub discard_confirmed: bool,
+    /// The user answered the unsaved-runs question of closing: close.
+    pub close_now: bool,
     /// A fit `on_fit` prepared: it starts on the next frame.
     pub preparing: Option<Box<(spline_fitter::models::SplineConfig, spline_fitter::models::OptimizationConfig, AirfoilData)>>,
     pub dialog: Option<Dialog>,
@@ -115,6 +119,8 @@ impl App {
             reset_explorer: false,
             open_submenu: None,
             fit_requested: false,
+            discard_confirmed: false,
+            close_now: false,
             preparing: None,
             dialog: None,
             report: None,
@@ -836,7 +842,13 @@ impl eframe::App for App {
         if self.fitting() {
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
-        if ctx.input(|i| i.viewport().close_requested()) && !self.confirm_close() {
+        if std::mem::take(&mut self.close_now) {
+            if let Some(r) = &self.running {
+                r.cancel();
+            }
+            self.projects.modified = false;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        } else if ctx.input(|i| i.viewport().close_requested()) && !self.confirm_close() {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
         }
     }

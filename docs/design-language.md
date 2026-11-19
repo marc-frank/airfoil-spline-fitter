@@ -246,6 +246,7 @@ takes the `Palette`; none sets colors of its own.
 | Numbers spanning decades | `widgets::scientific_field` |
 | Plot | `plots::show_plot` with its `Axes`; items painted through the `Canvas` in palette colors, in drawing order |
 | Dialog | `dialogs::modal` with form rows and `dialogs::buttons` (reset role left, then accept, then reject) |
+| Question | `dialogs::Confirm`: one paragraph of text, the buttons at the right (accept, another choice, Cancel); never the system's message box |
 | Report | the fit report window: rows with `ok`/`warn` notes in the status colors, the thickness and camber chart below (`plots::shape_plot`: thickness a `trace` line, the camber dashed `construction`, each maximum a dot ringed in the canvas color) |
 | Table of records | the run table (`explorer.rs`): no grid lines, rows selected whole; numbers monospaced and right-aligned, blanks for what does not apply; Pivot swaps rows and columns |
 | Column filter | as in a spreadsheet: a `ChevronDown` in `text_3` at the right of each header opens a popup (sort, condition, checklist of values, previewing which values a condition unchecks in `text_3`); a filtered column shows the `Filter` funnel in `text`; the sorted column has `SortUp`/`SortDown` in `text_2` |

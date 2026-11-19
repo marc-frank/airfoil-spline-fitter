@@ -161,6 +161,8 @@ Python results), and differs on purpose where the behaviour was a defect:
   between sessions.
 - Pivot is a small icon toggle beside Invert and stays on or off between
   sessions.
+- Unsaved runs, replacing a project file and deleting runs ask in a dialog
+  of the app, in its theme, instead of the system's message box.
 - The explorer keeps the column order you drag its headers into between
   sessions (Python started from the default order every time).
 - With uniform knots, a tolerance search that meets the tolerance removes

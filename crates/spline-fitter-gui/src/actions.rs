@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use rfd::{FileDialog, MessageButtons, MessageDialog, MessageDialogResult, MessageLevel};
+use rfd::FileDialog;
 use spline_fitter::analysis::{default_tolerance, fit_report};
 use spline_fitter::bspline_varpro::airfoil::{resample, trailing_edge_segment, Naca4};
 use spline_fitter::bspline_varpro::export::{self, merge_curves, Units};
@@ -78,16 +78,19 @@ impl App {
         };
         let filename = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
         let name = parsed.name.unwrap_or_else(|| filename.clone());
-        if self.set_airfoil(parsed.coords, &filename, &name, parsed.precision, &path.to_string_lossy(), "Loaded") {
-            self.store.add_recent(path);
-        }
+        self.set_airfoil(parsed.coords, &filename, &name, parsed.precision, &path.to_string_lossy(), "Loaded");
     }
 
-    /// Makes `coords` the airfoil; false when the user keeps the project or
-    /// the coordinates cannot be split.
+    /// Makes `coords` the airfoil (a file's `path` goes to the recent
+    /// files); false when the coordinates cannot be split, or while the
+    /// user is asked about unsaved runs (the answer finishes it).
     pub fn set_airfoil(&mut self, coords: Vec<Vec2>, filename: &str, name: &str, precision: i32, path: &str, verb: &str) -> bool {
-        if !self.confirm_discard() {
-            self.set_status("Cancelled: the project stays open");
+        let args = (coords.clone(), filename.to_string(), name.to_string(), precision, path.to_string(), verb.to_string());
+        let retry = move |app: &mut App| {
+            let (coords, filename, name, precision, path, verb) = args;
+            app.set_airfoil(coords, &filename, &name, precision, &path, &verb);
+        };
+        if !self.confirm_discard("Cancelled: the project stays open", retry) {
             return false;
         }
         // The airfoil is built before anything changes, so a failure leaves
@@ -118,6 +121,9 @@ impl App {
         self.airfoil = Some(airfoil);
         self.update_auto_tolerance();
         self.accept_settings_quietly();
+        if !path.is_empty() {
+            self.store.add_recent(Path::new(path));
+        }
         true
     }
 
@@ -306,9 +312,12 @@ impl App {
     // -----------------------------------------------------------------
     // Projects
 
-    /// False when the user cancels discarding unsaved runs.
-    pub fn confirm_discard(&mut self) -> bool {
-        if self.projects.file.is_none() || !self.projects.modified {
+    /// True when nothing unsaved is lost (or the user already said so).
+    /// Otherwise asks, in the app's own dialog: Save (then goes on if it
+    /// saved), Don't save (goes on) or Cancel (status `cancelled`); going
+    /// on calls `retry`, which repeats the action that asked.
+    pub fn confirm_discard(&mut self, cancelled: &str, retry: impl FnOnce(&mut App) + 'static) -> bool {
+        if std::mem::take(&mut self.discard_confirmed) || self.projects.file.is_none() || !self.projects.modified {
             return true;
         }
         let name = self
@@ -318,30 +327,26 @@ impl App {
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "the project".into());
-        let answer = MessageDialog::new()
-            .set_level(MessageLevel::Warning)
-            .set_title("Unsaved runs")
-            .set_description(format!("Save the changes to {name}?\n\nRuns that are not saved are lost."))
-            .set_buttons(MessageButtons::YesNoCancelCustom("Save".into(), "Don't save".into(), "Cancel".into()))
-            .show();
-        match answer {
-            MessageDialogResult::Custom(c) if c == "Save" => {
-                self.on_save_project();
-                !self.projects.modified
-            }
-            MessageDialogResult::Custom(c) if c == "Don't save" => true,
-            MessageDialogResult::Yes => {
-                self.on_save_project();
-                !self.projects.modified
-            }
-            MessageDialogResult::No => true,
-            _ => false,
-        }
+        self.dialog = Some(Dialog::Confirm(crate::dialogs::Confirm {
+            title: "Unsaved runs".into(),
+            message: format!("Save the changes to {name}? Runs that are not saved are lost."),
+            accept: "Save".into(),
+            other: Some("Don't save".into()),
+            save_first: true,
+            default_accept: true,
+            cancelled: cancelled.into(),
+            then: Box::new(move |app: &mut App| {
+                app.discard_confirmed = true;
+                retry(app);
+                app.discard_confirmed = false;
+            }),
+        }));
+        false
     }
 
     /// The window may close: unsaved runs confirmed, a running fit cancelled.
     pub fn confirm_close(&mut self) -> bool {
-        if !self.confirm_discard() {
+        if !self.confirm_discard("Close cancelled.", |app| app.close_now = true) {
             return false;
         }
         if let Some(r) = &self.running {
@@ -394,8 +399,10 @@ impl App {
                 return false;
             }
         };
-        if !self.confirm_discard() {
-            self.set_status("Open cancelled.");
+        let again = path.to_path_buf();
+        if !self.confirm_discard("Open cancelled.", move |app| {
+            app.open_project(&again);
+        }) {
             return false;
         }
         let ProjectFile { metadata, airfoil, runs } = loaded.project;
@@ -469,16 +476,24 @@ impl App {
             path = PathBuf::from(format!("{}.asfproj", path.display()));
             if path.exists() {
                 let base = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                let answer = MessageDialog::new()
-                    .set_title("Save project as")
-                    .set_description(format!("{base} already exists. Replace it?"))
-                    .set_buttons(MessageButtons::YesNo)
-                    .show();
-                if answer != MessageDialogResult::Yes {
-                    return self.set_status("Save cancelled.");
-                }
+                self.dialog = Some(Dialog::Confirm(crate::dialogs::Confirm {
+                    title: "Save project as".into(),
+                    message: format!("{base} already exists. Replace it?"),
+                    accept: "Replace".into(),
+                    other: None,
+                    save_first: false,
+                    default_accept: false,
+                    cancelled: "Save cancelled.".into(),
+                    then: Box::new(move |app: &mut App| app.save_project_to(path)),
+                }));
+                return;
             }
         }
+        self.save_project_to(path);
+    }
+
+    /// Saves the project to `path`, which becomes its file.
+    fn save_project_to(&mut self, path: PathBuf) {
         match save_project(self.projects.file.as_mut().unwrap(), &path) {
             Ok(()) => {
                 self.projects.path = Some(path.clone());
@@ -496,14 +511,15 @@ impl App {
         if k == 0 || self.fitting() {
             return;
         }
-        let answer = MessageDialog::new()
-            .set_level(MessageLevel::Warning)
-            .set_title("Delete runs")
-            .set_description(format!("Delete {k} run{} from the project?\n\nEdit > Restore deleted runs brings them back.", plural(k)))
-            .set_buttons(MessageButtons::OkCancelCustom("Delete".into(), "Cancel".into()))
-            .show();
-        if matches!(answer, MessageDialogResult::Ok) || matches!(&answer, MessageDialogResult::Custom(c) if c == "Delete") {
-            self.delete_selected_runs();
-        }
+        self.dialog = Some(Dialog::Confirm(crate::dialogs::Confirm {
+            title: "Delete runs".into(),
+            message: format!("Delete {k} run{} from the project? Edit > Restore deleted runs brings them back.", plural(k)),
+            accept: "Delete".into(),
+            other: None,
+            save_first: false,
+            default_accept: true,
+            cancelled: String::new(),
+            then: Box::new(|app: &mut App| app.delete_selected_runs()),
+        }));
     }
 }

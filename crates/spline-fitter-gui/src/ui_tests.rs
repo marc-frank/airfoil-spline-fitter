@@ -717,3 +717,65 @@ fn pivot_is_an_icon_toggle_that_is_kept() {
     h.run_steps(2);
     assert!(!h.state().explorer.pivot && !h.state().store.bool("explorer/pivot", true));
 }
+
+/// Unsaved runs, replacing a file and deleting runs ask in the app's own
+/// dialog, and its answer finishes the action that asked.
+#[test]
+fn questions_are_dialogs_of_the_app() {
+    use egui_kittest::kittest::Queryable;
+    let mut h = harness();
+    h.state_mut().new_naca_airfoil("2412", 41, true);
+    h.run_steps(2);
+    h.state_mut().on_fit();
+    finish(&mut h);
+    assert!(h.state().projects.modified);
+    // A new airfoil would lose the unsaved run: asked first.
+    h.state_mut().new_naca_airfoil("0012", 41, true);
+    h.run_steps(3);
+    assert!(matches!(h.state().dialog, Some(crate::dialogs::Dialog::Confirm(_))));
+    shot(&mut h, "q_unsaved_runs");
+    assert_eq!(h.state().airfoil.as_ref().unwrap().name, "NACA 2412", "nothing changed yet");
+    h.get_by_label("Cancel").click();
+    h.run_steps(3);
+    assert!(h.state().dialog.is_none());
+    assert_eq!(h.state().status, "Cancelled: the project stays open");
+    assert_eq!(h.state().airfoil.as_ref().unwrap().name, "NACA 2412");
+    // Don't save goes on with the new airfoil.
+    h.state_mut().new_naca_airfoil("0012", 41, true);
+    h.run_steps(3);
+    h.get_by_label("Don't save").click();
+    h.run_steps(3);
+    assert!(h.state().dialog.is_none());
+    assert_eq!(h.state().airfoil.as_ref().unwrap().name, "NACA 0012");
+    assert!(h.state().projects.file.is_none(), "the old project is gone");
+    // Deleting runs asks too; Delete deletes.
+    h.state_mut().on_fit();
+    finish(&mut h);
+    let id = h.state().projects.runs()[0].run_id.clone();
+    h.state_mut().select_run(&id);
+    h.state_mut().confirm_delete_runs();
+    h.run_steps(3);
+    shot(&mut h, "q_delete_runs");
+    assert_eq!(h.state().projects.runs().len(), 1, "asked first");
+    // The dialog's button, drawn after the explorer's Delete button.
+    h.get_all_by_label("Delete").last().unwrap().click();
+    h.run_steps(3);
+    assert!(h.state().projects.runs().is_empty());
+    // Replacing a file: Enter answers Cancel, as Qt's question defaulted to No.
+    h.state_mut().dialog = Some(crate::dialogs::Dialog::Confirm(crate::dialogs::Confirm {
+        title: "Save project as".into(),
+        message: "x.asfproj already exists. Replace it?".into(),
+        accept: "Replace".into(),
+        other: None,
+        save_first: false,
+        default_accept: false,
+        cancelled: "Save cancelled.".into(),
+        then: Box::new(|app: &mut App| app.set_status("Replaced")),
+    }));
+    h.run_steps(6);
+    shot(&mut h, "q_replace");
+    key(&mut h, egui::Key::Enter, egui::Modifiers::NONE);
+    h.run_steps(2);
+    assert!(h.state().dialog.is_none());
+    assert_eq!(h.state().status, "Save cancelled.");
+}

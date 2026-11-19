@@ -1723,7 +1723,7 @@ State: project, path, `modified`, selected runs, a stack of deletions, `last_num
 
 `reset()` (on a new airfoil): clear project, path, modified, deletions and `last_number`; label and title (19.16.5); disable Save project actions; empty the explorer; refresh the comparison plot; update run buttons.
 
-`confirm_discard()`: true without a project or without unsaved changes. Else a message box: title `Unsaved runs`, text `Save the changes to {basename of path, or "the project"}?`, informative `Runs that are not saved are lost.`, buttons `Save` (default), `Don't save` (Discard), `Cancel` (escape). Save -> save (19.16.3), true iff no longer modified; Don't save -> true; Cancel -> false.
+`confirm_discard()`: true without a project or without unsaved changes. Else a message box: title `Unsaved runs`, text `Save the changes to {basename of path, or "the project"}?`, informative `Runs that are not saved are lost.`, buttons `Save` (default), `Don't save` (Discard), `Cancel` (escape). Save -> save (19.16.3), true iff no longer modified; Don't save -> true; Cancel -> false. [Rust: the question is a dialog of the app (`dialogs::Confirm`) with the text in one paragraph and the buttons `Save` (default), `Don't save`, `Cancel` at the right; it does not block, so the action that asked returns and is repeated with the answer (Save once saved, Don't save at once); Cancel sets the action's cancelled status. Replacing a file (`Replace`, `Cancel` the default) and deleting runs (`Delete` the default, `Cancel`) ask in the same dialog.]
 
 #### 19.16.2 Opening a project
 
