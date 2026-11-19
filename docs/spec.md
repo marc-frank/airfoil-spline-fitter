@@ -1674,7 +1674,7 @@ Data: iteration numbers, times, errors floored at `1e-12`. `set_loss_curve_data(
 
 Toolbar: caption `RUNS`, stretch, `X axis` combo listing every explorer column name (default `Control points`; tooltip `The explorer column the runs are plotted along.` / `Only the runs that pass the explorer's filter are shown.`), `Y axis` combo listing the metric columns (default `Error`; tooltip `The fit metric plotted for each run`). Both combos are compact (minimum 4 characters) and their lists as wide as the longest name plus 24 px. Initial axes: bottom `Control points`, left `Error`, log y.
 
-Items: a trace (line `Ink.TRACE` width 1.5 when connected, else no line; circles size 6 in `Ink.TRACE`) and a marker (circles size 13, brush `Ink.MARKER` (orange), pen `Palette.CANVAS` width 2), the marker excluded from auto-range while the trace reserves room for it.
+Items: a trace (line `Ink.TRACE` width 1.5 when connected, else no line; circles size 6 in `Ink.TRACE`) and a marker (circles size 13, brush `Ink.MARKER` (orange), pen `Palette.CANVAS` width 2), the marker excluded from auto-range while the trace reserves room for it. [Rust: hovering within 8 px of a run's point shows a pointing hand and the tooltip `"Run {number}: {n} control points, {y column in lower case} {value}"`; a click selects that run as a plain click on its row does (19.16.6), loads it into the plots and scrolls its row into view. A sweep's points have no tooltip.]
 
 `refresh_comparison_plot()` (on explorer filter changes, combo changes, run list changes, after adding runs with `replot`):
 

@@ -290,6 +290,7 @@ impl App {
         self.comparison.log_y = true;
         self.comparison.ticks = None;
         self.comparison.tolerance = None;
+        self.comparison.labels.clear();
         self.comparison.set(vec![], false);
         self.comparison.marked.clear();
         self.explorer.forget_points();

@@ -140,6 +140,9 @@ Python results), and differs on purpose where the behaviour was a defect:
   curve's count, each junction point once, as the status text and the runs
   plot do; Python added the sections' counts, so it read 13 where the status
   said 12.
+- A point in the runs plot names its run on hover, and a click selects that
+  run, shows its fit and scrolls its row into view (in Python the points
+  did nothing): after a tolerance search, click any count to see that fit.
 - The runs plot draws the tolerance as a dashed line when its y axis is the
   error or the max deviation and every plotted run is a tolerance run with
   the same tolerance.

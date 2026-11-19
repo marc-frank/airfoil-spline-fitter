@@ -791,7 +791,12 @@ pub struct ComparisonPlot {
     /// The tolerance the plotted runs share, drawn as a dashed line when
     /// the y axis is their deviation.
     pub tolerance: Option<f64>,
+    /// A tooltip for each point (the run it stands for); none in a sweep.
+    pub labels: Vec<String>,
 }
+
+/// How near the pointer a point must be to be hovered or clicked.
+const PICK_RADIUS: f32 = 8.0;
 
 impl ComparisonPlot {
     pub fn set(&mut self, points: Vec<[f64; 2]>, connected: bool) {
@@ -807,7 +812,8 @@ impl ComparisonPlot {
         self.view.follow = true;
     }
 
-    pub fn show(&mut self, ui: &mut Ui, p: &Palette, motion_ms: u64) {
+    /// Draws the plot; the index of a labelled point that was clicked.
+    pub fn show(&mut self, ui: &mut Ui, p: &Palette, motion_ms: u64) -> Option<usize> {
         let ticks = self.ticks.clone();
         let axes = Axes {
             x_label: &self.x_label,
@@ -822,7 +828,9 @@ impl ComparisonPlot {
             marker_pad: marker_pad(size::MARKER_SIZE, 2.0),
         };
         let (points, marked, connected, tolerance) = (&self.points, &self.marked, self.connected, self.tolerance);
-        show_plot(ui, p, "comparison_plot", &mut self.view, &axes, motion_ms, |c| {
+        let mut screen: Vec<(usize, Pos2)> = Vec::new();
+        let response = show_plot(ui, p, "comparison_plot", &mut self.view, &axes, motion_ms, |c| {
+            screen = points.iter().enumerate().filter_map(|(i, q)| c.screen(*q).filter(|s| c.frame().contains(*s)).map(|s| (i, s))).collect();
             // As in the main plot: a dashed construction line.
             if let Some(y) = tolerance.zip(points.first()).and_then(|(t, q)| c.screen([q[0], t])).map(|s| s.y) {
                 let frame = c.frame();
@@ -837,6 +845,18 @@ impl ComparisonPlot {
             c.markers(points.iter().copied(), Marker::Circle, 6.0, p.trace(), Stroke::NONE);
             c.markers(marked.iter().copied(), Marker::Circle, size::MARKER_SIZE, INK, Stroke::new(2.0, p.canvas));
         });
+        // The run under the pointer: its tooltip, and a click selects it.
+        let near = response.hover_pos().and_then(|at| {
+            screen
+                .iter()
+                .filter(|(i, s)| *i < self.labels.len() && s.distance(at) <= PICK_RADIUS)
+                .min_by(|a, b| a.1.distance(at).total_cmp(&b.1.distance(at)))
+                .map(|&(i, _)| i)
+        })?;
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        let clicked = response.clicked();
+        response.on_hover_text_at_pointer(&self.labels[near]);
+        clicked.then_some(near)
     }
 }
 

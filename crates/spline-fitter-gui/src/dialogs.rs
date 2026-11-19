@@ -544,7 +544,9 @@ impl App {
                     self.refresh_comparison();
                 }
             });
-            self.comparison.show(ui, &p, self.zoom_ms);
+            if let Some(i) = self.comparison.show(ui, &p, self.zoom_ms) {
+                self.click_plotted_run(i);
+            }
         });
     }
 }

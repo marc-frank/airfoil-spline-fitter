@@ -192,6 +192,9 @@ fn light_theme_and_dialogs() {
         assert!(xs.first() != xs.last(), "{xs:?}");
         // The search's tolerance is a line in the plot of its errors.
         assert_eq!(app.comparison.tolerance, Some(1e-4));
+        // Each point names its run.
+        assert_eq!(app.comparison.labels.len(), app.comparison.points.len());
+        assert!(app.comparison.labels.iter().all(|l| l.starts_with("Run ") && l.contains(" control points, error ")), "{:?}", app.comparison.labels);
     }
     // The rows' scroll bar is at the box's edge: clicking its track below
     // the handle pages down to the last runs.
@@ -206,6 +209,31 @@ fn light_theme_and_dialogs() {
             click_at(&mut h, 1482.0, 790.0);
         }
         assert!(in_run_column(&h), "paged down to the last run");
+    }
+    // A click on a point selects its run, shows that fit and brings its
+    // row into view: the most control points, the search's first run, is
+    // out of view after paging down.
+    let number = {
+        let app = h.state_mut();
+        let last = app.comparison.points.len() - 1;
+        let point = app.comparison.points[last];
+        app.click_plotted_run(last);
+        let id = app.projects.selected.iter().next().unwrap().clone();
+        assert_eq!(app.projects.selected.len(), 1);
+        assert_eq!(app.projects.shown_run.as_deref(), Some(id.as_str()));
+        assert_eq!(app.comparison.marked, vec![point]);
+        let run = app.projects.run(&id).unwrap();
+        assert_eq!(run.result.num_control_points() as f64, point[0]);
+        assert!(app.comparison.labels[last].starts_with(&format!("Run {}: ", run.number)));
+        run.number.to_string()
+    };
+    {
+        use egui_kittest::kittest::Queryable;
+        let ppp = h.ctx.pixels_per_point();
+        let in_run_column = |h: &Harness<'static, App>| h.query_all_by_label(&number).any(|n| n.rect().min.x < 1010.0 * ppp);
+        assert!(!in_run_column(&h), "run {number} starts out of view");
+        h.run_steps(3);
+        assert!(in_run_column(&h), "run {number} brought into view");
     }
     h.state_mut().on_report();
     h.run_steps(4);
@@ -545,3 +573,4 @@ fn the_column_order_is_kept_by_name() {
     assert_eq!(names.split(',').count(), default.split(',').count());
     assert_eq!(ExplorerState::with_column_names(&names).column_names(), names);
 }
+

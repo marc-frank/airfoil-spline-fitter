@@ -108,6 +108,8 @@ pub struct ExplorerState {
     sections: Vec<(usize, egui::Rect)>,
     /// Where the run table's own scroll bar moved its rows to.
     scroll_to: Option<f32>,
+    /// Bring the current run's row into view on the next frame.
+    reveal: bool,
 }
 
 impl Default for ExplorerState {
@@ -126,6 +128,7 @@ impl Default for ExplorerState {
             order: (0..COLUMNS.len()).collect(),
             sections: Vec::new(),
             scroll_to: None,
+            reveal: false,
         }
     }
 }
@@ -401,6 +404,14 @@ impl App {
             [bits] if deviation && bits != u64::MAX => Some(f64::from_bits(bits)),
             _ => None,
         };
+        // "Run 12: 30 control points, max deviation 8.71e-06"
+        let label = |id: &str, y: f64| {
+            let value = if y.fract() == 0.0 { format!("{y}") } else { spline_fitter::formatting::format_error(y) };
+            self.projects.run(id).map_or_else(String::new, |r| {
+                format!("Run {}: {} control points, {} {value}", r.number, r.result.num_control_points(), COLUMNS[yc].name.to_lowercase())
+            })
+        };
+        c.labels = xy.iter().map(|(id, q)| label(id, q[1])).collect();
         let unique = xy.windows(2).all(|w| w[0].1[0] != w[1].1[0]);
         c.set(xy.iter().map(|p| p.1).collect(), unique);
         self.explorer.points = Some(xy);
@@ -413,6 +424,14 @@ impl App {
         }
         let points = self.explorer.points.as_ref().unwrap();
         self.comparison.marked = points.iter().filter(|(id, _)| self.projects.selected.contains(id)).map(|(_, p)| *p).collect();
+    }
+
+    /// A click on the `index`th point of the runs plot: selects its run as
+    /// a plain click on its row does, and brings the row into view.
+    pub fn click_plotted_run(&mut self, index: usize) {
+        let Some(id) = self.explorer.points.as_ref().and_then(|p| p.get(index)).map(|(id, _)| id.clone()) else { return };
+        self.click_run(&id, std::slice::from_ref(&id), egui::Modifiers::NONE);
+        self.explorer.reveal = true;
     }
 
     fn on_selection_changed(&mut self) {
@@ -686,7 +705,7 @@ impl App {
         let mut double: Option<String> = None;
         let delete = ui.input(|i| i.key_pressed(egui::Key::Delete));
         let page = ((ui.available_height() - HEADER_HEIGHT) / ROW_HEIGHT).floor().max(1.0) as usize;
-        let reveal = self.table_keys(ui, &order, false, page);
+        let reveal = self.table_keys(ui, &order, false, page).or_else(|| self.take_reveal(&order));
         let columns: Vec<usize> = self.explorer.order.clone();
         self.explorer.sections.clear();
         // Columns fit their contents when the runs change: the header with
@@ -807,7 +826,7 @@ impl App {
             })
             .collect();
         let height = columns.len() as f32 * ROW_HEIGHT;
-        let reveal = self.table_keys(ui, &order, true, 1);
+        let reveal = self.table_keys(ui, &order, true, 1).or_else(|| self.take_reveal(&order));
         let mut clicked: Option<(String, egui::Modifiers)> = None;
         let mut double: Option<String> = None;
         egui::ScrollArea::vertical().id_salt("pivot_v").auto_shrink([false, false]).show(ui, |ui| {
@@ -867,6 +886,12 @@ impl App {
     /// last. Shift selects from the anchor to there; Ctrl moves without
     /// selecting, and Ctrl+Space then selects or deselects the run. The
     /// run moved to, to scroll into view.
+    /// The current run's place in `order` when it is to be brought into view.
+    fn take_reveal(&mut self, order: &[String]) -> Option<usize> {
+        let current = self.explorer.current.as_ref();
+        std::mem::take(&mut self.explorer.reveal).then(|| order.iter().position(|id| Some(id) == current)).flatten()
+    }
+
     fn table_keys(&mut self, ui: &Ui, order: &[String], pivoted: bool, page: usize) -> Option<usize> {
         if !ui.memory(|m| m.has_focus(table_focus())) || order.is_empty() {
             return None;
