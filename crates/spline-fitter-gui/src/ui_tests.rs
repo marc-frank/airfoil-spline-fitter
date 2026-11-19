@@ -693,17 +693,15 @@ fn the_run_table_pages_and_follows_the_runs_plot() {
 #[test]
 fn a_missed_tolerance_is_not_a_solver_failure() {
     let mut h = harness();
-    h.state_mut().new_naca_airfoil("2412", 41, true);
+    // Few points: the search reaches as many control points as they allow.
+    h.state_mut().new_naca_airfoil("2412", 12, true);
     h.run_steps(2);
     {
         let app = h.state_mut();
         app.settings.tolerance_goal = true;
         app.settings.auto_tolerance = false;
-        app.settings.tolerance = 1e-7;
+        app.settings.tolerance = 1e-9;
         app.settings.grow = true;
-        // Free knots at most two to a section: no span can be split.
-        app.settings.knot_placement = spline_fitter::bspline_varpro::KnotPlacement::Free;
-        app.settings.knot_gap = 0.4;
     }
     h.run_steps(2);
     h.state_mut().on_fit();
@@ -711,10 +709,11 @@ fn a_missed_tolerance_is_not_a_solver_failure() {
     let status = &h.state().status;
     assert!(status.starts_with("Completed (VarPro LM): "), "{status}");
     assert!(status.contains(" | Tolerance not reached: "), "{status}");
+    assert!(status.contains(" control points are as many as the points of a section allow; the closest fit, "), "{status}");
     assert!(!status.contains("did not converge"), "{status}");
     // The readout's report knows the tolerance it missed (drawn in warn).
     let report = h.state().fit.as_ref().unwrap().report.clone().unwrap();
-    assert!(report.tolerance == Some(1e-7) && report.max_deviation > 1e-7);
+    assert!(report.tolerance == Some(1e-9) && report.max_deviation > 1e-9);
     shot(&mut h, "m_missed_tolerance");
 }
 

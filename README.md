@@ -148,12 +148,15 @@ Python results), and differs on purpose where the behaviour was a defect:
   (a search: of the fit it ended on). Python showed the count as set (for
   a tolerance run, its start count) and the fitted count of the whole
   curve in a second column, Fitted control points, which is gone.
-- A tolerance search whose largest deviation drops by less than a fifth
-  while 10 control points are added (or three quarters of the count of the
-  last fit that did drop, if more) stops with the closest fit and names the
-  point where the deviation stays (a kink or noise in the data); Python kept
-  adding control points for all its rounds. A search runs at most 200 fits
-  instead of 40 rounds, as each fit adds one control point.
+- A tolerance search runs until a fit meets the tolerance, up to 200 fits
+  (Python: 40 rounds) or as many control points as a section's points
+  allow; one that ends without meeting it keeps the closest fit and names
+  where that fit is farthest from the data. There is no rule that stops a
+  search whose deviation stays level: fresh fits stay level for many counts
+  and then drop (Darkstar tip at 1e-5, smoothing 1e-7: about 3e-5 from 19
+  to 57 control points, within the tolerance at 64), so such a rule ended
+  searches that would have met it. Esc cancels a search that takes too
+  long and keeps the closest fit so far.
 - With sections of different counts the control-point readout gives the
   curve's count, each junction point once, as the status text and the runs
   plot do; Python added the sections' counts, so it read 13 where the status

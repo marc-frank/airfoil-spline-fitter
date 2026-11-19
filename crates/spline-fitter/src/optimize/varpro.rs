@@ -15,14 +15,11 @@ use crate::models::{OptimizationConfig, SplineConfig};
 use crate::{bail, Result, Vec2};
 
 const REGULARIZATION: f64 = 1e-12;
-/// Control points added without a gain of [`STALL_GAIN`] in the largest
-/// deviation after which a search stops: this many, or three quarters of the
-/// count of the last gain if that is more. The deviation of measured
-/// airfoils stays level for up to 20 control points before it drops again.
-const STALL_POINTS: usize = 10;
-/// The relative drop of the largest deviation that counts as a gain.
-const STALL_GAIN: f64 = 0.2;
-/// The most fits of one search.
+/// The most fits of one search. There is no rule that stops a search whose
+/// deviation stays level: fresh fits stay level for many counts and then
+/// drop (Darkstar tip at 1e-5, smoothing 1e-7: about 3e-5 from 19 to 57
+/// control points, within the tolerance at 64), so any such rule stopped
+/// searches that would have met it. Esc cancels one that takes too long.
 const MAX_FITS: usize = 200;
 
 /// Forwards library progress to an application monitor, counting
@@ -195,12 +192,11 @@ fn search(
             break 'search (best, true, within);
         }
         let mut closest = 0;
-        // The largest deviation and count of the last fit that gained
-        // STALL_GAIN on the one before.
-        let mut gained = (fits[0].deviation, start);
+        // Where the closest fit is farthest from the data.
+        let near = |f: &Fitted| format!("the closest fit, {} control points, is farthest near ({:.4}, {:.4})", f.count, f.worst.x, f.worst.y);
         for count in start + 1..=limit {
             if fits.len() >= MAX_FITS {
-                break 'search (closest, false, "Tolerance not reached within max_iterations.".into());
+                break 'search (closest, false, format!("Tolerance not reached in {MAX_FITS} fits; {}.", near(&fits[closest])));
             }
             let fit = one(count, relay)?;
             let (deviation, stopped) = (fit.deviation, fit.stopped);
@@ -215,25 +211,15 @@ fn search(
             if deviation < fits[closest].deviation {
                 closest = index;
             }
-            // A kink or noise in the data holds the largest deviation where
-            // more control points cannot lower it: stop with the closest fit.
-            if deviation <= (1.0 - STALL_GAIN) * gained.0 {
-                gained = (deviation, count);
-            }
-            let added = count - gained.1;
-            if added >= STALL_POINTS.max(3 * gained.1 / 4) {
-                let p = fits[closest].worst;
-                break 'search (
-                    closest,
-                    false,
-                    format!(
-                        "Tolerance not reached: {added} more control points lowered the largest deviation by less than a fifth; it stays near ({:.4}, {:.4}); the data may have a kink or noise there.",
-                        p.x, p.y
-                    ),
-                );
-            }
         }
-        (closest, false, format!("Tolerance not reached: {limit} control points are as many as the points of a section allow."))
+        (
+            closest,
+            false,
+            format!(
+                "Tolerance not reached: {limit} control points are as many as the points of a section allow; {}.",
+                near(&fits[closest])
+            ),
+        )
     };
     // A fit stopped part way is not one of the search's fits, unless it is
     // the only one.
