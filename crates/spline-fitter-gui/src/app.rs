@@ -66,6 +66,8 @@ pub struct App {
     pub discard_confirmed: bool,
     /// The user answered the unsaved-runs question of closing: close.
     pub close_now: bool,
+    /// The display choices last written to the settings file.
+    saved_display: Option<Display>,
     /// A fit `on_fit` prepared: it starts on the next frame.
     pub preparing: Option<Box<(spline_fitter::models::SplineConfig, spline_fitter::models::OptimizationConfig, AirfoilData)>>,
     pub dialog: Option<Dialog>,
@@ -125,6 +127,7 @@ impl App {
             fit_requested: false,
             discard_confirmed: false,
             close_now: false,
+            saved_display: None,
             preparing: None,
             dialog: None,
             report_panel: None,
@@ -132,8 +135,74 @@ impl App {
             batch_source: String::new(),
             batch_target: String::new(),
         };
+        app.load_display();
         app.refresh_comparison();
         app
+    }
+
+    /// The plot and view choices as kept between sessions.
+    fn display(&self) -> Display {
+        let m = &self.main_plot;
+        Display {
+            knots: m.show_knots,
+            comb: m.comb_on,
+            comb_quantity: m.comb.quantity,
+            comb_height: m.comb.height,
+            comb_density: m.comb.density,
+            deviation: m.deviation_on,
+            deviation_height: m.deviation_height,
+            live: self.live_mode as usize,
+            loss_x: self.loss.x_axis,
+            loss_log: self.loss.log_mode,
+            runs_x: crate::runs::COLUMNS[self.explorer.x_column].name,
+            runs_y: crate::runs::COLUMNS[self.explorer.y_column].name,
+        }
+    }
+
+    /// The display choices of the last session (defaults where none).
+    pub(crate) fn load_display(&mut self) {
+        let d = self.display();
+        let s = &self.store;
+        let m = &mut self.main_plot;
+        m.show_knots = s.bool("display/knots", d.knots);
+        m.comb_on = s.bool("display/comb", d.comb);
+        m.comb.quantity = (s.int("display/comb_quantity", d.comb_quantity as i64).max(0) as usize).min(crate::overlays::QUANTITIES.len() - 1);
+        m.comb.height = s.float("display/comb_height", d.comb_height).max(0.0);
+        m.comb.density = s.int("display/comb_density", d.comb_density as i64).clamp(10, 100_000) as usize;
+        m.deviation_on = s.bool("display/deviation", d.deviation);
+        m.deviation_height = s.float("display/deviation_height", d.deviation_height).max(0.0);
+        self.live_mode = LiveMode::ALL[s.int("display/live", d.live as i64).clamp(0, 2) as usize];
+        self.loss.x_axis = s.int("display/loss_x", d.loss_x as i64).clamp(0, 1) as usize;
+        self.loss.log_mode = s.int("display/loss_log", d.loss_log as i64).clamp(0, 3) as usize;
+        let column = |name: String, default: usize| crate::runs::COLUMNS.iter().position(|c| c.name == name).unwrap_or(default);
+        self.explorer.x_column = column(s.string("display/runs_x", d.runs_x), self.explorer.x_column);
+        let y = column(s.string("display/runs_y", d.runs_y), self.explorer.y_column);
+        if crate::runs::COLUMNS[y].metric {
+            self.explorer.y_column = y;
+        }
+        self.saved_display = Some(self.display());
+    }
+
+    /// Writes the display choices when one changed.
+    fn save_display(&mut self) {
+        let d = self.display();
+        if self.saved_display.as_ref() == Some(&d) {
+            return;
+        }
+        let s = &mut self.store;
+        s.set_bool("display/knots", d.knots);
+        s.set_bool("display/comb", d.comb);
+        s.set_int("display/comb_quantity", d.comb_quantity as i64);
+        s.set_float("display/comb_height", d.comb_height);
+        s.set_int("display/comb_density", d.comb_density as i64);
+        s.set_bool("display/deviation", d.deviation);
+        s.set_float("display/deviation_height", d.deviation_height);
+        s.set_int("display/live", d.live as i64);
+        s.set_int("display/loss_x", d.loss_x as i64);
+        s.set_int("display/loss_log", d.loss_log as i64);
+        s.set_string("display/runs_x", d.runs_x);
+        s.set_string("display/runs_y", d.runs_y);
+        self.saved_display = Some(d);
     }
 
     pub fn fitting(&self) -> bool {
@@ -632,6 +701,25 @@ impl App {
     }
 }
 
+/// The plot and view choices kept between sessions: the plot toggles and
+/// their settings, the live preview, the convergence axes and the runs
+/// plot's columns.
+#[derive(Debug, Clone, PartialEq)]
+struct Display {
+    knots: bool,
+    comb: bool,
+    comb_quantity: usize,
+    comb_height: f64,
+    comb_density: usize,
+    deviation: bool,
+    deviation_height: f64,
+    live: usize,
+    loss_x: usize,
+    loss_log: usize,
+    runs_x: &'static str,
+    runs_y: &'static str,
+}
+
 /// The columns of a menu as Qt lays them out: the text 20 px in (and a
 /// check column more when an item can be checked), the shortcuts in a
 /// column of their own at the right, 24 px from the edge.
@@ -827,6 +915,7 @@ impl eframe::App for App {
         self.show_dialogs(&ctx);
 
         self.settle_settings();
+        self.save_display();
         if std::mem::take(&mut self.fit_requested) {
             self.on_fit();
         }

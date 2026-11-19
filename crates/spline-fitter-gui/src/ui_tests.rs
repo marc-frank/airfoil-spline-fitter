@@ -813,3 +813,36 @@ fn questions_are_dialogs_of_the_app() {
     assert!(h.state().dialog.is_none());
     assert_eq!(h.state().status, "Save cancelled.");
 }
+
+/// The plot toggles, the live preview, the convergence axes and the runs
+/// plot's columns are written when they change and read on the next start.
+#[test]
+fn display_choices_are_kept() {
+    let mut h = harness();
+    h.run_steps(2);
+    {
+        let app = h.state_mut();
+        app.main_plot.show_knots = true;
+        app.main_plot.deviation_on = true;
+        app.main_plot.deviation_height = 0.2;
+        app.live_mode = crate::job::LiveMode::Detailed;
+        app.loss.log_mode = 3;
+        app.explorer.y_column = crate::runs::COLUMNS.iter().position(|c| c.name == "Max deviation").unwrap();
+    }
+    h.run_steps(2);
+    let store = &h.state().store;
+    assert!(store.bool("display/knots", false) && store.bool("display/deviation", false));
+    assert_eq!(store.float("display/deviation_height", 0.0), 0.2);
+    assert_eq!((store.int("display/live", 0), store.int("display/loss_log", 0)), (2, 3));
+    assert_eq!(store.string("display/runs_y", ""), "Max deviation");
+    // The next start reads them.
+    {
+        let app = h.state_mut();
+        app.main_plot.show_knots = false;
+        app.live_mode = crate::job::LiveMode::Minimal;
+        app.explorer.y_column = 0;
+        app.load_display();
+        assert!(app.main_plot.show_knots && app.live_mode == crate::job::LiveMode::Detailed);
+        assert_eq!(crate::runs::COLUMNS[app.explorer.y_column].name, "Max deviation");
+    }
+}

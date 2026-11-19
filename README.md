@@ -172,6 +172,10 @@ Python results), and differs on purpose where the behaviour was a defect:
   an airfoil (with their keys), the empty run table what it will hold.
 - A fit that missed its tolerance shows its Max deviation readout in the
   warning colour, with the tolerance in the tooltip.
+- The plot toggles (Knots, Curvature comb, Deviation, with their settings),
+  Live preview, the convergence axes and the runs plot's columns are kept
+  between sessions; the fit settings in the sidebar still start at their
+  defaults.
 - The explorer keeps the column order you drag its headers into between
   sessions (Python started from the default order every time).
 - With uniform knots, a tolerance search that meets the tolerance removes
