@@ -250,7 +250,6 @@ pub mod size {
     pub const KNOT_SIZE: f32 = 8.0;
     pub const TRACE_POINT: f32 = 4.0;
     pub const MARKER_SIZE: f32 = 13.0;
-    pub const SHAPE_PLOT_HEIGHT: f32 = 200.0;
 }
 
 /// Type sizes in pixels.

@@ -163,6 +163,10 @@ Python results), and differs on purpose where the behaviour was a defect:
   sessions.
 - Unsaved runs, replacing a project file and deleting runs ask in a dialog
   of the app, in its theme, instead of the system's message box.
+- The fit report is not a window: the bottom-left block has tabs for the
+  convergence plot, the report and the thickness and camber chart of the
+  shown fit (View > Fit report or Ctrl+R picks Report), and the chosen tab
+  is kept between sessions.
 - The explorer keeps the column order you drag its headers into between
   sessions (Python started from the default order every time).
 - With uniform knots, a tolerance search that meets the tolerance removes

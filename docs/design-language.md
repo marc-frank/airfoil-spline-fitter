@@ -234,6 +234,7 @@ takes the `Palette`; none sets colors of its own.
 | Sidebar section | `sidebar::section` (caption, content, rule); `widgets::collapsible_header` for Advanced |
 | Form row | `widgets::form_row(ui, palette, "Label", enabled, tooltip, field)` |
 | Caption | `widgets::caption` |
+| Views of one block | `widgets::caption_tabs`: the block's captions as tabs, the chosen one in `text` (the bottom-left block: Convergence, Report, Shape) |
 | Muted note | `widgets::muted` |
 | Number readout | monospace at `typeface::READOUT` (the run bar) |
 | Primary button | `widgets::primary_button`. **One per view** (it is "Fit spline" in the main window) |

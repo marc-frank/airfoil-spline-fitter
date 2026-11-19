@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use rfd::FileDialog;
-use spline_fitter::analysis::{default_tolerance, fit_report};
+use spline_fitter::analysis::default_tolerance;
 use spline_fitter::bspline_varpro::airfoil::{resample, trailing_edge_segment, Naca4};
 use spline_fitter::bspline_varpro::export::{self, merge_curves, Units};
 use spline_fitter::formatting::file_stem;
@@ -287,26 +287,12 @@ impl App {
         }
     }
 
-    /// View > Fit report.
+    /// View > Fit report: the report of the shown fit in the bottom block.
     pub fn on_report(&mut self) {
-        let (Some(fit), Some(airfoil)) = (self.fit.as_mut(), &self.airfoil) else {
+        if !self.ensure_report_panel() {
             return self.set_status("No fitted spline.");
-        };
-        let curves = fit.curves();
-        if let Some(report) = &mut fit.report {
-            // A report saved before the shape keys gets them now.
-            if !report.shape_keys {
-                report.shape = spline_fitter::analysis::airfoil_shape(&curves);
-                report.shape_keys = true;
-            }
-        } else {
-            let report = fit_report(&airfoil.sections, fit, Some(airfoil.precision), None);
-            fit.report = Some(report);
         }
-        let title = [&airfoil.name, &airfoil.filename].into_iter().find(|s| !s.is_empty()).cloned().unwrap_or_else(|| "Fit report".into());
-        let report = fit.report.clone().unwrap();
-        let shape = spline_fitter::bspline_varpro::airfoil::thickness_and_camber(&fit.curves()).ok();
-        self.report = Some(crate::dialogs::ReportWindow::new(title, report, shape));
+        self.set_bottom_view(1);
     }
 
     // -----------------------------------------------------------------

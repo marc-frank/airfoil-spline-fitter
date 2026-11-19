@@ -17,6 +17,34 @@ pub fn caption(ui: &mut Ui, p: &Palette, text: &str) -> Response {
     response
 }
 
+/// Captions that choose a block's view, as tabs: the chosen one in the
+/// text colour, the others in the caption grey (lighter on hover); true
+/// when the choice changed.
+pub fn caption_tabs(ui: &mut Ui, p: &Palette, current: &mut usize, names: &[&str]) -> bool {
+    let mut changed = false;
+    ui.spacing_mut().item_spacing.x = size::PAD_LARGE;
+    for (i, name) in names.iter().enumerate() {
+        let font = crate::fonts::semibold_id(typeface::CAPTION);
+        let rich = RichText::new(name.to_uppercase()).font(font).extra_letter_spacing(1.0);
+        let galley = egui::WidgetText::from(rich).into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Body);
+        let (rect, response) = ui.allocate_exact_size(Vec2::new(galley.size().x, size::CAPTION_LINE), Sense::click());
+        let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+        let color = if i == *current {
+            p.text
+        } else if response.hovered() {
+            p.text_2
+        } else {
+            p.text_3
+        };
+        ui.painter().galley(rect.min, galley, color);
+        if response.clicked() && i != *current {
+            *current = i;
+            changed = true;
+        }
+    }
+    changed
+}
+
 /// A toolbar label in the second text grey, as wide as Qt lays it out (so
 /// rows computed from Qt's widths fit exactly).
 pub fn toolbar_label(ui: &mut Ui, p: &Palette, text: &str) -> Response {

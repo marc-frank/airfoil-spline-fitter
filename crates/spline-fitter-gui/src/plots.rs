@@ -910,7 +910,10 @@ pub fn shape_plot(ui: &mut Ui, p: &Palette, shape: &spline_fitter::bspline_varpr
             names.iter().map(|(n, ..)| c.painter.layout_no_wrap(n.to_string(), font.clone(), p.text_2).size().x).fold(0.0, f32::max);
         let left = c.frame().right() - LEGEND_INSET - widest;
         for (i, (name, color, dashed)) in names.into_iter().enumerate() {
-            let y = c.frame().top() + LEGEND_FIRST + i as f32 * LEGEND_ROW;
+            // A short chart (the bottom block) keeps its legend in the top
+            // corner, clear of the thickness curve.
+            let (first, row) = if c.frame().height() < 160.0 { (8.0, 16.0) } else { (LEGEND_FIRST, LEGEND_ROW) };
+            let y = c.frame().top() + first + i as f32 * row;
             let sample = [egui::pos2(left - 30.0, y), egui::pos2(left - 10.0, y)];
             let stroke = Stroke::new(1.5, color);
             if dashed {

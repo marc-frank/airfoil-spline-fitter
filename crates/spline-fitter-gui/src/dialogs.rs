@@ -106,9 +106,6 @@ enum Answer {
 const DIALOG_MARGIN: f32 = size::PAD_LARGE;
 const INPUT_DIALOG_MARGIN: f32 = 11.0;
 
-/// The report window: as wide as the Python version's, taller with a chart.
-const REPORT_WIDTH: f32 = 560.0;
-
 /// A dialog in a window of its own, `width` wide; its height follows the
 /// content. Where the platform has a single window (as under test) it is
 /// a window inside the main one. The content returns the answer; closing
@@ -253,11 +250,10 @@ impl App {
     /// Whether a dialog or the report is open (the main window then takes
     /// no input, as behind a modal dialog).
     pub fn modal_open(&self) -> bool {
-        self.dialog.is_some() || self.report.is_some()
+        self.dialog.is_some()
     }
 
     pub fn show_dialogs(&mut self, ctx: &egui::Context) {
-        self.report_window(ctx);
         let Some(mut dialog) = self.dialog.take() else { return };
         let p = self.palette.clone();
         let form = |width: f32| width - 2.0 * DIALOG_MARGIN - size::LABEL_WIDTH - size::GROUP;
@@ -533,62 +529,6 @@ impl App {
 
     /// The fit report: a window of its own with the report as a document
     /// above the thickness and camber chart, and a Close button.
-    fn report_window(&mut self, ctx: &egui::Context) {
-        let Some(window) = self.report.as_mut() else { return };
-        let p = self.palette.clone();
-        let height = if window.shape.is_some() { 720.0 } else { 520.0 };
-        let builder =
-            egui::ViewportBuilder::default().with_title("Fit report").with_inner_size([REPORT_WIDTH, height]).with_minimize_button(false);
-        let mut close = false;
-        ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("fit_report"), builder, |ui, class| {
-            let frame = egui::Frame::new().fill(ui.visuals().window_fill).inner_margin(egui::Margin {
-                left: 0,
-                right: 0,
-                top: 0,
-                bottom: size::PAD_LARGE as i8,
-            });
-            frame.show(ui, |ui| {
-                if class == egui::ViewportClass::EmbeddedWindow {
-                    ui.set_width(REPORT_WIDTH);
-                    ui.set_height(height - size::PAD_LARGE);
-                }
-                let pad = size::PAD_LARGE;
-                let total = ui.available_height();
-                // The document and the chart share the height above the buttons.
-                let below = size::CONTROL_HEIGHT + pad;
-                let parts = if window.shape.is_some() { 2.0 } else { 1.0 };
-                let each = ((total - below - pad * (parts - 1.0)) / parts).max(80.0);
-                let width = ui.available_width();
-                let (rect, _) = ui.allocate_exact_size(egui::vec2(width, each), egui::Sense::hover());
-                report_document(ui, &p, rect, &window.title, &window.report);
-                let mut top = rect.bottom() + pad;
-                if let Some(shape) = &window.shape {
-                    let chart = egui::Rect::from_min_size(
-                        egui::pos2(rect.left() + pad, top),
-                        egui::vec2(width - 2.0 * pad, each.max(size::SHAPE_PLOT_HEIGHT)),
-                    );
-                    ui.allocate_rect(chart, egui::Sense::hover());
-                    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(chart));
-                    shape_plot(&mut child, &p, shape, &mut window.view);
-                    top = chart.bottom() + pad;
-                }
-                let row =
-                    egui::Rect::from_min_size(egui::pos2(rect.left() + pad, top), egui::vec2(width - 2.0 * pad, size::CONTROL_HEIGHT));
-                ui.allocate_rect(row, egui::Sense::hover());
-                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(row).layout(Layout::right_to_left(Align::Center)));
-                // The only button: the default (Enter closes).
-                close |= dialog_button(&mut child, &p, "Close", true, true);
-            });
-            if class != egui::ViewportClass::EmbeddedWindow {
-                close |= ui.input(|i| i.viewport().close_requested());
-            }
-            close |= ui.input(|i| i.key_pressed(egui::Key::Escape));
-        });
-        if close {
-            self.report = None;
-        }
-    }
-
     pub fn comparison_block(&mut self, ui: &mut Ui) {
         let p = self.palette.clone();
         ui.vertical(|ui| {
@@ -626,18 +566,117 @@ impl App {
 }
 
 /// The fit report window.
-pub struct ReportWindow {
-    title: String,
-    report: Report,
-    shape: Option<Shape>,
-    view: View,
+/// The report of the shown fit, for the Report and Shape views of the
+/// bottom block; `key` tells the fit it belongs to.
+pub struct ReportPanel {
+    pub key: u64,
+    pub title: String,
+    pub report: Report,
+    pub shape: Option<Shape>,
+    pub view: View,
 }
 
-impl ReportWindow {
-    pub fn new(title: String, report: Report, shape: Option<Shape>) -> Self {
-        ReportWindow { title, report, shape, view: View::default() }
+impl App {
+    /// The bottom-left block: the convergence plot, the fit report or the
+    /// thickness and camber chart, chosen by the tabs in its header.
+    pub fn loss_block(&mut self, ui: &mut Ui) {
+        let p = self.palette.clone();
+        ui.vertical(|ui| {
+            let row = egui::vec2(ui.available_width(), size::CONTROL_HEIGHT);
+            ui.allocate_ui_with_layout(row, Layout::left_to_right(Align::Center), |ui| {
+                let mut view = self.bottom_view;
+                if widgets::caption_tabs(ui, &p, &mut view, &BOTTOM_VIEWS) {
+                    self.set_bottom_view(view);
+                }
+                if self.bottom_view == 0 {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if widgets::combo(ui, &p, "loss_log", &mut self.loss.log_mode, &["None", "X only", "Y only", "Both"], 0.0, "") {
+                            self.loss.view.follow = true;
+                        }
+                        widgets::toolbar_label(ui, &p, "Log scale");
+                        if widgets::combo(ui, &p, "loss_x", &mut self.loss.x_axis, &["Iterations", "Time"], 0.0, "") {
+                            self.loss.view.follow = true;
+                        }
+                        widgets::toolbar_label(ui, &p, "X axis");
+                    });
+                }
+            });
+            if self.bottom_view == 0 {
+                self.loss.show(ui, &p, self.zoom_ms);
+                return;
+            }
+            let rect = ui.available_rect_before_wrap();
+            ui.allocate_rect(rect, egui::Sense::hover());
+            let ready = !self.fitting() && self.ensure_report_panel();
+            match (ready, self.report_panel.as_mut()) {
+                (true, Some(panel)) if self.bottom_view == 1 => report_document(ui, &p, rect, &panel.title, &panel.report),
+                (true, Some(panel)) if panel.shape.is_some() => {
+                    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+                    shape_plot(&mut child, &p, panel.shape.as_ref().unwrap(), &mut panel.view);
+                }
+                _ => {
+                    let radius = egui::CornerRadius::same(size::RADIUS);
+                    ui.painter().rect_filled(rect, radius, p.canvas);
+                    ui.painter().rect_stroke(rect, radius, egui::Stroke::new(1.0, p.rule), egui::StrokeKind::Inside);
+                    let text = if self.fitting() {
+                        "Shown when the fit is done"
+                    } else if self.bottom_view == 1 {
+                        "The report of the shown fit: fit a spline or pick a run"
+                    } else {
+                        "The thickness and camber of the shown fit: fit a spline or pick a run"
+                    };
+                    let font = egui::FontId::proportional(crate::theme::typeface::BASE);
+                    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, text, font, p.text_3);
+                }
+            }
+        });
+    }
+
+    /// Chooses the bottom block's view, kept between sessions.
+    pub fn set_bottom_view(&mut self, view: usize) {
+        self.bottom_view = view;
+        self.store.set_int("view/bottom", view as i64);
+    }
+
+    /// The report panel of the shown fit, made when the fit changed; false
+    /// without a fit.
+    pub fn ensure_report_panel(&mut self) -> bool {
+        let (Some(fit), Some(airfoil)) = (self.fit.as_mut(), &self.airfoil) else {
+            self.report_panel = None;
+            return false;
+        };
+        let key = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            for c in fit.section_control_points.iter().flatten() {
+                (c.x.to_bits(), c.y.to_bits()).hash(&mut h);
+            }
+            fit.final_error.to_bits().hash(&mut h);
+            h.finish()
+        };
+        if self.report_panel.as_ref().is_some_and(|r| r.key == key) {
+            return true;
+        }
+        let curves = fit.curves();
+        if let Some(report) = &mut fit.report {
+            // A report saved before the shape keys gets them now.
+            if !report.shape_keys {
+                report.shape = spline_fitter::analysis::airfoil_shape(&curves);
+                report.shape_keys = true;
+            }
+        } else {
+            fit.report = Some(spline_fitter::analysis::fit_report(&airfoil.sections, fit, Some(airfoil.precision), None));
+        }
+        let title = [&airfoil.name, &airfoil.filename].into_iter().find(|s| !s.is_empty()).cloned().unwrap_or_else(|| "Fit report".into());
+        let report = fit.report.clone().expect("made above");
+        let shape = spline_fitter::bspline_varpro::airfoil::thickness_and_camber(&curves).ok();
+        self.report_panel = Some(ReportPanel { key, title, report, shape, view: View::default() });
+        true
     }
 }
+
+/// The views of the bottom-left block.
+pub const BOTTOM_VIEWS: [&str; 3] = ["Convergence", "Report", "Shape"];
 
 /// The report as the Python version's text browser showed it: a framed,
 /// scrolling document with a heading, a table of label and value rows and
@@ -645,7 +684,8 @@ impl ReportWindow {
 fn report_document(ui: &mut Ui, p: &Palette, rect: egui::Rect, title: &str, report: &Report) {
     const ROW: f32 = 31.0;
     let radius = egui::CornerRadius::same(size::RADIUS);
-    ui.painter().rect_filled(rect, radius, p.panel);
+    // Framed as the plots beside it.
+    ui.painter().rect_filled(rect, radius, p.canvas);
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(1.0)));
     crate::theme::scroll_handles(&mut child, p);
     let body = egui::FontId::proportional(crate::theme::typeface::BASE);

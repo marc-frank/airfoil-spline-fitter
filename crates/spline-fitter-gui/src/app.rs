@@ -7,7 +7,7 @@ use eframe::egui::{self, Align, Key, KeyboardShortcut, Layout, Modifiers, RichTe
 use spline_fitter::geometry::AirfoilData;
 use spline_fitter::models::FitResult;
 
-use crate::dialogs::{Dialog, ReportWindow};
+use crate::dialogs::{Dialog, ReportPanel};
 use crate::explorer::{ExplorerState, Projects};
 use crate::fitting::Running;
 use crate::history::History;
@@ -69,7 +69,10 @@ pub struct App {
     /// A fit `on_fit` prepared: it starts on the next frame.
     pub preparing: Option<Box<(spline_fitter::models::SplineConfig, spline_fitter::models::OptimizationConfig, AirfoilData)>>,
     pub dialog: Option<Dialog>,
-    pub report: Option<ReportWindow>,
+    /// The report of the shown fit, for the Report and Shape views.
+    pub report_panel: Option<ReportPanel>,
+    /// The bottom-left block's view: convergence, report or shape.
+    pub bottom_view: usize,
     pub batch_source: String,
     pub batch_target: String,
 }
@@ -86,6 +89,7 @@ impl App {
         let mut explorer = ExplorerState::with_column_names(&store.string("explorer/columns", ""));
         explorer.pivot = store.bool("explorer/pivot", false);
         let (explorer_visible, sidebar_visible) = (store.bool("panels/explorer", true), store.bool("panels/sidebar", true));
+        let bottom_view = store.int("view/bottom", 0).clamp(0, 2) as usize;
         let settings = Settings::default();
         let mut app = App {
             palette: Palette::new(true, temperature),
@@ -123,7 +127,8 @@ impl App {
             close_now: false,
             preparing: None,
             dialog: None,
-            report: None,
+            report_panel: None,
+            bottom_view,
             batch_source: String::new(),
             batch_target: String::new(),
         };
@@ -450,7 +455,7 @@ impl App {
             }));
             titles.push(bar_menu(ui, "&View", |ui| {
                 let entries = [
-                    ("&Fit report...", "Ctrl+R"),
+                    ("&Fit report", "Ctrl+R"),
                     ("Project &explorer", "Ctrl+Shift+E"),
                     ("&Sidebar", "Ctrl+B"),
                     ("&Theme...", ""),
@@ -565,26 +570,6 @@ impl App {
                 ui.add_space(between);
                 ui.allocate_ui(egui::vec2(ui.available_width(), half), |ui| self.comparison_block(ui));
             }
-        });
-    }
-
-    fn loss_block(&mut self, ui: &mut Ui) {
-        let p = self.palette.clone();
-        ui.vertical(|ui| {
-            ui.horizontal(|ui| {
-                widgets::caption(ui, &p, "Convergence");
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if widgets::combo(ui, &p, "loss_log", &mut self.loss.log_mode, &["None", "X only", "Y only", "Both"], 0.0, "") {
-                        self.loss.view.follow = true;
-                    }
-                    widgets::toolbar_label(ui, &p, "Log scale");
-                    if widgets::combo(ui, &p, "loss_x", &mut self.loss.x_axis, &["Iterations", "Time"], 0.0, "") {
-                        self.loss.view.follow = true;
-                    }
-                    widgets::toolbar_label(ui, &p, "X axis");
-                });
-            });
-            self.loss.show(ui, &p, self.zoom_ms);
         });
     }
 

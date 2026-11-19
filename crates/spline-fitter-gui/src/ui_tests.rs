@@ -238,10 +238,19 @@ fn light_theme_and_dialogs() {
         assert!(app.comparison.labels[last].starts_with(&format!("Run {}: ", run.number)));
     }
     h.run_steps(3);
+    // The report shows in the bottom block, beside the plots.
     h.state_mut().on_report();
     h.run_steps(4);
     shot(&mut h, "6r_report");
-    h.state_mut().report = None;
+    assert_eq!(h.state().bottom_view, 1);
+    assert!(h.state().report_panel.as_ref().is_some_and(|r| r.title == "NACA 0012"));
+    assert!(!h.state().modal_open(), "no window of its own");
+    h.state_mut().set_bottom_view(2);
+    h.run_steps(4);
+    shot(&mut h, "6s_shape");
+    assert!(h.state().report_panel.as_ref().is_some_and(|r| r.shape.is_some()));
+    h.state_mut().set_bottom_view(0);
+    h.run_steps(2);
     h.state_mut().on_export_cad();
     h.run_steps(3);
     shot(&mut h, "7_cad_dialog");
@@ -289,7 +298,7 @@ fn dialogs() {
     h.state_mut().on_report();
     h.run_steps(4);
     shot(&mut h, "d_report");
-    assert!(h.state().modal_open());
+    assert_eq!(h.state().bottom_view, 1);
 }
 
 /// Clicks at a point of the window.

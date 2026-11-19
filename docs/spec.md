@@ -1711,6 +1711,8 @@ On accept: store the five values; save dialog `Export CAD` with default `<home>/
 
 #### 19.15.4 Fit report
 
+[Rust: no window. The bottom-left block (the convergence plot) has three caption tabs in its header, `CONVERGENCE`, `REPORT` and `SHAPE` (the chosen one in the text colour, the others in the caption grey, lighter on hover; the X axis and Log scale combos only with Convergence). Report shows the document below for the shown fit (the current fit or the run picked in the explorer), framed as the plots; Shape shows the shape plot filling the block (legend 8 px and 16 px apart when the chart is under 160 px high). Without a fit, or while fitting, a centred hint in the caption grey. View > Fit report (no ellipsis; Ctrl+R) chooses Report; no fit: `No fitted spline.`. The chosen tab is kept between sessions (settings key `view/bottom`).]
+
 No fit: `No fitted spline.`. If the fit has no report: status `Measuring the fit...`, compute `fit_report(sections, fit, precision)` in the background and store it on the fit; else, if the report lacks `max_thickness`, add the shape keys (12.3). Title `name or filename or "Fit report"`. Shape = `airfoil_shape(fit)`; chart = the shape plot when available. Show a modal document (19.21 item 10) titled `Fit report`, 560 × 520 px (720 px high with the chart). Exception: `Report failed: {e}`, error chime.
 
 Shape plot: axis labels `Chord (%)` and `Percent of the chord`; minimum height 200 px; legend at offset (-12, 12); `Thickness` line (`Ink.TRACE`, width 1.5, solid) and `Camber` line (`Ink.CONSTRUCTION`, width 1.5, dashed) over `100·x`, `100·value`; a dot (size 7, brush the line colour, pen `Palette.CANVAS` width 2) at each maximum (`100·max_x`, `100·max`); restyled on theme changes.
@@ -1914,7 +1916,7 @@ Palette (UI) tokens: the twelve greys of the table other than `CONSTRUCTION` (`C
 
 `Z`: `COMB -10`, `CONSTRUCTION 0`, `DATA 5`, `CURVE 10`, `KNOTS 30`.
 
-`Size`: `TIGHT 4`, `GAP 6`, `GROUP 8`, `PAD 12`, `PAD_LARGE 16`, `CONTROL_HEIGHT 26`, `GLYPH 10`, `GLYPH_LARGE 16`, `RADIUS 3`, `LABEL_WIDTH 92`, `FIELD_MIN_WIDTH 70`, `SIDEBAR_MIN_WIDTH 300`, `EXPLORER_MIN_WIDTH 180`, `SLIDER_WIDTH 220`, `DIALOG_MIN_WIDTH 480`, `POPUP_MIN_WIDTH 260`, `CURVE_WIDTH 2`, `LINE_WIDTH 1`, `DATA_SIZE 4`, `CONTROL_SIZE 6`, `KNOT_SIZE 8`, `TRACE_POINT 4`, `MARKER_SIZE 13`, `PLOT_MARGIN 24`, `SHAPE_PLOT_HEIGHT 200`.
+`Size`: `TIGHT 4`, `GAP 6`, `GROUP 8`, `PAD 12`, `PAD_LARGE 16`, `CONTROL_HEIGHT 26`, `GLYPH 10`, `GLYPH_LARGE 16`, `RADIUS 3`, `LABEL_WIDTH 92`, `FIELD_MIN_WIDTH 70`, `SIDEBAR_MIN_WIDTH 300`, `EXPLORER_MIN_WIDTH 180`, `SLIDER_WIDTH 220`, `DIALOG_MIN_WIDTH 480`, `POPUP_MIN_WIDTH 260`, `CURVE_WIDTH 2`, `LINE_WIDTH 1`, `DATA_SIZE 4`, `CONTROL_SIZE 6`, `KNOT_SIZE 8`, `TRACE_POINT 4`, `MARKER_SIZE 13`, `PLOT_MARGIN 24`, `SHAPE_PLOT_HEIGHT 200` [Rust: none; the chart fills the bottom block].
 
 `Type`: `MONO = "Cascadia Mono, Consolas, Menlo, monospace"`, families `Cascadia Mono`, `Consolas`, `Menlo`, `DejaVu Sans Mono`; `BASE_PT 9`; `CAPTION_PX 10`; `READOUT_PX 15`.
 
