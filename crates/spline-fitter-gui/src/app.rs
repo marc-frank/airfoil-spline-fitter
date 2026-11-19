@@ -68,6 +68,8 @@ pub struct App {
     pub close_now: bool,
     /// The display choices last written to the settings file.
     saved_display: Option<Display>,
+    /// The sidebar settings last written to the settings file.
+    saved_settings: Values,
     /// The status text tells of a failure (drawn in the error colour).
     pub status_failed: bool,
     /// A fit `on_fit` prepared: it starts on the next frame.
@@ -94,7 +96,11 @@ impl App {
         explorer.pivot = store.bool("explorer/pivot", false);
         let (explorer_visible, sidebar_visible) = (store.bool("panels/explorer", true), store.bool("panels/sidebar", true));
         let bottom_view = store.int("view/bottom", 0).clamp(0, 2) as usize;
-        let settings = Settings::default();
+        let mut settings = Settings::default();
+        if let Some(kept) = store.value("sidebar") {
+            settings.restore(&Values::from_json(kept, &settings.values()));
+        }
+        let saved_settings = settings.values();
         let mut app = App {
             palette: Palette::new(true, temperature),
             theme_mode,
@@ -130,6 +136,7 @@ impl App {
             discard_confirmed: false,
             close_now: false,
             saved_display: None,
+            saved_settings,
             status_failed: false,
             preparing: None,
             dialog: None,
@@ -184,6 +191,15 @@ impl App {
             self.explorer.y_column = y;
         }
         self.saved_display = Some(self.display());
+    }
+
+    /// Writes the sidebar settings when one changed (sweeps are not kept).
+    fn save_settings(&mut self) {
+        let values = self.settings.values();
+        if values != self.saved_settings {
+            self.store.set_value("sidebar", values.to_json());
+            self.saved_settings = values;
+        }
     }
 
     /// Writes the display choices when one changed.
@@ -921,6 +937,7 @@ impl eframe::App for App {
         self.show_dialogs(&ctx);
 
         self.settle_settings();
+        self.save_settings();
         self.save_display();
         if std::mem::take(&mut self.fit_requested) {
             self.on_fit();

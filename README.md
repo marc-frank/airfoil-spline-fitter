@@ -178,8 +178,8 @@ Python results), and differs on purpose where the behaviour was a defect:
   warning colour, with the tolerance in the tooltip.
 - The plot toggles (Knots, Curvature comb, Deviation, with their settings),
   Live preview, the convergence axes and the runs plot's columns are kept
-  between sessions; the fit settings in the sidebar still start at their
-  defaults.
+  between sessions, and so are the sidebar's fit settings (sweeps start
+  off).
 - Failures (a file not found, a fit that failed, a save that failed) show
   in the status bar in the error colour, as the error chime plays.
 - The explorer keeps the column order you drag its headers into between

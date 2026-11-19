@@ -847,6 +847,30 @@ fn display_choices_are_kept() {
     }
 }
 
+/// The sidebar settings are written to the settings file as they change
+/// (without the sweeps) and read back at the next start.
+#[test]
+fn sidebar_settings_are_kept() {
+    let mut h = harness();
+    h.run_steps(2);
+    {
+        let app = h.state_mut();
+        app.settings.tolerance_goal = true;
+        app.settings.smoothing.value = 1e-7;
+        app.settings.control_points.value.set(6);
+        app.settings.smoothing.toggle(true);
+    }
+    h.run_steps(2);
+    let kept = h.state().store.value("sidebar").cloned().expect("written");
+    assert_eq!(kept["smoothing"], 1e-7);
+    assert_eq!((kept["tolerance_goal"].as_bool(), kept["control_points"].as_u64()), (Some(true), Some(6)));
+    let defaults = crate::settings::Settings::default();
+    let mut next = defaults.clone();
+    next.restore(&crate::settings::Values::from_json(&kept, &defaults.values()));
+    assert!(next.tolerance_mode() && next.smoothing.value == 1e-7 && next.control_points.value.value == 6);
+    assert!(!next.sweeping());
+}
+
 /// A failure's status is drawn in the error colour until the next message.
 #[test]
 fn failures_show_in_the_status_bar_in_the_error_colour() {

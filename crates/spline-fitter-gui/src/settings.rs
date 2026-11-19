@@ -3,7 +3,10 @@
 
 use spline_fitter::bspline_varpro::KnotPlacement;
 use spline_fitter::formatting::number;
-use spline_fitter::models::{minimum_control_points, ContinuityMode, OptimizationConfig, OptimizerType, Parameterization, SplineConfig};
+use spline_fitter::models::{
+    minimum_control_points, placement_from_value, placement_value, ContinuityMode, OptimizationConfig, OptimizerType, Parameterization,
+    SplineConfig,
+};
 use spline_fitter::project::OptimizationRun;
 use spline_fitter::Result;
 
@@ -236,6 +239,64 @@ pub struct Values {
     count_sweep: (bool, usize),
     sections_sweep: (bool, usize),
     smoothing_sweep: (bool, f64, f64),
+}
+
+impl Values {
+    /// The values as kept between sessions (without the sweeps, which
+    /// start off).
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "optimizer": self.optimizer.value(),
+            "tolerance_goal": self.tolerance_goal,
+            "auto_tolerance": self.auto_tolerance,
+            "tolerance": self.tolerance,
+            "knot_placement": placement_value(self.knot_placement),
+            "parameterization": self.parameterization.value(),
+            "grow": self.grow,
+            "sections": self.sections,
+            "degree": self.degree,
+            "continuity": self.continuity,
+            "geometric": self.geometric,
+            "control_points": self.control_points,
+            "per_junction": self.per_junction,
+            "knot_gap": self.knot_gap,
+            "smoothing": self.smoothing,
+            "optimize_junctions": self.optimize_junctions,
+        })
+    }
+
+    /// Values read back from [`Values::to_json`]: a missing or unreadable
+    /// entry keeps its value in `defaults`, and every sweep is off.
+    pub fn from_json(json: &serde_json::Value, defaults: &Values) -> Values {
+        let d = defaults;
+        let get = |key: &str| json.get(key);
+        let flag = |key: &str, default: bool| get(key).and_then(serde_json::Value::as_bool).unwrap_or(default);
+        let count = |key: &str, default: usize| get(key).and_then(serde_json::Value::as_u64).map_or(default, |v| v.min(UNLIMITED as u64) as usize);
+        let float = |key: &str, default: f64, ok: fn(f64) -> bool| get(key).and_then(serde_json::Value::as_f64).filter(|v| ok(*v)).unwrap_or(default);
+        let text = |key: &str| get(key).and_then(serde_json::Value::as_str);
+        Values {
+            optimizer: text("optimizer").map_or(d.optimizer, |t| OptimizerType::from_value(t).0),
+            tolerance_goal: flag("tolerance_goal", d.tolerance_goal),
+            auto_tolerance: flag("auto_tolerance", d.auto_tolerance),
+            tolerance: float("tolerance", d.tolerance, |v| v.is_finite() && v > 0.0),
+            knot_placement: text("knot_placement").and_then(|t| placement_from_value(t).ok()).unwrap_or(d.knot_placement),
+            parameterization: text("parameterization").and_then(|t| Parameterization::from_value(t).ok()).unwrap_or(d.parameterization),
+            grow: flag("grow", d.grow),
+            sections: count("sections", d.sections),
+            degree: count("degree", d.degree),
+            continuity: count("continuity", d.continuity).min(3),
+            geometric: flag("geometric", d.geometric),
+            control_points: count("control_points", d.control_points),
+            per_junction: text("per_junction").map_or_else(|| d.per_junction.clone(), str::to_string),
+            knot_gap: float("knot_gap", d.knot_gap, |v| v.is_finite() && v >= 0.0),
+            smoothing: float("smoothing", d.smoothing, |v| v.is_finite() && v >= 0.0),
+            optimize_junctions: flag("optimize_junctions", d.optimize_junctions),
+            degree_sweep: (false, d.degree_sweep.1),
+            count_sweep: (false, d.count_sweep.1),
+            sections_sweep: (false, d.sections_sweep.1),
+            smoothing_sweep: (false, d.smoothing_sweep.1, d.smoothing_sweep.2),
+        }
+    }
 }
 
 /// Which controls show and which are enabled (19.6).
@@ -783,6 +844,27 @@ mod tests {
         s.tolerance_goal = true;
         s.settle(&before);
         assert!(!s.control_points.active && !s.control_points.allowed);
+    }
+
+    #[test]
+    fn values_are_kept_without_their_sweeps() {
+        let defaults = Settings::default().values();
+        let mut s = Settings { tolerance_goal: true, tolerance: 2e-6, ..Default::default() };
+        s.smoothing.value = 1e-7;
+        s.control_points.value.set(6);
+        s.per_junction = "G2".into();
+        s.smoothing.toggle(true);
+        let before = s.clone();
+        s.settle(&before);
+        let kept = Values::from_json(&s.values().to_json(), &defaults);
+        let mut t = Settings::default();
+        t.restore(&kept);
+        assert_eq!((t.tolerance_goal, t.tolerance, t.smoothing.value), (true, 2e-6, 1e-7));
+        assert_eq!((t.control_points.value.value, t.per_junction.as_str()), (6, "G2"));
+        assert!(!t.sweeping());
+        // Unreadable entries keep their defaults.
+        let odd = serde_json::json!({"degree": "five", "smoothing": -1.0, "optimizer": "gn-varpro", "knot_placement": "odd"});
+        assert_eq!(Values::from_json(&odd, &defaults), defaults);
     }
 
     #[test]

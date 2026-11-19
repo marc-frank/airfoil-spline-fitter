@@ -1,6 +1,6 @@
 //! Settings kept between sessions: recent files, dialog choices, theme,
-//! motion, the panels, the plot display choices and the explorer's column
-//! order. Nothing else persists; the sidebar starts at its defaults.
+//! motion, the panels, the plot display choices, the sidebar's fit settings
+//! (sweeps start off) and the explorer's column order.
 
 use std::path::PathBuf;
 
@@ -62,6 +62,15 @@ impl Store {
 
     pub fn set_float(&mut self, key: &str, value: f64) {
         self.set(key, json!(value));
+    }
+
+    /// A stored JSON value as it is.
+    pub fn value(&self, key: &str) -> Option<&Value> {
+        self.values.get(key)
+    }
+
+    pub fn set_value(&mut self, key: &str, value: Value) {
+        self.set(key, value);
     }
 
     pub fn bool(&self, key: &str, default: bool) -> bool {
