@@ -672,17 +672,29 @@ pub fn fit_to_tolerance(
     };
 
     if uniform {
+        // Fewer control points per section: 1, 2, 4, ... fewer while the
+        // tolerance holds, then halving the gap to the count that failed. A
+        // search that grew one at a time needs a step or two; one that met
+        // the tolerance at a high start count gets down in a few refits
+        // instead of one per control point.
         for s in 0..num_sections {
-            while num_control_points(&result.knots[s], degree) > need[s] {
+            let (mut low, mut step, mut halving) = (need[s], 1, false);
+            while num_control_points(&result.knots[s], degree) > low {
+                let count = num_control_points(&result.knots[s], degree);
+                let target = if halving { (low + count) / 2 } else { count.saturating_sub(step).max(low) };
                 let mut trial_knots = result.knots.clone();
-                trial_knots[s] = open_uniform_knots(degree, num_control_points(&result.knots[s], degree) - 1)?;
+                trial_knots[s] = open_uniform_knots(degree, target)?;
                 let trial = setup.refit(trial_knots, &result.parameters, Some(&result.theta), false, &mut steps)?;
                 if trial.stopped {
                     return stopped(result, deviation);
                 }
                 let trial_deviation = max_deviation(&data, &trial);
                 if trial_deviation > tolerance {
-                    break;
+                    (low, halving) = (target + 1, true);
+                    continue;
+                }
+                if !halving {
+                    step *= 2;
                 }
                 result = trial;
                 deviation = trial_deviation;

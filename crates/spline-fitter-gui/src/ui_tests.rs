@@ -146,7 +146,9 @@ fn light_theme_and_dialogs() {
         let app = h.state_mut();
         app.settings.tolerance_goal = true;
         app.settings.auto_tolerance = false;
-        app.settings.tolerance = 1e-4;
+        app.settings.tolerance = 2e-6;
+        // From the fewest control points, one more a round: a run each.
+        app.settings.grow = true;
         app.settings.sections.value.set(3);
         app.advanced_open = true;
     }
@@ -191,29 +193,13 @@ fn light_theme_and_dialogs() {
         assert_eq!(xs, fitted);
         assert!(xs.first() != xs.last(), "{xs:?}");
         // The search's tolerance is a line in the plot of its errors.
-        assert_eq!(app.comparison.tolerance, Some(1e-4));
+        assert_eq!(app.comparison.tolerance, Some(2e-6));
         // Each point names its run.
         assert_eq!(app.comparison.labels.len(), app.comparison.points.len());
         assert!(app.comparison.labels.iter().all(|l| l.starts_with("Run ") && l.contains(" control points, error ")), "{:?}", app.comparison.labels);
     }
-    // The rows' scroll bar is at the box's edge: clicking its track below
-    // the handle pages down to the last runs.
+    // A click on a point selects its run and shows that fit.
     {
-        use egui_kittest::kittest::Queryable;
-        let runs = h.state().projects.runs().len().to_string();
-        // The last run's number in the Run column (the left of the box).
-        let ppp = h.ctx.pixels_per_point();
-        let in_run_column = |h: &Harness<'static, App>| h.query_all_by_label(&runs).any(|n| n.rect().min.x < 1010.0 * ppp);
-        assert!(!in_run_column(&h), "the last run is out of view");
-        for _ in 0..3 {
-            click_at(&mut h, 1482.0, 790.0);
-        }
-        assert!(in_run_column(&h), "paged down to the last run");
-    }
-    // A click on a point selects its run, shows that fit and brings its
-    // row into view: the most control points, the search's first run, is
-    // out of view after paging down.
-    let number = {
         let app = h.state_mut();
         let last = app.comparison.points.len() - 1;
         let point = app.comparison.points[last];
@@ -225,16 +211,8 @@ fn light_theme_and_dialogs() {
         let run = app.projects.run(&id).unwrap();
         assert_eq!(run.result.num_control_points() as f64, point[0]);
         assert!(app.comparison.labels[last].starts_with(&format!("Run {}: ", run.number)));
-        run.number.to_string()
-    };
-    {
-        use egui_kittest::kittest::Queryable;
-        let ppp = h.ctx.pixels_per_point();
-        let in_run_column = |h: &Harness<'static, App>| h.query_all_by_label(&number).any(|n| n.rect().min.x < 1010.0 * ppp);
-        assert!(!in_run_column(&h), "run {number} starts out of view");
-        h.run_steps(3);
-        assert!(in_run_column(&h), "run {number} brought into view");
     }
+    h.run_steps(3);
     h.state_mut().on_report();
     h.run_steps(4);
     shot(&mut h, "6r_report");
@@ -574,3 +552,42 @@ fn the_column_order_is_kept_by_name() {
     assert_eq!(ExplorerState::with_column_names(&names).column_names(), names);
 }
 
+/// The run table pages with its scroll bar, and a click on a point of the
+/// runs plot brings that run's row into view.
+#[test]
+fn the_run_table_pages_and_follows_the_runs_plot() {
+    let mut h = harness();
+    h.state_mut().new_naca_airfoil("2412", 41, true);
+    h.run_steps(2);
+    {
+        let app = h.state_mut();
+        app.settings.optimizer = OptimizerType::DirectLsq;
+        app.settings.control_points.value.set(10);
+        app.settings.control_points.toggle(true);
+        app.settings.control_points.end.set(45);
+    }
+    h.run_steps(2);
+    h.state_mut().on_fit();
+    finish(&mut h);
+    h.state_mut().refresh_comparison();
+    h.run_steps(2);
+    use egui_kittest::kittest::Queryable;
+    let ppp = h.ctx.pixels_per_point();
+    // A run's number in the Run column (the left of the box).
+    let in_run_column = |h: &Harness<'static, App>, number: &str| h.query_all_by_label(number).any(|n| n.rect().min.x < 1010.0 * ppp);
+    // The rows' scroll bar is at the box's edge: clicking its track below
+    // the handle pages down to the last runs.
+    let runs = h.state().projects.runs().len().to_string();
+    assert!(!in_run_column(&h, &runs), "the last run is out of view");
+    for _ in 0..3 {
+        click_at(&mut h, 1482.0, 790.0);
+    }
+    assert!(in_run_column(&h, &runs), "paged down to the last run");
+    // The fewest control points, run 1, is now out of view; a click on its
+    // point brings it back.
+    assert!(!in_run_column(&h, "1"), "run 1 is out of view");
+    assert_eq!(h.state().comparison.points[0][0], 10.0);
+    h.state_mut().click_plotted_run(0);
+    h.run_steps(3);
+    assert!(in_run_column(&h, "1"), "run 1 brought into view");
+}

@@ -148,6 +148,11 @@ Python results), and differs on purpose where the behaviour was a defect:
   the same tolerance.
 - The explorer keeps the column order you drag its headers into between
   sessions (Python started from the default order every time).
+- With uniform knots, a tolerance search that meets the tolerance removes
+  control points 1, 2, 4, ... at a time while it still holds, then halves
+  the gap to the count that failed; Python removed one at a time and
+  stopped at the first count that failed. From a start count of 60 on
+  Darkstar root at 1e-5: 31 control points in 6.6 s instead of 41 in 11.9 s.
 - The earlier runs of a tolerance search keep the loss history of their own
   refit; Python kept the history from the search's start in each, which
   made a project several megabytes per search. The search's final run
