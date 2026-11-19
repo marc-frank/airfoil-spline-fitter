@@ -642,3 +642,36 @@ fn a_missed_tolerance_is_not_a_solver_failure() {
     assert!(status.contains(" | Tolerance not reached: "), "{status}");
     assert!(!status.contains("did not converge"), "{status}");
 }
+
+/// Ctrl+Enter fits, with the value still being typed into a field; Esc
+/// cancels the running fit.
+#[test]
+fn ctrl_enter_fits_with_the_typed_value_and_esc_cancels() {
+    let mut h = harness();
+    h.state_mut().new_naca_airfoil("2412", 81, true);
+    h.run_steps(2);
+    {
+        let app = h.state_mut();
+        app.settings.tolerance_goal = true;
+        app.settings.auto_tolerance = false;
+        app.settings.tolerance = 1e-4;
+    }
+    h.run_steps(2);
+    // Into the Max deviation field, a new value typed and not yet committed.
+    click_at(&mut h, 220.0, 208.0);
+    key(&mut h, egui::Key::A, egui::Modifiers::COMMAND);
+    h.input_mut().events.push(egui::Event::Text("1e-7".into()));
+    h.run_steps(1);
+    assert_eq!(h.state().settings.tolerance, 1e-4, "still being typed");
+    key(&mut h, egui::Key::Enter, egui::Modifiers::COMMAND);
+    assert!(h.state().fitting(), "{}", h.state().status);
+    assert_eq!(h.state().settings.tolerance, 1e-7);
+    let fitting_with = match &h.state().running {
+        Some(crate::fitting::Running::Fit(job)) => job.options.tolerance,
+        _ => None,
+    };
+    assert_eq!(fitting_with, Some(1e-7));
+    key(&mut h, egui::Key::Escape, egui::Modifiers::NONE);
+    finish(&mut h);
+    assert!(h.state().status.starts_with("Cancelled: "), "{}", h.state().status);
+}

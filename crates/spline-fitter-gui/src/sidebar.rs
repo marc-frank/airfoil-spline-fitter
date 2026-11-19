@@ -338,21 +338,26 @@ impl App {
         widgets::rule(ui, &p);
     }
 
+    /// Stops the running fit (or the one about to start).
+    pub fn on_cancel(&mut self) {
+        if let Some(r) = &self.running {
+            r.cancel();
+            self.set_status("Cancelling... please wait");
+        } else if self.preparing.take().is_some() {
+            // Not started yet: nothing to wait for.
+            self.set_status("Cancelled");
+        }
+    }
+
     fn run_bar(&mut self, ui: &mut Ui) {
         let p = self.palette.clone();
         let width = ui.available_width();
         if self.fitting() {
             // Cancel takes the Fit button's place.
-            if ui.add_sized([width, size::CONTROL_HEIGHT], egui::Button::new("Cancel")).clicked() {
-                if let Some(r) = &self.running {
-                    r.cancel();
-                    self.set_status("Cancelling... please wait");
-                } else if self.preparing.take().is_some() {
-                    // Not started yet: nothing to wait for.
-                    self.set_status("Cancelled");
-                }
+            if ui.add_sized([width, size::CONTROL_HEIGHT], egui::Button::new("Cancel")).on_hover_text("Stop the fit (Esc)").clicked() {
+                self.on_cancel();
             }
-        } else if widgets::primary_button(ui, "Fit spline", width).clicked() {
+        } else if widgets::primary_button(ui, "Fit spline", width).on_hover_text("Fit the spline (Ctrl+Enter)").clicked() {
             self.on_fit();
         }
         let Some(fit) = self.fit.clone().filter(|_| !self.fitting()) else { return };

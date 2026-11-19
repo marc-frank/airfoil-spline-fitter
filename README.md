@@ -154,6 +154,8 @@ Python results), and differs on purpose where the behaviour was a defect:
 - The runs plot draws the tolerance as a dashed line when its y axis is the
   error or the max deviation and every plotted run is a tolerance run with
   the same tolerance.
+- Ctrl+Enter fits (also from a field you are typing in: the typed value
+  counts), Esc cancels a running fit; Python had no keys for either.
 - The explorer keeps the column order you drag its headers into between
   sessions (Python started from the default order every time).
 - With uniform knots, a tolerance search that meets the tolerance removes

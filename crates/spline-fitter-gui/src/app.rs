@@ -59,6 +59,8 @@ pub struct App {
     pub reset_explorer: bool,
     /// A submenu button its access key chose: it opens on the next frame.
     open_submenu: Option<egui::Id>,
+    /// Ctrl+Enter was pressed: fit once the sidebar has taken its fields.
+    fit_requested: bool,
     /// A fit `on_fit` prepared: it starts on the next frame.
     pub preparing: Option<Box<(spline_fitter::models::SplineConfig, spline_fitter::models::OptimizationConfig, AirfoilData)>>,
     pub dialog: Option<Dialog>,
@@ -108,6 +110,7 @@ impl App {
             reset_sidebar: false,
             reset_explorer: false,
             open_submenu: None,
+            fit_requested: false,
             preparing: None,
             dialog: None,
             report: None,
@@ -246,6 +249,20 @@ impl App {
         }
         if pressed(ctrl(Key::R)) && self.fit.is_some() {
             self.on_report();
+        }
+        // Ctrl+Enter fits, also from a settings field: the field gives up
+        // the focus, so its text is committed when the sidebar is drawn,
+        // and the fit starts after that.
+        if pressed(ctrl(Key::Enter)) && !self.fitting() {
+            ctx.memory_mut(|m| {
+                if let Some(id) = m.focused() {
+                    m.surrender_focus(id);
+                }
+            });
+            self.fit_requested = true;
+        }
+        if self.fitting() && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
+            self.on_cancel();
         }
         // Undo and redo reach the settings also from a focused settings
         // field (the field keeps its own text undo otherwise).
@@ -777,6 +794,9 @@ impl eframe::App for App {
         self.show_dialogs(&ctx);
 
         self.settle_settings();
+        if std::mem::take(&mut self.fit_requested) {
+            self.on_fit();
+        }
         let now = Instant::now();
         let current = self.settings.values();
         self.history.tick(now, &current);
