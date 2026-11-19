@@ -422,7 +422,7 @@ impl App {
         let (error_caption, error_value) = match &fit.report {
             Some(r) if r.tolerance.is_some() => (r.tolerance_metric.name(), number(r.target(), ".2e")),
             Some(r) => ("Max deviation", number(r.max_deviation, ".2e")),
-            None => ("Error", format_error(fit.final_error)),
+            None => ("RMS error", format_error(fit.final_error)),
         };
         // A tolerance the fit missed shows in the status colour: the search
         // stopped short, and the readout says so at a glance.

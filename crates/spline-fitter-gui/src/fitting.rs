@@ -341,10 +341,10 @@ impl App {
                 let effort = self.effort(&outcome);
                 let duration = format_duration(outcome.elapsed);
                 let mut status = if outcome.cancelled {
-                    format!("Cancelled: {effort} in {duration} | Best error {}", format_error(outcome.raw.error))
+                    format!("Cancelled: {effort} in {duration} | Best RMS error {}", format_error(outcome.raw.error))
                 } else {
                     format!(
-                        "Completed ({}): {effort} in {duration} | Error {}",
+                        "Completed ({}): {effort} in {duration} | RMS error {}",
                         job.options.optimizer.display_name(),
                         format_error(outcome.raw.error)
                     )
@@ -408,7 +408,7 @@ impl App {
             })
             .collect();
         self.comparison.x_label = x_axis.name().into();
-        self.comparison.y_label = "Error".into();
+        self.comparison.y_label = "RMS deviation".into();
         self.comparison.log_x = false;
         self.comparison.log_y = true;
         self.comparison.ticks = None;
@@ -495,7 +495,7 @@ impl App {
                     sweep.cancelled = true;
                     status += " | Cancelled";
                 } else {
-                    status += &format!(", error {}", format_error(outcome.fit.comparison_error()));
+                    status += &format!(", RMS deviation {}", format_error(outcome.fit.rms_deviation()));
                     sweep.results.push((combo, outcome.fit.clone()));
                     self.fit = Some(outcome.fit);
                     self.show_current_fit();
@@ -517,13 +517,13 @@ impl App {
         let points = self.sweep_series(&sweep.base, &sweep.opt, &swept, sweep.x_axis);
         let unique = points.windows(2).all(|w| w[0][0] != w[1][0]);
         let best = sweep.results.iter().fold(None::<&(Vec<(Axis, AxisValue)>, FitResult)>, |b, r| match b {
-            Some(b) if b.1.comparison_error() <= r.1.comparison_error() => Some(b),
+            Some(b) if b.1.rms_deviation() <= r.1.rms_deviation() => Some(b),
             _ => Some(r),
         });
         let x_of = |combo: &[(Axis, AxisValue)]| combo.iter().find(|(a, _)| *a == sweep.x_axis).map_or(0.0, |(_, v)| v.as_f64());
         self.comparison.log_y = points.iter().all(|p| p[1] > 0.0);
         self.comparison.set(points, unique);
-        self.comparison.marked = best.map(|(c, f)| vec![[x_of(c), f.comparison_error()]]).unwrap_or_default();
+        self.comparison.marked = best.map(|(c, f)| vec![[x_of(c), f.rms_deviation()]]).unwrap_or_default();
     }
 
     /// `(axis value, comparison error)` of the project runs that match the
@@ -572,7 +572,7 @@ impl App {
                 continue;
             }
             let key: Vec<f64> = swept.iter().map(|a| value_of(run, *a)).collect();
-            let point = [value_of(run, axis), run.result.comparison_error()];
+            let point = [value_of(run, axis), run.result.rms_deviation()];
             match by_values.iter_mut().find(|(k, _)| *k == key) {
                 Some(entry) => entry.1 = point,
                 None => by_values.push((key, point)),
@@ -594,7 +594,7 @@ impl App {
             .results
             .iter()
             .fold(None::<&(Vec<(Axis, AxisValue)>, FitResult)>, |b, r| match b {
-                Some(b) if b.1.comparison_error() <= r.1.comparison_error() => Some(b),
+                Some(b) if b.1.rms_deviation() <= r.1.rms_deviation() => Some(b),
                 _ => Some(r),
             })
             .cloned();
@@ -606,11 +606,11 @@ impl App {
                 self.fit = Some(fit.clone());
                 self.show_current_fit();
                 format!(
-                    "Sweep {}: {} in {duration} | Best: {}, error {}",
+                    "Sweep {}: {} in {duration} | Best: {}, RMS deviation {}",
                     if sweep.cancelled { "cancelled" } else { "complete" },
                     format_count(sweep.results.len(), "fit"),
                     Self::sweep_label(combo),
-                    format_error(fit.comparison_error())
+                    format_error(fit.rms_deviation())
                 )
             }
             None => {
@@ -753,7 +753,7 @@ impl App {
             Ok(Some(outcome)) => {
                 batch.done += 1;
                 self.set_status(format!(
-                    "[{idx}/{total}] Done: {file} | {} evaluations, error {} | {}",
+                    "[{idx}/{total}] Done: {file} | {} evaluations, RMS error {} | {}",
                     outcome.raw.evaluations,
                     format_error(outcome.raw.error),
                     format_duration(outcome.elapsed)

@@ -377,9 +377,9 @@ impl FitResult {
             .collect()
     }
 
-    /// The error runs are compared by: the RMS orthogonal deviation of the
-    /// report, else the RMS error, else the final error.
-    pub fn comparison_error(&self) -> f64 {
+    /// The RMS orthogonal deviation of the report (runs without one: the
+    /// RMS error, else the final error), the measure runs are compared by.
+    pub fn rms_deviation(&self) -> f64 {
         self.report.as_ref().map(|r| r.rms_deviation).or(self.rms_error).unwrap_or(self.final_error)
     }
 

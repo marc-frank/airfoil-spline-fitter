@@ -157,7 +157,7 @@ impl Monitor for Progress {
                 status += &format!(" | Max deviation of the last fit {}", format_error(d));
             }
         } else {
-            status += &format!("Best error {}", format_error(self.best));
+            status += &format!("Best RMS error {}", format_error(self.best));
         }
         let preview = Preview { control_points: u.control_points.to_vec(), knots: u.knots.to_vec(), degree: u.degree };
         let mut p = self.live.published.lock().unwrap();

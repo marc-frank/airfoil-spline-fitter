@@ -72,7 +72,7 @@ fn reference_session() {
     {
         let app = h.state();
         assert!(app.status.starts_with("Completed (VarPro LM): 33 evaluations in "), "{}", app.status);
-        assert!(app.status.ends_with(" | Error 8.978e-07 | max deviation 4.59e-06, RMS 8.98e-07, 49 control points"), "{}", app.status);
+        assert!(app.status.ends_with(" | RMS error 8.978e-07 | max deviation 4.59e-06, RMS 8.98e-07, 49 control points"), "{}", app.status);
         assert_eq!(app.projects.label(), "Unsaved project*\n1 optimization run");
         assert_eq!(app.fit.as_ref().unwrap().section_counts(), vec![25, 25]);
     }
@@ -92,7 +92,7 @@ fn reference_session() {
     {
         let app = h.state();
         assert!(app.status.starts_with("Completed (Direct LSQ): 1 evaluation in "), "{}", app.status);
-        assert!(app.status.ends_with(" | Error 1.897e-05 | max deviation 4.72e-05, RMS 8.81e-06, 49 control points"), "{}", app.status);
+        assert!(app.status.ends_with(" | RMS error 1.897e-05 | max deviation 4.72e-05, RMS 8.81e-06, 49 control points"), "{}", app.status);
         assert_eq!(app.projects.runs().len(), 2);
     }
     shot(&mut h, "4_direct_lsq");
@@ -117,7 +117,7 @@ fn reference_session() {
     {
         let app = h.state();
         assert!(app.status.starts_with("Sweep complete: 2 fits in "), "{}", app.status);
-        assert!(app.status.ends_with(" | Best: Control points 25, error 8.978e-07"), "{}", app.status);
+        assert!(app.status.ends_with(" | Best: Control points 25, RMS deviation 8.978e-07"), "{}", app.status);
         assert!(!app.settings.control_points.active);
         assert_eq!(app.settings.control_points.value.value, 25);
     }
@@ -204,7 +204,7 @@ fn light_theme_and_dialogs() {
         let app = h.state();
         assert!(app.status.starts_with("Completed (VarPro LM): "), "{}", app.status);
         // At its end the plot shows the project's runs again.
-        assert_eq!(app.comparison.y_label, "Error");
+        assert_eq!(app.comparison.y_label, "RMS deviation");
         // The search is a folder; each of its fits a fixed-count run of its
         // own count, the same in both sections, told apart by it.
         let file = app.projects.file.as_ref().unwrap();
@@ -250,11 +250,11 @@ fn light_theme_and_dialogs() {
         fitted.sort_by(f64::total_cmp);
         assert_eq!(xs, fitted);
         assert!(xs.first() != xs.last(), "{xs:?}");
-        // Their error is the RMS error: no tolerance line.
+        // Plotted by their RMS deviation: no tolerance line.
         assert_eq!(app.comparison.tolerance, None);
         // Each point names its run.
         assert_eq!(app.comparison.labels.len(), app.comparison.points.len());
-        assert!(app.comparison.labels.iter().all(|l| l.starts_with("Run ") && l.contains(" control points, error ")), "{:?}", app.comparison.labels);
+        assert!(app.comparison.labels.iter().all(|l| l.starts_with("Run ") && l.contains(" control points, RMS deviation ")), "{:?}", app.comparison.labels);
     }
     // The search's tolerance is a line in the plot of their largest deviations.
     {
@@ -263,7 +263,7 @@ fn light_theme_and_dialogs() {
         app.explorer.forget_points();
         app.refresh_comparison();
         assert_eq!(app.comparison.tolerance, Some(2e-6));
-        app.explorer.y_column = crate::runs::ERROR_COLUMN;
+        app.explorer.y_column = crate::runs::RMS_DEVIATION_COLUMN;
         app.explorer.forget_points();
         app.refresh_comparison();
     }

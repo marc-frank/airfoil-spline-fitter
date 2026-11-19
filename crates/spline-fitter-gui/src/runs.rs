@@ -76,7 +76,7 @@ fn capitalized(text: &str) -> String {
     chars.next().map(|c| c.to_uppercase().chain(chars.flat_map(|c| c.to_lowercase())).collect()).unwrap_or_default()
 }
 
-pub const COLUMNS: [Column; 25] = [
+pub const COLUMNS: [Column; 24] = [
     Column {
         name: "Run",
         tooltip: "Order in which the runs were done; a number stays when other runs are deleted",
@@ -239,15 +239,6 @@ pub const COLUMNS: [Column; 25] = [
         applies: junctions,
     },
     Column {
-        name: "Error",
-        tooltip: "RMS distance of the points to the curve, the same measure for every run",
-        log: true,
-        metric: true,
-        format: Format::Spec(".3e"),
-        value: |r| Cell::Float(r.result.comparison_error()),
-        applies: always,
-    },
-    Column {
         name: "Max deviation",
         tooltip: "",
         log: true,
@@ -312,8 +303,8 @@ pub const COLUMNS: [Column; 25] = [
     },
 ];
 
-pub const ERROR_COLUMN: usize = 17;
-const _: () = assert!(matches!(COLUMNS[ERROR_COLUMN].name.as_bytes(), b"Error"));
+pub const RMS_DEVIATION_COLUMN: usize = 18;
+const _: () = assert!(matches!(COLUMNS[RMS_DEVIATION_COLUMN].name.as_bytes(), b"RMS deviation"));
 const _: () = assert!(matches!(COLUMNS[CONTROL_POINTS_COLUMN].name.as_bytes(), b"Control points"));
 pub const CONTROL_POINTS_COLUMN: usize = 10;
 
@@ -453,7 +444,7 @@ impl Filters {
     pub fn matches_except(&self, cells: &[(Cell, String)], skip: Option<usize>) -> bool {
         let terms = parse_filter(&self.text);
         let global = terms.iter().all(|term| match term {
-            Term::Numeric { .. } => term_matches(term, &cells[ERROR_COLUMN].0, &cells[ERROR_COLUMN].1),
+            Term::Numeric { .. } => term_matches(term, &cells[RMS_DEVIATION_COLUMN].0, &cells[RMS_DEVIATION_COLUMN].1),
             // `!=text`: no cell equals the text, the exact opposite of `=text`.
             Term::Whole { equal: false, .. } => cells.iter().all(|(c, t)| term_matches(term, c, t)),
             _ => cells.iter().any(|(c, t)| term_matches(term, c, t)),

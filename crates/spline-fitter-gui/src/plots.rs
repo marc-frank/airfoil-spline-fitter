@@ -793,7 +793,7 @@ impl LossPlot {
         }
         let x_label = if self.x_axis == 0 { "Iterations" } else { "Time (s)" };
         let pad = marker_pad(size::TRACE_POINT, 0.0);
-        let axes = Axes { x_label, y_label: "Error", log_x, log_y, x_ticks: None, whole_x: false, equal_aspect: false, marker_pad: pad };
+        let axes = Axes { x_label, y_label: "RMS error", log_x, log_y, x_ticks: None, whole_x: false, equal_aspect: false, marker_pad: pad };
         show_plot(ui, p, "loss_plot", &mut self.view, &axes, motion_ms, |c| {
             c.markers(points.iter().copied(), Marker::Circle, size::TRACE_POINT, p.trace(), Stroke::NONE);
         });

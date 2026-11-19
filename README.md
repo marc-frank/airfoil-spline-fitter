@@ -178,9 +178,14 @@ Python results), and differs on purpose where the behaviour was a defect:
   marked, under the tolerance line. Python showed the search's runs only
   at its end.
 - The runs plot draws the tolerance as a dashed line when its y axis is the
-  max deviation and every plotted run belongs to a search of the same
-  tolerance (tolerance runs of older projects: also when it is the error,
-  their largest deviation).
+  metric the tolerance limits and every plotted run belongs to a search of
+  the same tolerance (or is a tolerance run of an older project).
+- The run table has no Error column. Python's Error was the solver's error
+  for a fixed-count run and the largest deviation for a tolerance run, so
+  it compared different things; the runs are compared by Max deviation and
+  RMS deviation. The runs plot plots the RMS deviation by default, a number
+  in the filter (">1e-5") compares it, and the solver's error is called
+  RMS error wherever it shows (status bar, convergence plot, run details).
 - Ctrl+Enter fits (also from a field you are typing in: the typed value
   counts), Esc cancels a running fit; Python had no keys for either.
 - The sidebar hides to a rail as the explorer does (the chevron on its Data

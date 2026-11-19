@@ -12,7 +12,7 @@ use spline_fitter::models::{FitResult, IterationRecord, OptimizationConfig, Spli
 use spline_fitter::project::{number_runs, OptimizationRun, ProjectFile, ToleranceSearch};
 
 use crate::app::App;
-use crate::runs::{compare, parse_filter, row, term_matches, Cell, Filters, Term, COLUMNS, CONTROL_POINTS_COLUMN, ERROR_COLUMN};
+use crate::runs::{compare, parse_filter, row, term_matches, Cell, Filters, Term, COLUMNS, CONTROL_POINTS_COLUMN, RMS_DEVIATION_COLUMN};
 use crate::theme::{size, Glyph, Palette};
 use crate::widgets::{self, caption, muted};
 
@@ -202,7 +202,7 @@ impl Default for ExplorerState {
             pivot: false,
             sort: (0, true),
             x_column: CONTROL_POINTS_COLUMN,
-            y_column: ERROR_COLUMN,
+            y_column: RMS_DEVIATION_COLUMN,
             points: None,
             anchor: None,
             current: None,
@@ -577,8 +577,7 @@ impl App {
         c.log_y = COLUMNS[yc].log && xy.iter().all(|p| p.1[1] > 0.0);
         c.ticks = ticks;
         // The runs' shared tolerance (of their search), where the y axis is
-        // their deviation (a tolerance run of an older project has its
-        // largest deviation as its error).
+        // the metric it limits.
         let y = COLUMNS[yc].name;
         let tolerance_of = |id: &str| {
             let run = self.projects.run(id)?;
@@ -587,7 +586,7 @@ impl App {
                     let o = &search.optimization_config;
                     o.tolerance.filter(|_| y == o.tolerance_metric.name())
                 }
-                None => run.optimization_config.tolerance.filter(|_| matches!(y, "Error" | "Max deviation")),
+                None => run.optimization_config.tolerance.filter(|_| y == "Max deviation"),
             }
         };
         let tolerances: BTreeSet<u64> = xy.iter().map(|(id, _)| tolerance_of(id).map_or(u64::MAX, f64::to_bits)).collect();
@@ -599,7 +598,10 @@ impl App {
         let label = |id: &str, y: f64| {
             let value = if y.fract() == 0.0 { format!("{y}") } else { spline_fitter::formatting::format_error(y) };
             self.projects.run(id).map_or_else(String::new, |r| {
-                format!("Run {}: {} control points, {} {value}", r.number, r.result.control_points_per_section(), COLUMNS[yc].name.to_lowercase())
+                // "max deviation", but "RMS deviation".
+                let name = COLUMNS[yc].name;
+                let name = if name.starts_with("RMS") { name.to_string() } else { name.to_lowercase() };
+                format!("Run {}: {} control points, {name} {value}", r.number, r.result.control_points_per_section())
             })
         };
         c.labels = xy.iter().map(|(id, q)| label(id, q[1])).collect();
@@ -782,7 +784,7 @@ impl App {
                 self.explorer.filters.invert = !invert;
                 changed = true;
             }
-            let tip = "Show the runs that match in any column, and pass the filter of every\ncolumn (the drop-down at the right of a column header).\nEvery word must match.\nText matches a part of a cell, for example varpro or tolerance.\nA number with a comparison compares the error:\n>1e-5 or <=3e-4. =free matches a whole cell.";
+            let tip = "Show the runs that match in any column, and pass the filter of every\ncolumn (the drop-down at the right of a column header).\nEvery word must match.\nText matches a part of a cell, for example varpro or tolerance.\nA number with a comparison compares the RMS deviation:\n>1e-5 or <=3e-4. =free matches a whole cell.";
             let width = ui.available_width();
             let (edit, cleared) = widgets::clearable_field(ui, &p, "run_filter", &mut self.explorer.filters.text, width, "Filter all columns");
             changed |= edit.on_hover_text(tip).changed();
@@ -1264,7 +1266,7 @@ impl App {
         if let Some(t) = o.tolerance {
             pairs.push(("Tolerance".into(), number(t, ".3e")));
         }
-        pairs.push(("Error".into(), number(r.final_error, ".3e")));
+        pairs.push(("RMS error".into(), number(r.final_error, ".3e")));
         if let Some(rep) = &r.report {
             pairs.push(("Max deviation".into(), number(rep.max_deviation, ".3e")));
             pairs.push(("RMS deviation".into(), number(rep.rms_deviation, ".3e")));
