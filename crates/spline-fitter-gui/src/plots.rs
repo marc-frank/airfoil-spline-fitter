@@ -788,6 +788,9 @@ pub struct ComparisonPlot {
     pub points: Vec<[f64; 2]>,
     /// Marked points (the selected runs or the best of a sweep).
     pub marked: Vec<[f64; 2]>,
+    /// The tolerance the plotted runs share, drawn as a dashed line when
+    /// the y axis is their deviation.
+    pub tolerance: Option<f64>,
 }
 
 impl ComparisonPlot {
@@ -796,7 +799,10 @@ impl ComparisonPlot {
         self.connected = connected;
         let lx = self.log_x;
         let ly = self.log_y;
-        let logged = self.points.iter().map(|q| [if lx { q[0].log10() } else { q[0] }, if ly { q[1].log10() } else { q[1] }]);
+        // The tolerance line is in view with the points.
+        let line = self.tolerance.zip(self.points.first()).map(|(t, q)| [q[0], t]);
+        let logged =
+            self.points.iter().chain(line.as_ref()).map(|q| [if lx { q[0].log10() } else { q[0] }, if ly { q[1].log10() } else { q[1] }]);
         self.view.fit(bounds_of(logged));
         self.view.follow = true;
     }
@@ -815,8 +821,16 @@ impl ComparisonPlot {
             // marker never rescales the plot.
             marker_pad: marker_pad(size::MARKER_SIZE, 2.0),
         };
-        let (points, marked, connected) = (&self.points, &self.marked, self.connected);
+        let (points, marked, connected, tolerance) = (&self.points, &self.marked, self.connected, self.tolerance);
         show_plot(ui, p, "comparison_plot", &mut self.view, &axes, motion_ms, |c| {
+            // As in the main plot: a dashed construction line.
+            if let Some(y) = tolerance.zip(points.first()).and_then(|(t, q)| c.screen([q[0], t])).map(|s| s.y) {
+                let frame = c.frame();
+                if frame.y_range().contains(y) {
+                    let line = [egui::pos2(frame.left(), y), egui::pos2(frame.right(), y)];
+                    c.painter.extend(Shape::dashed_line(&line, Stroke::new(1.0, alpha(p.construction, 110)), 6.0, 4.0));
+                }
+            }
             if connected {
                 c.polyline(points.iter().copied(), Stroke::new(1.5, p.trace()), false);
             }

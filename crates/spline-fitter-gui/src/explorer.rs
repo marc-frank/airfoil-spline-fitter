@@ -390,6 +390,17 @@ impl App {
         c.log_x = COLUMNS[xc].log && ticks.is_none() && xy.iter().all(|p| p.1[0] > 0.0);
         c.log_y = COLUMNS[yc].log && xy.iter().all(|p| p.1[1] > 0.0);
         c.ticks = ticks;
+        // The runs' shared tolerance, where the y axis is their deviation
+        // (a tolerance run's error is its largest deviation).
+        let deviation = matches!(COLUMNS[yc].name, "Error" | "Max deviation");
+        let tolerances: BTreeSet<u64> = xy
+            .iter()
+            .map(|(id, _)| self.projects.run(id).and_then(|r| r.optimization_config.tolerance).map_or(u64::MAX, f64::to_bits))
+            .collect();
+        c.tolerance = match tolerances.into_iter().collect::<Vec<_>>()[..] {
+            [bits] if deviation && bits != u64::MAX => Some(f64::from_bits(bits)),
+            _ => None,
+        };
         let unique = xy.windows(2).all(|w| w[0].1[0] != w[1].1[0]);
         c.set(xy.iter().map(|p| p.1).collect(), unique);
         self.explorer.points = Some(xy);

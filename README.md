@@ -136,6 +136,13 @@ Python results), and differs on purpose where the behaviour was a defect:
   point where the deviation stays (a kink or noise in the data); Python kept
   adding control points for all its rounds. The search has 200 rounds
   instead of 40, as each adds one control point.
+- With sections of different counts the control-point readout gives the
+  curve's count, each junction point once, as the status text and the runs
+  plot do; Python added the sections' counts, so it read 13 where the status
+  said 12.
+- The runs plot draws the tolerance as a dashed line when its y axis is the
+  error or the max deviation and every plotted run is a tolerance run with
+  the same tolerance.
 - The explorer keeps the column order you drag its headers into between
   sessions (Python started from the default order every time).
 - The earlier runs of a tolerance search keep the loss history of their own

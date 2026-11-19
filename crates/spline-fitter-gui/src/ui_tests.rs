@@ -190,6 +190,8 @@ fn light_theme_and_dialogs() {
         fitted.sort_by(f64::total_cmp);
         assert_eq!(xs, fitted);
         assert!(xs.first() != xs.last(), "{xs:?}");
+        // The search's tolerance is a line in the plot of its errors.
+        assert_eq!(app.comparison.tolerance, Some(1e-4));
     }
     // The rows' scroll bar is at the box's edge: clicking its track below
     // the handle pages down to the last runs.

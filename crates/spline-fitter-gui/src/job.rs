@@ -294,6 +294,7 @@ mod tests {
         };
         assert!(update(vec![points(23)]).contains("| Control points 23 | RMS error "));
         assert!(update(vec![points(10), points(10)]).contains("| Control points 2 × 10 | "));
-        assert!(update(vec![points(10), points(12)]).contains("| Control points 22 | "));
+        // Different counts: the curve's, the shared junction point once.
+        assert!(update(vec![points(10), points(12)]).contains("| Control points 21 | "));
     }
 }

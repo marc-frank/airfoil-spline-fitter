@@ -422,11 +422,12 @@ fn knot_gap_field(ui: &mut Ui, p: &Palette, value: &mut f64, width: f32) {
 }
 
 /// Control points per section as one readout: "25", "2 × 10" for equal
-/// sections, else the total.
+/// sections, else the curve's count, each junction point once (as the
+/// status text and the runs plot count them).
 pub(crate) fn count_text(counts: &[usize]) -> String {
     match counts {
         [one] => one.to_string(),
         [first, ..] if counts.iter().all(|c| c == first) => format!("{} × {first}", counts.len()),
-        _ => counts.iter().sum::<usize>().to_string(),
+        _ => (counts.iter().sum::<usize>() + 1 - counts.len()).to_string(),
     }
 }

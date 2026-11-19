@@ -1402,7 +1402,7 @@ Fixed below the sidebar (`RunBar`), margins and spacing 12:
 - `Fit spline` (`PrimaryButton`, pointing-hand cursor) and `Cancel` (hidden and disabled until a fit runs; then the Fit button is hidden and disabled instead).
 - A result box, hidden until there is a fit: a grid with captions (`Muted`) over readouts (`Readout`): column 1 caption `Max deviation` (or `Error`), column 2 `Control points`, column 3 `Time`; below it buttons `Save .dat` (tooltip `Save fitted airfoil coordinates (.dat)`), `Save spline` (`Save spline control points and knots (.spline.dat)`), `Export CAD` (`Export the exact B-spline curves as STEP, IGES or DXF`), all disabled until there is a fit.
 
-`set_save_enabled(e)`: the three buttons, the three File actions and View > Fit report take `e`; the result box is shown when `e` and a fit exists. Its readouts: with a report, caption `Max deviation`, value `number(max_deviation, ".2e")`; else caption `Error`, value `format_error(final_error)`. Control points: one section -> its count; all sections equal -> `"{S} × {n}"`; else the sum; tooltip `"{c1}, {c2}, ... per section"` when there are several sections, else empty. Time: `format_duration(elapsed_seconds)`.
+`set_save_enabled(e)`: the three buttons, the three File actions and View > Fit report take `e`; the result box is shown when `e` and a fit exists. Its readouts: with a report, caption `Max deviation`, value `number(max_deviation, ".2e")`; else caption `Error`, value `format_error(final_error)`. Control points: one section -> its count; all sections equal -> `"{S} × {n}"`; else the sum [Rust: the sum less one per junction, the count the status text and the runs plot give; the sum counted each shared junction point twice, so the readout said 13 where the status said 12]; tooltip `"{c1}, {c2}, ... per section"` when there are several sections, else empty. Time: `format_duration(elapsed_seconds)`.
 
 ### 19.6 Visibility and enabling (`on_optimizer_changed`)
 
@@ -1546,7 +1546,7 @@ Modes (combo `Live preview`: `Minimal`, `Moderate`, `Detailed`; default `Moderat
 1. `cancel_requested`: return true.
 2. If `step`: mark that steps arrive. Else if steps have arrived: remember `error` as the last refit's deviation; return false.
 3. Record: `iteration = increment_iteration()`; `logger.log(iteration, get_evaluation_count(), error, now - start)`.
-4. Status text: `"{prefix}Fitting... {format_duration(elapsed)} | Evaluations {count} | "` + (steps arrive: `"RMS error {format_error(error)}"` [Rust: `"Control points {count} | RMS error ..."`, with the step's control points per section as in the count readout (`25`, `2 × 10`, or the total), since the search adds them as it goes] plus `" | Max deviation of last refit {format_error(dev)}"` when known; else `"Best error {format_error(min of logged errors)}"`).
+4. Status text: `"{prefix}Fitting... {format_duration(elapsed)} | Evaluations {count} | "` + (steps arrive: `"RMS error {format_error(error)}"` [Rust: `"Control points {count} | RMS error ..."`, with the step's control points per section as in the count readout (`25`, `2 × 10`, or the curve's count), since the search adds them as it goes] plus `" | Max deviation of last refit {format_error(dev)}"` when known; else `"Best error {format_error(min of logged errors)}"`).
 5. Clear the "drawn" event; publish `{x copy, preview, new: True, status}`.
 6. Detailed mode: request an immediate tick (19.12.3) and wait for the "drawn" event in 50 ms slices, returning true if a cancel is requested meanwhile.
 7. Return false.
