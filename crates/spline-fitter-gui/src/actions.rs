@@ -391,7 +391,7 @@ impl App {
         }) {
             return false;
         }
-        let ProjectFile { metadata, airfoil, runs } = loaded.project;
+        let ProjectFile { metadata, airfoil, runs, searches } = loaded.project;
         let run_count = runs.len();
         self.quiet = true;
         self.fit = None;
@@ -403,7 +403,7 @@ impl App {
         self.airfoil = Some(airfoil.clone());
         self.projects = crate::explorer::Projects::default();
         self.projects.last_number = runs.iter().map(|r| r.number).max().unwrap_or(0);
-        self.projects.file = Some(ProjectFile { metadata, airfoil, runs });
+        self.projects.file = Some(ProjectFile { metadata, airfoil, runs, searches });
         self.projects.path = Some(path.to_path_buf());
         self.accept_settings_quietly();
         if let Some(last) = self.projects.file.as_ref().and_then(|f| f.runs.last()).cloned() {

@@ -163,7 +163,7 @@ fn light_theme_and_dialogs() {
         app.settings.tolerance_goal = true;
         app.settings.auto_tolerance = false;
         app.settings.tolerance = 2e-6;
-        // From the fewest control points, one more a round: a run each.
+        // From the fewest control points, one more a fit: a run each.
         app.settings.grow = true;
         app.settings.sections.value.set(3);
         app.advanced_open = true;
@@ -205,39 +205,67 @@ fn light_theme_and_dialogs() {
         assert!(app.status.starts_with("Completed (VarPro LM): "), "{}", app.status);
         // At its end the plot shows the project's runs again.
         assert_eq!(app.comparison.y_label, "Error");
-        // Every refit of the search is a run of its own, told apart by its counts.
-        let counts: Vec<Vec<usize>> = app.projects.runs().iter().map(|r| r.result.section_counts()).collect();
-        assert!(counts.iter().enumerate().all(|(i, c)| !counts[..i].contains(c)), "{counts:?}");
-        assert_eq!(counts.last(), Some(&app.fit.as_ref().unwrap().section_counts()));
-        // Each earlier refit keeps only its own evaluations; the last run
-        // has the whole search.
+        // The search is a folder; each of its fits a fixed-count run of its
+        // own count, the same in both sections, told apart by it.
+        let file = app.projects.file.as_ref().unwrap();
+        assert_eq!(file.searches.len(), 1);
+        let search = &file.searches[0];
+        assert_eq!((search.number, search.optimization_config.tolerance), (1, Some(2e-6)));
         let runs = app.projects.runs();
-        let (last, earlier) = runs.split_last().unwrap();
-        let own: usize = earlier.iter().map(|r| r.loss_history.len()).sum();
-        assert!(earlier.iter().all(|r| !r.loss_history.is_empty()));
-        assert!(own <= last.loss_history.len(), "{own} > {}", last.loss_history.len());
+        assert!(runs.iter().all(|r| r.search.as_deref() == Some(search.search_id.as_str())));
+        assert!(runs.iter().all(|r| r.optimization_config.tolerance.is_none() && !r.optimization_config.grow_control_points));
+        let counts: Vec<usize> = runs.iter().map(|r| r.spline_config.num_control_points).collect();
+        assert!(runs.iter().all(|r| r.result.section_counts() == vec![r.spline_config.num_control_points; 2]), "{counts:?}");
+        assert!(counts.windows(2).all(|w| w[1] == w[0] + 1), "one more a fit: {counts:?}");
+        let result = app.projects.search_result(search).unwrap();
+        assert_eq!(result.result.section_counts(), app.fit.as_ref().unwrap().section_counts());
+        assert_eq!(search.control_points, result.spline_config.num_control_points);
+        // Each run keeps only its own evaluations.
+        assert!(runs.iter().all(|r| !r.loss_history.is_empty()));
+        let own: usize = runs.iter().map(|r| r.loss_history.len()).sum();
+        assert_eq!(own, search.evaluations);
+        // In the table the search is one row, closed.
+        let rows = app.visible_rows();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1[0].1, "Search 1");
     }
+    // Open, its runs follow it.
+    let search_id = h.state().projects.searches()[0].search_id.clone();
+    h.state_mut().toggle_search(&search_id, true);
+    h.run_steps(2);
+    assert_eq!(h.state().visible_rows().len(), 1 + h.state().projects.runs().len());
     h.state_mut().main_plot.deviation_on = true;
     h.state_mut().main_plot.show_knots = true;
     h.state_mut().main_plot.refresh_knots();
     h.state_mut().main_plot.refresh_deviation();
     h.run_steps(3);
     shot(&mut h, "6_light_tolerance");
-    // Along control points the tolerance runs are plotted at the counts they
-    // found, not at the start count they share.
+    // Along control points every fit of the search is a point, at its count
+    // per section.
     {
         let app = h.state();
         let mut xs: Vec<f64> = app.comparison.points.iter().map(|p| p[0]).collect();
-        let mut fitted: Vec<f64> = app.projects.runs().iter().map(|r| r.result.num_control_points() as f64).collect();
+        let mut fitted: Vec<f64> = app.projects.runs().iter().map(|r| r.spline_config.num_control_points as f64).collect();
         xs.sort_by(f64::total_cmp);
         fitted.sort_by(f64::total_cmp);
         assert_eq!(xs, fitted);
         assert!(xs.first() != xs.last(), "{xs:?}");
-        // The search's tolerance is a line in the plot of its errors.
-        assert_eq!(app.comparison.tolerance, Some(2e-6));
+        // Their error is the RMS error: no tolerance line.
+        assert_eq!(app.comparison.tolerance, None);
         // Each point names its run.
         assert_eq!(app.comparison.labels.len(), app.comparison.points.len());
         assert!(app.comparison.labels.iter().all(|l| l.starts_with("Run ") && l.contains(" control points, error ")), "{:?}", app.comparison.labels);
+    }
+    // The search's tolerance is a line in the plot of their largest deviations.
+    {
+        let app = h.state_mut();
+        app.explorer.y_column = crate::runs::COLUMNS.iter().position(|c| c.name == "Max deviation").unwrap();
+        app.explorer.forget_points();
+        app.refresh_comparison();
+        assert_eq!(app.comparison.tolerance, Some(2e-6));
+        app.explorer.y_column = crate::runs::ERROR_COLUMN;
+        app.explorer.forget_points();
+        app.refresh_comparison();
     }
     // A click on a point selects its run and shows that fit.
     {
@@ -250,8 +278,21 @@ fn light_theme_and_dialogs() {
         assert_eq!(app.projects.shown_run.as_deref(), Some(id.as_str()));
         assert_eq!(app.comparison.marked, vec![point]);
         let run = app.projects.run(&id).unwrap();
-        assert_eq!(run.result.num_control_points() as f64, point[0]);
+        assert_eq!(run.spline_config.num_control_points as f64, point[0]);
         assert!(app.comparison.labels[last].starts_with(&format!("Run {}: ", run.number)));
+    }
+    // Double-clicking a run of the search sets the sidebar to that fixed-count
+    // run; the search's own row, to the tolerance search it was.
+    {
+        let app = h.state_mut();
+        let run = app.projects.runs()[0].clone();
+        app.load_settings(&run.run_id);
+        let s = &app.settings;
+        assert!(!s.tolerance_mode() && !s.grow && s.control_points.value.value == run.spline_config.num_control_points);
+        app.load_settings(&crate::explorer::search_row(&search_id));
+        let s = &app.settings;
+        assert!(s.tolerance_mode() && s.grow && !s.auto_tolerance && s.tolerance == 2e-6);
+        assert!(app.status.starts_with("Applied the settings of search 1 (tolerance 2.00e-06, from the fewest control points"), "{}", app.status);
     }
     h.run_steps(3);
     // The report shows in the bottom block, beside the plots.

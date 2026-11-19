@@ -10,6 +10,7 @@ use spline_fitter::bspline_varpro::KnotPlacement;
 use spline_fitter::formatting::{format_count, format_duration, format_error, number};
 use spline_fitter::geometry::AirfoilData;
 use spline_fitter::models::{FitResult, IterationRecord, OptimizationConfig, SplineConfig};
+use spline_fitter::project::{number_runs, OptimizationRun, ProjectFile, ToleranceSearch};
 use spline_fitter::BSpline;
 
 use crate::app::App;
@@ -198,27 +199,95 @@ impl App {
         }
     }
 
-    fn effort(&self, job: &FitJob, outcome: &Outcome) -> String {
+    fn effort(&self, outcome: &Outcome) -> String {
         let evaluations = plural_noun(outcome.raw.evaluations, "evaluation");
-        if job.options.tolerance.is_some() {
-            format!("{}, {evaluations}", plural_noun(outcome.raw.iterations, "refit"))
-        } else {
-            evaluations
+        match &outcome.raw.search {
+            Some(search) => format!("{}, {}", plural_noun(search.fits, "fit"), plural_noun(search.evaluations, "evaluation")),
+            None => evaluations,
         }
     }
 
-    /// Stores the earlier fits of a tolerance search as runs of their own,
-    /// each with the loss history of its own refit (from the fit before it);
-    /// the search's last fit keeps the whole history. A search adds one
-    /// control point a round, so histories up to each fit's time would hold
-    /// the search's evaluations many times over.
-    fn add_earlier_runs(&mut self, job: &FitJob, outcome: &Outcome, history: &[IterationRecord]) {
-        let mut since = f64::NEG_INFINITY;
-        for fit in &outcome.earlier {
-            let own = history.iter().filter(|r| r.elapsed_seconds > since && r.elapsed_seconds <= fit.elapsed_seconds).copied().collect();
-            since = fit.elapsed_seconds;
-            self.add_run(&job.config, &job.options, fit.clone(), own, false);
+    /// Stores a tolerance search: a folder of its fits, each a fixed-count
+    /// run of its own count (as that run made alone) with the loss history
+    /// of its own fit, and the search's settings and outcome. A search of the
+    /// same settings is replaced, its number kept; a cancelled search does
+    /// not replace a finished one (then false).
+    fn add_search(&mut self, job: &FitJob, outcome: &Outcome, history: &[IterationRecord], replot: bool) -> bool {
+        let (Some(found), Some(airfoil)) = (outcome.raw.search.clone(), self.airfoil.clone()) else { return false };
+        let file = self.projects.file.get_or_insert_with(|| ProjectFile::new(airfoil));
+        let existing = file.searches.iter().position(|s| s.spline_config == job.config && s.optimization_config == job.options);
+        if outcome.cancelled && existing.is_some_and(|i| !file.searches[i].cancelled) {
+            return false;
         }
+        let number = existing.map(|i| {
+            let old = file.searches.remove(i);
+            file.runs.retain(|r| r.search.as_deref() != Some(old.search_id.as_str()));
+            old.number
+        });
+        let search_id = spline_fitter::project::new_id();
+        // The fits in the order they ran, each with the seconds at its end.
+        let mut fits: Vec<(f64, FitResult, bool)> = outcome
+            .raw
+            .earlier
+            .iter()
+            .zip(&outcome.earlier)
+            .map(|(raw, fit)| (raw.seconds.unwrap_or(0.0), fit.clone(), false))
+            .collect();
+        fits.push((outcome.raw.seconds.unwrap_or(outcome.elapsed), outcome.fit.clone(), true));
+        fits.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut since = 0.0;
+        let mut result_run = String::new();
+        // One record per evaluation, the fits' in the order they ran.
+        let mut records = history.iter().copied();
+        for (seconds, mut fit, last) in fits {
+            // Counted and timed from its own start, as the run alone.
+            let own: Vec<IterationRecord> = records
+                .by_ref()
+                .take(fit.num_evaluations)
+                .enumerate()
+                .map(|(i, r)| IterationRecord { iteration: i + 1, elapsed_seconds: (r.elapsed_seconds - since).max(0.0), ..r })
+                .collect();
+            // As the run of its own count would have taken.
+            fit.elapsed_seconds = seconds - since;
+            since = seconds;
+            let mut config = job.config.clone();
+            config.num_control_points = fit.section_control_points.first().map_or(0, Vec::len);
+            let opt = OptimizationConfig { tolerance: None, grow_control_points: false, ..job.options.clone() };
+            let mut run = OptimizationRun::new(config, opt, fit, own);
+            run.search = Some(search_id.clone());
+            if last {
+                result_run = run.run_id.clone();
+            }
+            file.runs.push(run);
+        }
+        self.projects.last_number = number_runs(&mut file.runs, self.projects.last_number);
+        let number = number.unwrap_or_else(|| file.searches.iter().map(|s| s.number).max().unwrap_or(0) + 1);
+        file.searches.push(ToleranceSearch {
+            search_id,
+            number,
+            timestamp: spline_fitter::project::now_iso(),
+            spline_config: job.config.clone(),
+            optimization_config: job.options.clone(),
+            result_run: result_run.clone(),
+            control_points: found.count,
+            max_deviation: found.max_deviation,
+            met: found.met && !outcome.cancelled,
+            message: found.message,
+            fits: found.fits,
+            evaluations: found.evaluations,
+            elapsed_seconds: found.seconds,
+            cancelled: outcome.cancelled,
+        });
+        self.projects.shown_run = Some(result_run);
+        self.projects.modified = true;
+        let ids: std::collections::BTreeSet<String> = self.projects.runs().iter().map(|r| r.run_id.clone()).collect();
+        let rows: std::collections::BTreeSet<String> = self.projects.searches().iter().map(|s| crate::explorer::search_row(&s.search_id)).collect();
+        self.projects.selected.retain(|id| ids.contains(id) || rows.contains(id));
+        if replot {
+            self.explorer.forget_points();
+            self.refresh_comparison();
+        }
+        true
     }
 
     fn finish_fit(&mut self, job: &mut FitJob) {
@@ -236,8 +305,11 @@ impl App {
             Ok(outcome) => {
                 let history: Vec<IterationRecord> =
                     log.history().map(|(i, t, e)| IterationRecord { iteration: i, error: e, elapsed_seconds: t }).collect();
-                self.add_earlier_runs(job, &outcome, &history);
-                let kept = !self.add_run(&job.config, &job.options, outcome.fit.clone(), history, true);
+                let kept = if outcome.raw.search.is_some() {
+                    !self.add_search(job, &outcome, &history, true)
+                } else {
+                    !self.add_run(&job.config, &job.options, outcome.fit.clone(), history, true)
+                };
                 if kept {
                     // Not added, so not replotted: the runs plot may show the search's refits.
                     self.explorer.forget_points();
@@ -258,7 +330,7 @@ impl App {
                     Ok(None) => {}
                     Err(e) => println!("Failed to save optimizer log: {e}"),
                 }
-                let effort = self.effort(job, &outcome);
+                let effort = self.effort(&outcome);
                 let duration = format_duration(outcome.elapsed);
                 let mut status = if outcome.cancelled {
                     format!("Cancelled: {effort} in {duration} | Best error {}", format_error(outcome.raw.error))
@@ -272,18 +344,17 @@ impl App {
                 if let Some(r) = &outcome.fit.report {
                     status += &format!(" | {}", r.summary_line());
                 }
-                if !outcome.raw.success && !outcome.cancelled {
-                    // A search that misses its tolerance converged; its
-                    // message says what stopped it.
-                    let message = &outcome.raw.message;
-                    if message.starts_with("Tolerance not reached") {
-                        status += &format!(" | {message}");
-                    } else {
-                        status += &format!(" | Solver did not converge: {message}");
+                match &outcome.raw.search {
+                    // A search that misses its tolerance says what stopped it.
+                    Some(search) if !search.met && !outcome.cancelled => status += &format!(" | {}", search.message),
+                    _ if !outcome.raw.success && !outcome.cancelled => {
+                        status += &format!(" | Solver did not converge: {}", outcome.raw.message)
                     }
+                    _ => {}
                 }
                 if kept {
-                    status += " | The project keeps its finished run of these settings";
+                    let what = if outcome.raw.search.is_some() { "search" } else { "run" };
+                    status += &format!(" | The project keeps its finished {what} of these settings");
                 }
                 self.set_status(status);
                 if !outcome.cancelled {
@@ -407,8 +478,11 @@ impl App {
             Ok(outcome) => {
                 let history: Vec<IterationRecord> =
                     log.history().map(|(i, t, e)| IterationRecord { iteration: i, error: e, elapsed_seconds: t }).collect();
-                self.add_earlier_runs(job, &outcome, &history);
-                self.add_run(&job.config, &job.options, outcome.fit.clone(), history, false);
+                if outcome.raw.search.is_some() {
+                    self.add_search(job, &outcome, &history, false);
+                } else {
+                    self.add_run(&job.config, &job.options, outcome.fit.clone(), history, false);
+                }
                 if outcome.cancelled {
                     sweep.cancelled = true;
                     status += " | Cancelled";
@@ -459,7 +533,14 @@ impl App {
             _ => fixed(&run.spline_config, &run.optimization_config, a),
         };
         let mut by_values: Vec<(Vec<f64>, [f64; 2])> = Vec::new();
-        for run in self.projects.runs() {
+        // A tolerance sweep compares searches (each as its settings and the
+        // fit it ended on); a fixed-count sweep, runs.
+        let candidates: Vec<spline_fitter::project::OptimizationRun> = if opt.tolerance.is_some() {
+            self.projects.searches().iter().filter_map(|s| self.projects.search_as_run(s, false)).collect()
+        } else {
+            self.projects.runs().to_vec()
+        };
+        for run in &candidates {
             let (c, o) = (&run.spline_config, &run.optimization_config);
             // Along the sections axis the junction count changes: compare the
             // continuity setting instead of the junctions themselves.
@@ -648,6 +729,9 @@ impl App {
         let result = job.join().and_then(|outcome| {
             if outcome.cancelled {
                 return Ok(None);
+            }
+            if let Some(search) = outcome.raw.search.as_ref().filter(|s| !s.met) {
+                return Err(spline_fitter::Error::new(search.message.clone()));
             }
             if !outcome.raw.success {
                 return Err(spline_fitter::Error::new(format!("Optimizer did not converge: {}", outcome.raw.message)));

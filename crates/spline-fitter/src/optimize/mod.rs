@@ -12,7 +12,7 @@ use crate::{Result, Vec2};
 pub enum UpdateKind {
     /// A residual evaluation; the error is the RMS error.
     Evaluation,
-    /// A finished refit of a tolerance search; the error is its maximum deviation.
+    /// A finished fit of a tolerance search; the error is its maximum deviation.
     Refit,
 }
 
@@ -48,8 +48,8 @@ pub struct RawResult {
     pub section_control_points: Vec<Vec<Vec2>>,
     /// Knots of every section; open uniform when `None`.
     pub section_knots: Option<Vec<Vec<f64>>>,
-    /// The error the run is judged by: the RMS error, or the maximum
-    /// deviation in tolerance mode.
+    /// The error the run is judged by: the RMS error (Direct LSQ: of its
+    /// solve).
     pub error: f64,
     pub rms_error: f64,
     /// Iterations: evaluations, refits or 1 for Direct LSQ.
@@ -57,12 +57,31 @@ pub struct RawResult {
     pub evaluations: usize,
     pub success: bool,
     pub message: String,
-    /// Seconds from the start of the search to this fit (earlier fits of a
-    /// tolerance search only).
+    /// Seconds from the start of the search to the end of this fit (fits
+    /// of a tolerance search only).
     pub seconds: Option<f64>,
-    /// The earlier fits of a tolerance search, in order; the result itself
-    /// is the last fit. Each is a fit of its own.
+    /// The other fits of a tolerance search, in the order they ran. Each,
+    /// like the result, is the fixed-count fit of its own count.
     pub earlier: Vec<RawResult>,
+    /// For the result of a tolerance search: how the search ended.
+    pub search: Option<SearchOutcome>,
+}
+
+/// How a tolerance search ended.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SearchOutcome {
+    /// Control points per section of the fit it ended on.
+    pub count: usize,
+    /// That fit's largest orthogonal deviation.
+    pub max_deviation: f64,
+    /// Whether that fit is within the tolerance.
+    pub met: bool,
+    pub message: String,
+    /// Fixed-count fits it ran (the result among them).
+    pub fits: usize,
+    /// Evaluations of all its fits.
+    pub evaluations: usize,
+    pub seconds: f64,
 }
 
 /// Fits the airfoil's sections with the configured method.
@@ -95,6 +114,43 @@ pub(crate) mod tests {
 
     fn close(a: f64, b: f64) -> bool {
         (a - b).abs() <= 1e-3 * b.abs()
+    }
+
+    /// Every fit of a tolerance search is the fixed-count run of its count,
+    /// so double-clicking it reproduces it; the search ends on the fewest
+    /// that meet the tolerance, going up from below and down from above.
+    #[test]
+    fn a_search_is_a_series_of_single_runs() {
+        let airfoil = naca2412();
+        let config = SplineConfig { num_control_points: 8, num_sections: 2, ..Default::default() };
+        let tolerance = OptimizationConfig { tolerance: Some(2e-5), grow_control_points: false, ..Default::default() };
+        let up = run_optimization(&config, &tolerance, &airfoil, &mut Unmonitored).unwrap();
+        let search = up.search.clone().unwrap();
+        assert!(search.met, "{}", search.message);
+        let mut fits: Vec<&RawResult> = up.earlier.iter().chain([&up]).collect();
+        fits.sort_by_key(|f| f.section_control_points[0].len());
+        let counts: Vec<usize> = fits.iter().map(|f| f.section_control_points[0].len()).collect();
+        assert_eq!(counts, (8..=search.count).collect::<Vec<_>>());
+        assert_eq!(search.fits, counts.len());
+        for fit in &fits {
+            let n = fit.section_control_points[0].len();
+            assert!(fit.section_control_points.iter().all(|s| s.len() == n));
+            let single = run_optimization(
+                &SplineConfig { num_control_points: n, ..config.clone() },
+                &OptimizationConfig { tolerance: None, ..tolerance.clone() },
+                &airfoil,
+                &mut Unmonitored,
+            )
+            .unwrap();
+            assert_eq!(single.section_control_points, fit.section_control_points, "{n} control points");
+            assert_eq!((single.error, single.evaluations), (fit.error, fit.evaluations));
+        }
+        // From above, one fewer while the tolerance holds: the same end.
+        let above = SplineConfig { num_control_points: search.count + 3, ..config.clone() };
+        let down = run_optimization(&above, &tolerance, &airfoil, &mut Unmonitored).unwrap();
+        let from_above = down.search.unwrap();
+        assert!(from_above.met && from_above.count <= search.count, "{} > {}", from_above.count, search.count);
+        assert_eq!(down.section_control_points[0].len(), from_above.count);
     }
 
     #[test]

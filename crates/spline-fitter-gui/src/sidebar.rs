@@ -237,7 +237,7 @@ impl App {
             if view.varpro {
                 widgets::check_row(ui, &p, "Grow points", true, |ui| {
                     widgets::checkbox(ui, &p, &mut s.grow, "Add where the fit is worst").on_hover_text(
-                        "On: start from the fewest control points and add them where the\nfit is worst, refitting after each step.\nOff: start from the Control points setting (Curve). With a tolerance\ngoal the count can still grow or shrink from there to meet it.",
+                        "On: start from the fewest control points and add them where the\nfit is worst, refitting after each step. A tolerance search starts\nfrom the fewest.\nOff: start from the Control points setting (Curve). A tolerance search\nstarts there and goes up or down one at a time to meet it; each of\nits fits is the run of its count alone.",
                     );
                 });
             }

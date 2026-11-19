@@ -20,7 +20,10 @@ use crate::{bail, Error, Result, Vec2};
 /// 1.1: a tolerance run's `smoothing_weight` is the weight it was fitted
 /// with; before, tolerance fits ignored it and used
 /// [`OLD_TOLERANCE_SMOOTHING`].
-pub const FORMAT_VERSION: &str = "1.1.0";
+/// 1.2: tolerance searches (`tolerance_searches`), whose fits are
+/// fixed-count runs with a `search` key; readers of 1.0 see those runs as
+/// plain fixed-count runs.
+pub const FORMAT_VERSION: &str = "1.2.0";
 /// The smoothing weight of tolerance fits in projects before format 1.1.
 pub const OLD_TOLERANCE_SMOOTHING: f64 = 1e-7;
 
@@ -59,6 +62,40 @@ pub struct OptimizationRun {
     pub optimization_config: OptimizationConfig,
     pub result: FitResult,
     pub loss_history: Vec<IterationRecord>,
+    /// The tolerance search this run is a fit of (its `search_id`).
+    pub search: Option<String>,
+}
+
+/// A tolerance search: its settings (the start count, the tolerance) and
+/// how it ended. Its fits are runs of their own, fixed-count runs that name
+/// it, each exactly the run its count makes on its own.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToleranceSearch {
+    pub search_id: String,
+    /// 1, 2, ... in the order searches were added.
+    pub number: usize,
+    pub timestamp: String,
+    /// The sidebar's settings: `num_control_points` is the start count.
+    pub spline_config: SplineConfig,
+    /// With the tolerance.
+    pub optimization_config: OptimizationConfig,
+    /// The run it ended on.
+    pub result_run: String,
+    /// Control points per section of that run.
+    pub control_points: usize,
+    pub max_deviation: f64,
+    pub met: bool,
+    pub message: String,
+    pub fits: usize,
+    pub evaluations: usize,
+    pub elapsed_seconds: f64,
+    pub cancelled: bool,
+}
+
+impl ToleranceSearch {
+    pub fn tolerance(&self) -> f64 {
+        self.optimization_config.tolerance.unwrap_or(f64::NAN)
+    }
 }
 
 impl OptimizationRun {
@@ -76,21 +113,32 @@ impl OptimizationRun {
             optimization_config,
             result,
             loss_history,
+            search: None,
         }
     }
 }
 
-/// An airfoil and its runs.
+/// An airfoil, its runs and its tolerance searches.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProjectFile {
     pub metadata: ProjectMetadata,
     pub airfoil: AirfoilData,
     pub runs: Vec<OptimizationRun>,
+    pub searches: Vec<ToleranceSearch>,
 }
 
 impl ProjectFile {
     pub fn new(airfoil: AirfoilData) -> Self {
-        ProjectFile { metadata: ProjectMetadata::new(None), airfoil, runs: vec![] }
+        ProjectFile { metadata: ProjectMetadata::new(None), airfoil, runs: vec![], searches: vec![] }
+    }
+
+    pub fn search(&self, id: &str) -> Option<&ToleranceSearch> {
+        self.searches.iter().find(|s| s.search_id == id)
+    }
+
+    /// The runs of a search, in the order they were added.
+    pub fn search_runs<'a>(&'a self, id: &'a str) -> impl Iterator<Item = &'a OptimizationRun> + 'a {
+        self.runs.iter().filter(move |r| r.search.as_deref() == Some(id))
     }
 }
 
@@ -103,6 +151,20 @@ pub fn number_runs(runs: &mut [OptimizationRun], after: usize) -> usize {
         run.number = last;
     }
     last
+}
+
+/// A new run or search id.
+pub fn new_id() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
+/// Numbers the searches without a number after the largest one.
+pub fn number_searches(searches: &mut [ToleranceSearch]) {
+    let mut last = searches.iter().map(|s| s.number).max().unwrap_or(0);
+    for s in searches.iter_mut().filter(|s| s.number == 0) {
+        last += 1;
+        s.number = last;
+    }
 }
 
 /// Local time like Python's `datetime.now().isoformat()`.
@@ -401,7 +463,7 @@ fn encode_fit_result(r: &FitResult) -> Json {
 }
 
 fn encode_run(run: &OptimizationRun) -> Json {
-    obj(vec![
+    let mut fields = vec![
         ("run_id", string(&run.run_id)),
         ("number", int(run.number)),
         ("timestamp", string(&run.timestamp)),
@@ -418,12 +480,35 @@ fn encode_run(run: &OptimizationRun) -> Json {
             ),
         ),
         ("section_control_points", Json::Array(run.result.section_control_points.iter().map(|s| points(s)).collect())),
+    ];
+    if let Some(search) = &run.search {
+        fields.push(("search", string(search)));
+    }
+    obj(fields)
+}
+
+fn encode_search(s: &ToleranceSearch) -> Json {
+    obj(vec![
+        ("search_id", string(&s.search_id)),
+        ("number", int(s.number)),
+        ("timestamp", string(&s.timestamp)),
+        ("spline_config", encode_spline_config(&s.spline_config)),
+        ("optimization_config", encode_optimization_config(&s.optimization_config)),
+        ("result_run", string(&s.result_run)),
+        ("control_points", int(s.control_points)),
+        ("max_deviation", float(s.max_deviation)),
+        ("met", Json::Bool(s.met)),
+        ("message", string(&s.message)),
+        ("fits", int(s.fits)),
+        ("evaluations", int(s.evaluations)),
+        ("elapsed_seconds", float(s.elapsed_seconds)),
+        ("cancelled", Json::Bool(s.cancelled)),
     ])
 }
 
 fn encode_project(p: &ProjectFile) -> Json {
     let m = &p.metadata;
-    obj(vec![
+    let mut json = obj(vec![
         ("format_version", string(&m.format_version)),
         (
             "metadata",
@@ -437,7 +522,15 @@ fn encode_project(p: &ProjectFile) -> Json {
         ),
         ("airfoil", encode_airfoil(&p.airfoil)),
         ("optimization_runs", Json::Array(p.runs.iter().map(encode_run).collect())),
-    ])
+    ]);
+    // Written only when there are searches, so other projects keep the
+    // layout of format 1.0.
+    if !p.searches.is_empty() {
+        if let Json::Object(fields) = &mut json {
+            fields.push(("tolerance_searches".into(), Json::Array(p.searches.iter().map(encode_search).collect())));
+        }
+    }
+    json
 }
 
 /// The text of a project file.
@@ -778,6 +871,33 @@ fn decode_run(json: &Json, place: &str, warnings: &mut Vec<String>) -> Result<Op
         optimization_config,
         result,
         loss_history,
+        search: run.optional("search").map(|v| run.text_of("search", v).map(str::to_string)).transpose()?,
+    })
+}
+
+fn decode_search(json: &Json, place: &str, warnings: &mut Vec<String>) -> Result<ToleranceSearch> {
+    let s = Part { json, place };
+    let spline_config = decode_spline_config(s.field("spline_config")?, &format!("{place} spline settings"))?;
+    let (optimization_config, warning) = decode_optimization_config(s.field("optimization_config")?, &format!("{place} fit settings"))?;
+    warnings.extend(warning);
+    if optimization_config.tolerance.is_none() {
+        return Err(s.error("the search has no tolerance"));
+    }
+    Ok(ToleranceSearch {
+        search_id: s.text("search_id")?.to_string(),
+        number: s.count_or("number", 0)?,
+        timestamp: s.text_or("timestamp", "")?.to_string(),
+        spline_config,
+        optimization_config,
+        result_run: s.text("result_run")?.to_string(),
+        control_points: s.count("control_points")?,
+        max_deviation: s.float("max_deviation")?,
+        met: s.bool_or("met", false)?,
+        message: s.text_or("message", "")?.to_string(),
+        fits: s.count_or("fits", 0)?,
+        evaluations: s.count_or("evaluations", 0)?,
+        elapsed_seconds: s.float_or("elapsed_seconds", 0.0)?,
+        cancelled: s.bool_or("cancelled", false)?,
     })
 }
 
@@ -839,8 +959,26 @@ pub fn parse_project(text: &str) -> Result<LoadedProject> {
         app_version: m.text_or("app_version", "")?.to_string(),
         platform: m.text_or("platform", "")?.to_string(),
     };
+    let searches = match root.optional("tolerance_searches") {
+        None => vec![],
+        Some(v) => root.list_of("tolerance_searches", v)?.to_vec(),
+    };
+    let mut searches: Vec<ToleranceSearch> = searches
+        .iter()
+        .enumerate()
+        .map(|(i, s)| decode_search(s, &format!("Search {}", i + 1), &mut warnings))
+        .collect::<Result<_>>()?;
+    // A search keeps only runs it names; a run naming no search is a run
+    // of its own.
+    searches.retain(|s| runs.iter().any(|r| r.search.as_deref() == Some(s.search_id.as_str())));
+    for run in &mut runs {
+        if run.search.as_ref().is_some_and(|id| !searches.iter().any(|s| &s.search_id == id)) {
+            run.search = None;
+        }
+    }
+    number_searches(&mut searches);
     let airfoil = decode_airfoil(Part { json: &json, place: "Airfoil" }.field("airfoil")?)?;
-    Ok(LoadedProject { project: ProjectFile { metadata, airfoil, runs }, warnings })
+    Ok(LoadedProject { project: ProjectFile { metadata, airfoil, runs, searches }, warnings })
 }
 
 #[cfg(test)]
@@ -965,7 +1103,7 @@ mod tests {
         let text = project_text(&project()).replace("\"degree\": 5,", "");
         assert_eq!(parse_project(&text).unwrap_err().0, "Run 1 spline settings: the 'degree' field is missing.");
         assert_eq!(parse_project("[1]").unwrap_err().0, "The file is not a project file: it holds no project.");
-        let newer = project_text(&project()).replacen("\"1.1.0\"", "\"2.0.0\"", 1);
+        let newer = project_text(&project()).replacen("\"1.2.0\"", "\"2.0.0\"", 1);
         assert_eq!(parse_project(&newer).unwrap_err().0, "Project file version 2.0.0 is not supported. Please update the application.");
     }
 
@@ -996,6 +1134,41 @@ mod tests {
         let again = load_project(&path).unwrap().project;
         assert_eq!(again.metadata.format_version, FORMAT_VERSION);
         assert_eq!(again.runs[0].optimization_config.smoothing_weight, OLD_TOLERANCE_SMOOTHING);
+    }
+
+    #[test]
+    fn searches_and_their_runs_round_trip() {
+        let mut p = project();
+        let mut run = p.runs[0].clone();
+        run.run_id = "fit-of-search".into();
+        run.number = 0;
+        run.search = Some("s1".into());
+        p.runs.push(run);
+        number_runs(&mut p.runs, 0);
+        p.searches.push(ToleranceSearch {
+            search_id: "s1".into(),
+            number: 1,
+            timestamp: "2026-11-19T10:00:00".into(),
+            spline_config: SplineConfig::default(),
+            optimization_config: OptimizationConfig { tolerance: Some(1e-4), ..OptimizationConfig::default() },
+            result_run: "fit-of-search".into(),
+            control_points: 2,
+            max_deviation: 9e-5,
+            met: true,
+            message: "Within tolerance 0.0001.".into(),
+            fits: 1,
+            evaluations: 4,
+            elapsed_seconds: 0.25,
+            cancelled: false,
+        });
+        let loaded = parse_project(&project_text(&p)).unwrap();
+        assert_eq!(loaded.project, p);
+        assert_eq!(p.search_runs("s1").count(), 1);
+        // A search without runs is dropped; a run naming a missing search
+        // is a run of its own.
+        let text = edited(|j| j["optimization_runs"][0]["search"] = "gone".into());
+        let lone = parse_project(&text).unwrap().project;
+        assert!(lone.runs[0].search.is_none() && lone.searches.is_empty());
     }
 
     #[test]

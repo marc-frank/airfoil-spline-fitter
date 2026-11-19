@@ -9,7 +9,7 @@ use egui_extras::{Column as TableColumn, TableBuilder};
 use spline_fitter::bspline_varpro::KnotPlacement;
 use spline_fitter::formatting::{format_duration, number};
 use spline_fitter::models::{FitResult, IterationRecord, OptimizationConfig, SplineConfig};
-use spline_fitter::project::{number_runs, OptimizationRun, ProjectFile};
+use spline_fitter::project::{number_runs, OptimizationRun, ProjectFile, ToleranceSearch};
 
 use crate::app::App;
 use crate::runs::{compare, parse_filter, row, term_matches, Cell, Filters, Term, COLUMNS, CONTROL_POINTS_COLUMN, ERROR_COLUMN};
@@ -22,8 +22,8 @@ pub struct Projects {
     pub file: Option<ProjectFile>,
     pub path: Option<PathBuf>,
     pub modified: bool,
-    /// Deleted runs with their positions, latest last.
-    pub deleted: Vec<Vec<(usize, OptimizationRun)>>,
+    /// Deleted runs and searches with their positions, latest last.
+    pub deleted: Vec<Deleted>,
     /// The highest number given to a run.
     pub last_number: usize,
     /// Selected runs by id.
@@ -32,13 +32,69 @@ pub struct Projects {
     pub shown_run: Option<String>,
 }
 
+/// What one deletion took away, to restore.
+#[derive(Default)]
+pub struct Deleted {
+    runs: Vec<(usize, OptimizationRun)>,
+    searches: Vec<(usize, ToleranceSearch)>,
+}
+
+/// A tolerance search's row id in the run table (a run's is its run id).
+const SEARCH_ROW: &str = "search:";
+
+pub fn search_row(search_id: &str) -> String {
+    format!("{SEARCH_ROW}{search_id}")
+}
+
+/// The search of a row id, if it is a search's row.
+pub fn row_search(row: &str) -> Option<&str> {
+    row.strip_prefix(SEARCH_ROW)
+}
+
 impl Projects {
     pub fn runs(&self) -> &[OptimizationRun] {
         self.file.as_ref().map_or(&[], |f| &f.runs)
     }
 
+    pub fn searches(&self) -> &[ToleranceSearch] {
+        self.file.as_ref().map_or(&[], |f| &f.searches)
+    }
+
     pub fn run(&self, id: &str) -> Option<&OptimizationRun> {
         self.runs().iter().find(|r| r.run_id == id)
+    }
+
+    pub fn search(&self, id: &str) -> Option<&ToleranceSearch> {
+        self.searches().iter().find(|s| s.search_id == id)
+    }
+
+    /// The run a search ended on (or, deleted, its last).
+    pub fn search_result(&self, search: &ToleranceSearch) -> Option<&OptimizationRun> {
+        self.run(&search.result_run)
+            .filter(|r| r.search.as_deref() == Some(search.search_id.as_str()))
+            .or_else(|| self.runs().iter().rev().find(|r| r.search.as_deref() == Some(search.search_id.as_str())))
+    }
+
+    /// A search as a run: its settings, the fit it ended on, and the
+    /// search's own effort and outcome. `reached`: the control points it
+    /// reached (its row) rather than its start count (its settings).
+    pub fn search_as_run(&self, search: &ToleranceSearch, reached: bool) -> Option<OptimizationRun> {
+        let mut run = self.search_result(search)?.clone();
+        run.spline_config = search.spline_config.clone();
+        if reached {
+            run.spline_config.num_control_points = search.control_points;
+        }
+        run.optimization_config = search.optimization_config.clone();
+        run.timestamp = search.timestamp.clone();
+        run.number = search.number;
+        run.search = None;
+        let r = &mut run.result;
+        r.num_iterations = search.fits;
+        r.num_evaluations = search.evaluations;
+        r.elapsed_seconds = search.elapsed_seconds;
+        r.converged = search.met;
+        r.cancelled = search.cancelled;
+        Some(run)
     }
 
     pub fn shown(&self) -> Option<&OptimizationRun> {
@@ -56,18 +112,29 @@ impl Projects {
             None => "No project".into(),
             Some(f) => {
                 let k = f.runs.len();
-                format!("{}{}\n{k} optimization run{}", self.name(), if self.modified { "*" } else { "" }, if k == 1 { "" } else { "s" })
+                let searches = match f.searches.len() {
+                    0 => String::new(),
+                    1 => ", 1 tolerance search".into(),
+                    n => format!(", {n} tolerance searches"),
+                };
+                format!(
+                    "{}{}\n{k} optimization run{}{searches}",
+                    self.name(),
+                    if self.modified { "*" } else { "" },
+                    if k == 1 { "" } else { "s" }
+                )
             }
         }
     }
 }
 
-/// Whether a run has the settings of a new fit (19.16.4): with free knots
-/// also the knot spacing, with a tolerance the same control points in every
-/// section (each refit of a search is a run of its own).
+/// Whether a run of its own has the settings of a new fit (19.16.4): with
+/// free knots also the knot spacing. The fits of a tolerance search belong
+/// to it and are replaced with it.
 fn same_settings(run: &OptimizationRun, config: &SplineConfig, opt: &OptimizationConfig, fit: &FitResult) -> bool {
     let (c, o) = (&run.spline_config, &run.optimization_config);
-    c.degree == config.degree
+    run.search.is_none()
+        && c.degree == config.degree
         && c.num_control_points == config.num_control_points
         && c.num_sections == config.num_sections
         && c.continuity == config.continuity
@@ -110,6 +177,19 @@ pub struct ExplorerState {
     scroll_to: Option<f32>,
     /// Bring the current run's row into view on the next frame.
     reveal: bool,
+    /// The tolerance searches shown open, their runs below them.
+    pub expanded: BTreeSet<String>,
+}
+
+/// A row of the run table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RowKind {
+    /// A run of its own.
+    Run,
+    /// A tolerance search, its runs shown below it when open.
+    Search { open: bool },
+    /// A run of an open search.
+    InSearch,
 }
 
 /// What the empty run table says.
@@ -132,6 +212,7 @@ impl Default for ExplorerState {
             sections: Vec::new(),
             scroll_to: None,
             reveal: false,
+            expanded: BTreeSet::new(),
         }
     }
 }
@@ -216,15 +297,76 @@ const POPUP_CONTENT_WIDTH: f32 = 258.0;
 const POPUP_ROW: f32 = 21.0;
 
 impl App {
-    /// The visible runs in table order, with their cells.
+    /// The cells of a tolerance search's row: its settings, the fit it
+    /// ended on, its effort; the Run column names it.
+    fn search_cells(&self, search: &ToleranceSearch) -> Option<Vec<(Cell, String)>> {
+        let mut cells = row(&self.projects.search_as_run(search, true)?);
+        let name = format!("Search {}", search.number);
+        cells[0] = (Cell::Text(name.clone()), name);
+        Some(cells)
+    }
+
+    /// The visible rows in table order, with their cells: the runs of their
+    /// own and the tolerance searches, sorted; below an open search, its
+    /// runs that pass the filters, sorted the same way. A search shows when
+    /// it or one of its runs passes the filters.
     pub(crate) fn visible_rows(&self) -> Vec<(String, Vec<(Cell, String)>)> {
+        let shows = |cells: &Vec<(Cell, String)>| self.explorer.filters.shows(cells);
+        let runs_of = |id: &str| -> Vec<(String, Vec<(Cell, String)>)> {
+            self.projects.runs().iter().filter(|r| r.search.as_deref() == Some(id)).map(|r| (r.run_id.clone(), row(r))).collect()
+        };
         let mut rows: Vec<(String, Vec<(Cell, String)>)> = self
             .projects
             .runs()
             .iter()
+            .filter(|r| r.search.is_none())
             .map(|r| (r.run_id.clone(), row(r)))
-            .filter(|(_, cells)| self.explorer.filters.shows(cells))
+            .filter(|(_, cells)| shows(cells))
             .collect();
+        for s in self.projects.searches() {
+            let Some(cells) = self.search_cells(s) else { continue };
+            if shows(&cells) || runs_of(&s.search_id).iter().any(|(_, c)| shows(c)) {
+                rows.push((search_row(&s.search_id), cells));
+            }
+        }
+        self.sort_rows(&mut rows);
+        let mut all = Vec::with_capacity(rows.len());
+        for (id, cells) in rows {
+            let open = row_search(&id).filter(|s| self.explorer.expanded.contains(*s)).map(str::to_string);
+            all.push((id, cells));
+            if let Some(search) = open {
+                let mut inside: Vec<_> = runs_of(&search).into_iter().filter(|(_, c)| shows(c)).collect();
+                self.sort_rows(&mut inside);
+                all.extend(inside);
+            }
+        }
+        all
+    }
+
+    /// Every run that passes the filters, the runs of searches open or not
+    /// (what the runs plot shows).
+    fn filtered_runs(&self) -> Vec<(String, Vec<(Cell, String)>)> {
+        let mut rows: Vec<_> =
+            self.projects.runs().iter().map(|r| (r.run_id.clone(), row(r))).filter(|(_, c)| self.explorer.filters.shows(c)).collect();
+        self.sort_rows(&mut rows);
+        rows
+    }
+
+    /// Whether a row is a run inside a search.
+    fn in_search(&self, id: &str) -> bool {
+        self.projects.run(id).is_some_and(|r| r.search.is_some())
+    }
+
+    /// Opens or closes a search's row.
+    pub fn toggle_search(&mut self, search: &str, open: bool) {
+        if open {
+            self.explorer.expanded.insert(search.to_string());
+        } else {
+            self.explorer.expanded.remove(search);
+        }
+    }
+
+    fn sort_rows(&self, rows: &mut [(String, Vec<(Cell, String)>)]) {
         let (column, ascending) = self.explorer.sort;
         rows.sort_by(|a, b| {
             let (x, y) = (&a.1[column], &b.1[column]);
@@ -242,7 +384,6 @@ impl App {
                 }
             }
         });
-        rows
     }
 
     /// Adds a fit as a run (replacing the run of the same settings); false
@@ -301,9 +442,27 @@ impl App {
         self.show_current_fit();
     }
 
-    fn load_settings(&mut self, id: &str) {
+    pub(crate) fn load_settings(&mut self, id: &str) {
         if self.fitting() {
             return self.set_status("Cancel the running fit to load a run");
+        }
+        // A search's row: the tolerance settings it ran with.
+        if let Some(search) = row_search(id).and_then(|s| self.projects.search(s)).cloned() {
+            let Some(settings) = self.projects.search_as_run(&search, false) else { return };
+            let result = self.projects.search_result(&search).cloned();
+            self.apply_run_settings(&settings);
+            if let Some(run) = result {
+                self.show_run(&run);
+            }
+            let (c, o) = (&search.spline_config, &search.optimization_config);
+            let start = if o.grow_control_points { "the fewest control points".to_string() } else { format!("{} control points", c.num_control_points) };
+            return self.set_status(format!(
+                "Applied the settings of search {} (tolerance {}, from {start}, degree {}, {} sections)",
+                search.number,
+                number(search.tolerance(), ".2e"),
+                c.degree,
+                c.num_sections
+            ));
         }
         let Some(run) = self.projects.run(id).cloned() else { return };
         self.apply_run_settings(&run);
@@ -318,38 +477,66 @@ impl App {
         ));
     }
 
+    /// Deletes the selected runs, and the selected searches with their
+    /// runs; a search left without runs goes too.
     pub fn delete_selected_runs(&mut self) {
         let Some(file) = self.projects.file.as_mut() else { return };
         let selected = std::mem::take(&mut self.projects.selected);
-        let mut removed = Vec::new();
+        let searches: BTreeSet<&str> = selected.iter().filter_map(|id| row_search(id)).collect();
+        let mut removed = Deleted::default();
         let mut i = 0;
         while i < file.runs.len() {
-            if selected.contains(&file.runs[i].run_id) {
-                removed.push((i + removed.len(), file.runs.remove(i)));
+            let r = &file.runs[i];
+            if selected.contains(&r.run_id) || r.search.as_deref().is_some_and(|s| searches.contains(s)) {
+                removed.runs.push((i + removed.runs.len(), file.runs.remove(i)));
             } else {
                 i += 1;
             }
         }
-        let k = removed.len();
-        if self.projects.shown_run.as_ref().is_some_and(|id| selected.contains(id)) {
+        let mut i = 0;
+        while i < file.searches.len() {
+            let id = file.searches[i].search_id.as_str();
+            if file.runs.iter().any(|r| r.search.as_deref() == Some(id)) {
+                i += 1;
+            } else {
+                removed.searches.push((i + removed.searches.len(), file.searches.remove(i)));
+            }
+        }
+        let k = removed.runs.len();
+        let gone = |id: &String| !file.runs.iter().any(|r| &r.run_id == id);
+        if self.projects.shown_run.as_ref().is_some_and(gone) {
             self.fit = None;
             self.projects.shown_run = None;
             self.main_plot.clear_items();
             self.loss.reset();
         }
+        let n = removed.searches.len();
         self.projects.deleted.push(removed);
         self.projects.modified = true;
         self.explorer.forget_points();
         self.refresh_comparison();
-        self.set_status(format!("Deleted {k} run{}; Edit > Restore deleted runs brings them back", if k == 1 { "" } else { "s" }));
+        let searches = match n {
+            0 => String::new(),
+            1 => " and 1 tolerance search".into(),
+            n => format!(" and {n} tolerance searches"),
+        };
+        self.set_status(format!("Deleted {k} run{}{searches}; Edit > Restore deleted runs brings them back", if k == 1 { "" } else { "s" }));
     }
 
     pub fn restore_deleted_runs(&mut self) {
         let (Some(batch), Some(file)) = (self.projects.deleted.pop(), self.projects.file.as_mut()) else { return };
-        let k = batch.len();
+        let k = batch.runs.len();
         self.projects.selected.clear();
-        for (index, run) in batch {
-            self.projects.selected.insert(run.run_id.clone());
+        let restored: BTreeSet<String> = batch.searches.iter().map(|(_, s)| s.search_id.clone()).collect();
+        for (index, search) in batch.searches {
+            self.projects.selected.insert(search_row(&search.search_id));
+            let at = index.min(file.searches.len());
+            file.searches.insert(at, search);
+        }
+        for (index, run) in batch.runs {
+            if !run.search.as_ref().is_some_and(|s| restored.contains(s)) {
+                self.projects.selected.insert(run.run_id.clone());
+            }
             let at = index.min(file.runs.len());
             file.runs.insert(at, run);
         }
@@ -362,19 +549,12 @@ impl App {
     /// Redraws the comparison plot from the visible runs.
     pub fn refresh_comparison(&mut self) {
         let (xc, yc) = (self.explorer.x_column, self.explorer.y_column);
-        let rows = self.visible_rows();
-        // A tolerance run's configured count is only where its search
-        // started: along control points it is plotted at the count it found,
-        // as a sweep plots it.
-        let fitted_count = COLUMNS[xc].name == "Control points";
+        // Every run, also those of searches not open in the table.
+        let rows = self.filtered_runs();
         let mut points: Vec<(String, Cell, String, f64)> = rows
             .into_iter()
             .filter_map(|(id, cells)| {
-                let (mut x, mut xt) = cells[xc].clone();
-                if let Some(run) = self.projects.run(&id).filter(|r| fitted_count && r.optimization_config.tolerance.is_some()) {
-                    let count = run.result.num_control_points();
-                    (x, xt) = (Cell::Int(count as i64), count.to_string());
-                }
+                let (x, xt) = cells[xc].clone();
                 let y = cells[yc].0.number()?;
                 (x != Cell::Empty).then_some((id, x, xt, y))
             })
@@ -396,22 +576,27 @@ impl App {
         c.log_x = COLUMNS[xc].log && ticks.is_none() && xy.iter().all(|p| p.1[0] > 0.0);
         c.log_y = COLUMNS[yc].log && xy.iter().all(|p| p.1[1] > 0.0);
         c.ticks = ticks;
-        // The runs' shared tolerance, where the y axis is their deviation
-        // (a tolerance run's error is its largest deviation).
-        let deviation = matches!(COLUMNS[yc].name, "Error" | "Max deviation");
-        let tolerances: BTreeSet<u64> = xy
-            .iter()
-            .map(|(id, _)| self.projects.run(id).and_then(|r| r.optimization_config.tolerance).map_or(u64::MAX, f64::to_bits))
-            .collect();
+        // The runs' shared tolerance (of their search), where the y axis is
+        // their deviation (a tolerance run of an older project has its
+        // largest deviation as its error).
+        let y = COLUMNS[yc].name;
+        let tolerance_of = |id: &str| {
+            let run = self.projects.run(id)?;
+            match run.search.as_deref().and_then(|s| self.projects.search(s)) {
+                Some(search) => search.optimization_config.tolerance.filter(|_| y == "Max deviation"),
+                None => run.optimization_config.tolerance.filter(|_| matches!(y, "Error" | "Max deviation")),
+            }
+        };
+        let tolerances: BTreeSet<u64> = xy.iter().map(|(id, _)| tolerance_of(id).map_or(u64::MAX, f64::to_bits)).collect();
         c.tolerance = match tolerances.into_iter().collect::<Vec<_>>()[..] {
-            [bits] if deviation && bits != u64::MAX => Some(f64::from_bits(bits)),
+            [bits] if bits != u64::MAX => Some(f64::from_bits(bits)),
             _ => None,
         };
         // "Run 12: 30 control points, max deviation 8.71e-06"
         let label = |id: &str, y: f64| {
             let value = if y.fract() == 0.0 { format!("{y}") } else { spline_fitter::formatting::format_error(y) };
             self.projects.run(id).map_or_else(String::new, |r| {
-                format!("Run {}: {} control points, {} {value}", r.number, r.result.num_control_points(), COLUMNS[yc].name.to_lowercase())
+                format!("Run {}: {} control points, {} {value}", r.number, r.result.control_points_per_section(), COLUMNS[yc].name.to_lowercase())
             })
         };
         c.labels = xy.iter().map(|(id, q)| label(id, q[1])).collect();
@@ -426,13 +611,22 @@ impl App {
             return self.refresh_comparison();
         }
         let points = self.explorer.points.as_ref().unwrap();
-        self.comparison.marked = points.iter().filter(|(id, _)| self.projects.selected.contains(id)).map(|(_, p)| *p).collect();
+        // A selected search marks its runs.
+        let selected = |id: &String| {
+            self.projects.selected.contains(id)
+                || self.projects.run(id).and_then(|r| r.search.as_deref()).is_some_and(|s| self.projects.selected.contains(&search_row(s)))
+        };
+        self.comparison.marked = points.iter().filter(|(id, _)| selected(id)).map(|(_, p)| *p).collect();
     }
 
     /// A click on the `index`th point of the runs plot: selects its run as
     /// a plain click on its row does, and brings the row into view.
     pub fn click_plotted_run(&mut self, index: usize) {
         let Some(id) = self.explorer.points.as_ref().and_then(|p| p.get(index)).map(|(id, _)| id.clone()) else { return };
+        // Its search opens, to show the run.
+        if let Some(search) = self.projects.run(&id).and_then(|r| r.search.clone()) {
+            self.toggle_search(&search, true);
+        }
         self.click_run(&id, std::slice::from_ref(&id), egui::Modifiers::NONE);
         self.explorer.reveal = true;
     }
@@ -441,7 +635,12 @@ impl App {
         self.mark_selection();
         if self.projects.selected.len() == 1 && !self.fitting() {
             let id = self.projects.selected.iter().next().unwrap().clone();
-            if let Some(run) = self.projects.run(&id).cloned() {
+            // A search shows the fit it ended on.
+            let run = match row_search(&id).and_then(|s| self.projects.search(s)) {
+                Some(search) => self.projects.search_result(search).cloned(),
+                None => self.projects.run(&id).cloned(),
+            };
+            if let Some(run) = run {
                 self.show_run(&run);
             }
         }
@@ -718,6 +917,18 @@ impl App {
         let reveal = self.table_keys(ui, &order, false, page).or_else(|| self.take_reveal(&order));
         let columns: Vec<usize> = self.explorer.order.clone();
         self.explorer.sections.clear();
+        // A search's row opens and closes at its chevron; its runs below it
+        // are indented as far.
+        let kinds: Vec<RowKind> = rows
+            .iter()
+            .map(|(id, _)| match row_search(id) {
+                Some(s) => RowKind::Search { open: self.explorer.expanded.contains(s) },
+                None if self.in_search(id) => RowKind::InSearch,
+                None => RowKind::Run,
+            })
+            .collect();
+        let indent = if kinds.iter().any(|k| *k != RowKind::Run) { size::GLYPH + size::TIGHT } else { 0.0 };
+        let mut toggle: Option<(String, bool)> = None;
         // Columns fit their contents when the runs change: the header with
         // room for its glyphs, or the widest cell.
         let text = egui::FontId::proportional(crate::theme::typeface::BASE);
@@ -732,7 +943,8 @@ impl App {
                     .iter()
                     .map(|(_, cells)| measure(&cells[c].1, if cells[c].0.is_number() { &mono } else { &text }) + CELL_EXTRA)
                     .fold(0.0, f32::max);
-                header.max(cells).ceil()
+                let first = columns.first() == Some(&c);
+                header.max(cells + if first { indent } else { 0.0 }).ceil()
             })
             .collect();
         let generation = {
@@ -741,6 +953,7 @@ impl App {
             for (id, _) in &rows {
                 id.hash(&mut h);
             }
+            indent.to_bits().hash(&mut h);
             h.finish()
         };
         ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
@@ -777,16 +990,36 @@ impl App {
             })
             .body(|body| {
                 body.rows(ROW_HEIGHT, rows.len(), |mut table_row| {
-                    let (id, cells) = &rows[table_row.index()];
+                    let index = table_row.index();
+                    let (id, cells) = &rows[index];
+                    let kind = kinds[index];
                     table_row.set_selected(self.projects.selected.contains(id));
-                    for &c in &columns {
+                    for (k, &c) in columns.iter().enumerate() {
                         table_row.col(|ui| {
                             let (cell, text) = &cells[c];
                             let rich = if cell.is_number() { RichText::new(text).monospace() } else { RichText::new(text) };
                             let layout =
                                 if cell.is_number() { Layout::right_to_left(Align::Center) } else { Layout::left_to_right(Align::Center) };
+                            let first = k == 0;
+                            if first {
+                                if let (RowKind::Search { open }, Some(search)) = (kind, row_search(id)) {
+                                    let r = ui.max_rect();
+                                    let centre = egui::pos2(r.left() + CELL_EXTRA / 2.0 + size::GLYPH / 2.0, r.center().y);
+                                    let hit = egui::Rect::from_center_size(centre, egui::vec2(size::GLYPH + size::TIGHT, ROW_HEIGHT));
+                                    let chevron = ui.interact(hit, ui.scope_id().with(("open_search", search)), Sense::click());
+                                    let glyph = if open { Glyph::ChevronDown } else { Glyph::ChevronRight };
+                                    glyph.paint(ui.painter(), centre, size::GLYPH, if chevron.hovered() { p.text } else { p.text_2 });
+                                    let chevron = chevron.on_hover_text(if open { "Hide the runs of this search" } else { "Show the runs of this search" });
+                                    if chevron.clicked() {
+                                        toggle = Some((search.to_string(), !open));
+                                    }
+                                }
+                            }
                             ui.with_layout(layout, |ui| {
                                 ui.add_space(CELL_EXTRA / 2.0);
+                                if first && !cell.is_number() {
+                                    ui.add_space(indent);
+                                }
                                 ui.add(egui::Label::new(rich.color(p.text)).selectable(false).truncate())
                             });
                         });
@@ -800,12 +1033,17 @@ impl App {
                     }
                 });
             });
-        table_focus_target(ui, clicked.is_some());
-        if let Some((id, modifiers)) = clicked {
-            self.click_run(&id, &order, modifiers);
-        }
-        if let Some(id) = double {
-            self.load_settings(&id);
+        table_focus_target(ui, clicked.is_some() || toggle.is_some());
+        if let Some((search, open)) = toggle {
+            self.toggle_search(&search, open);
+            self.explorer.current = Some(search_row(&search));
+        } else {
+            if let Some((id, modifiers)) = clicked {
+                self.click_run(&id, &order, modifiers);
+            }
+            if let Some(id) = double {
+                self.load_settings(&id);
+            }
         }
         if delete && !self.projects.selected.is_empty() && !ui.ctx().egui_wants_keyboard_input() {
             self.confirm_delete_runs();
@@ -912,6 +1150,27 @@ impl App {
         let (back, forward) = if pivoted { (Key::ArrowLeft, Key::ArrowRight) } else { (Key::ArrowUp, Key::ArrowDown) };
         let last = order.len() - 1;
         let current = self.explorer.current.as_ref().and_then(|c| order.iter().position(|x| x == c));
+        // Right opens the current search, Left closes it (or, on one of its
+        // runs, goes up to it).
+        if let (false, Some(c)) = (pivoted, current) {
+            let (right, left) = ui.input(|i| (i.key_pressed(Key::ArrowRight), i.key_pressed(Key::ArrowLeft)));
+            let id = order[c].clone();
+            if let Some(search) = row_search(&id) {
+                let open = self.explorer.expanded.contains(search);
+                if (right && !open) || (left && open) {
+                    self.toggle_search(search, right);
+                    ui.ctx().request_repaint();
+                    return None;
+                }
+            } else if left {
+                if let Some(search) = self.projects.run(&id).and_then(|r| r.search.clone()) {
+                    let row = search_row(&search);
+                    let at = order.iter().position(|x| *x == row);
+                    self.click_run(&row, order, egui::Modifiers::NONE);
+                    return at;
+                }
+            }
+        }
         let (target, modifiers) = ui.input(|i| {
             let m = i.modifiers;
             let jump = |key| i.key_pressed(key) && (pivoted || m.command);
@@ -960,9 +1219,32 @@ impl App {
         if k > 1 {
             return widgets::readout_list(ui, &p, &format!("{k} runs selected"), &[]);
         }
-        let Some(run) = self.projects.run(self.projects.selected.iter().next().unwrap()) else { return };
+        let id = self.projects.selected.iter().next().unwrap();
+        if let Some(search) = row_search(id).and_then(|s| self.projects.search(s)) {
+            let (c, o) = (&search.spline_config, &search.optimization_config);
+            let start = if o.grow_control_points { "fewest".to_string() } else { c.num_control_points.to_string() };
+            let result = if search.cancelled {
+                "cancelled"
+            } else if search.met {
+                "within the tolerance"
+            } else {
+                "tolerance not reached"
+            };
+            let pairs = vec![
+                ("Tolerance".to_string(), number(search.tolerance(), ".3e")),
+                ("Start count".to_string(), start),
+                ("Control points".to_string(), search.control_points.to_string()),
+                ("Max deviation".to_string(), number(search.max_deviation, ".3e")),
+                ("Result".to_string(), result.to_string()),
+                ("Fits".to_string(), search.fits.to_string()),
+                ("Evaluations".to_string(), search.evaluations.to_string()),
+                ("Time".to_string(), format_duration(search.elapsed_seconds)),
+            ];
+            return widgets::readout_list(ui, &p, &format!("Tolerance search {}", search.number), &pairs);
+        }
+        let Some(run) = self.projects.run(id) else { return };
         let (c, o, r) = (&run.spline_config, &run.optimization_config, &run.result);
-        let count = if o.tolerance.is_some() { r.num_control_points() } else { c.num_control_points };
+        let count = r.control_points_per_section();
         let mut pairs = vec![
             ("Degree".to_string(), c.degree.to_string()),
             ("Control points".to_string(), count.to_string()),
@@ -989,8 +1271,8 @@ impl App {
     /// plus the excluded ones; blanks last, numbers first.
     fn column_values(&self, column: usize) -> Vec<(Cell, String)> {
         let mut seen: BTreeMap<String, Cell> = BTreeMap::new();
-        for run in self.projects.runs() {
-            let cells = row(run);
+        let searches = self.projects.searches().iter().filter_map(|s| self.search_cells(s));
+        for cells in self.projects.runs().iter().map(row).chain(searches) {
             if self.explorer.filters.matches_except(&cells, Some(column))
                 || self.explorer.filters.excluded.get(&column).is_some_and(|e| e.contains(&cells[column].1))
             {

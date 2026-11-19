@@ -333,6 +333,15 @@ impl FitResult {
         self.report.as_ref().map(|r| r.rms_deviation).or(self.rms_error).unwrap_or(self.final_error)
     }
 
+    /// Control points per section, as the sidebar sets them; when the
+    /// sections differ (tolerance runs of older projects), of the chain.
+    pub fn control_points_per_section(&self) -> usize {
+        match self.section_control_points.split_first() {
+            Some((first, rest)) if rest.iter().all(|s| s.len() == first.len()) => first.len(),
+            _ => self.num_control_points(),
+        }
+    }
+
     /// Control points of the chain, each junction point once.
     pub fn num_control_points(&self) -> usize {
         let sections = self.section_control_points.len();

@@ -63,5 +63,6 @@ pub fn fit(config: &SplineConfig, options: &OptimizationConfig, sections: &[Vec<
         message: String::new(),
         seconds: None,
         earlier: vec![],
+        search: None,
     })
 }

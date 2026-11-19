@@ -115,49 +115,61 @@ Python results), and differs on purpose where the behaviour was a defect:
   of refining the previous step's: the solver's steps move a point's
   parameter anywhere on the curve, and the refined feet then joined points to
   the wrong part of it (whiskers across the airfoil).
-- A free-knot tolerance search that stops because the worst knot spans are
-  already as narrow as the knot spacing allows says so ("the worst knot
-  spans are as narrow as the knot spacing 0.05 allows") instead of Python's
-  "no knot span can be refined further".
 - Tolerance fits use the sidebar's Smoothing weight (Python used a fixed
   1e-7 and greyed the field out), and it can be swept in tolerance mode.
   Project files are format 1.1.0; tolerance runs of older files are loaded
   with the 1e-7 they were fitted with.
-- A tolerance search adds one control point a round to each section beyond
-  the tolerance (with free knots: one knot, in its worst span); Python added
-  one per knot span holding a point beyond it, so the count nearly doubled
-  each round (6, 7, 9, 13, 21, 37, ...) and jumped past counts that meet the
-  tolerance. The fits no longer depend on the tolerance, only where the
-  search stops, so a looser tolerance never ends with more control points
-  than a tighter one: on Darkstar root (one section from 6, uniform) 1e-5
-  ends at 30 control points, where Python ended at 35. The benchmark's
-  NACA 2412 (259 points, 1e-5) meets the tolerance with 17 control points
-  in 9.9 s, where the earlier search stopped at 19 without meeting it
-  (3.6 s); with two sections and free knots it ends at 7 + 8 in 13 s
-  instead of 9 + 10 in 27 s. Uniform knots start
-  each refit from the parameters of the closest fit so far, and from the
-  start parameters too when that does not get closer: a poor fit's
-  parameters otherwise hold the following fits at its deviation.
+- A tolerance search is a series of fixed-count fits, each exactly the fit
+  a single run of that count makes (fresh, from the same start, the same
+  count in every section, with free knots too): from the start count one
+  more at a time until a fit meets the tolerance, or, when the start count
+  meets it, one fewer at a time while they still do. Double-clicking one of
+  its runs sets the sidebar to that fixed-count run, which fits the same
+  curve again. Python started each refit from the one before and added
+  control points where the fit was worst (one per knot span beyond the
+  tolerance, so the count nearly doubled each round: 6, 7, 9, 13, 21, ...),
+  and no single run could repeat its fits. Measured on one section from 6
+  with uniform knots and smoothing 0.001, the fresh fits end within 4
+  control points of a warm-started search and as fast (HM51 at 1e-4: 28
+  control points in 0.9 s; Darkstar root at 1e-5: 67, against 65). With
+  smoothing 1e-7 fresh fits can need more (HM51 at 1e-5: 48, where warm
+  starts reached 30).
+- A tolerance search is a folder in the run table, "Search 1", "Search
+  2", ...: its row shows the search's settings and the fit it ended on
+  (Control points and Max deviation of that fit; Iterations counts its fits,
+  Converged says whether it met the tolerance). The chevron, or Right and
+  Left, opens and closes it; inside are its runs, plain fixed-count runs.
+  Double-clicking the search's row sets the sidebar back to the tolerance
+  search; Delete on it deletes it with its runs. A new search of the same
+  settings replaces it. Project files are format 1.2.0: searches are under
+  `tolerance_searches`, each run names its search (`search`); readers of
+  format 1.0 see the runs as plain fixed-count runs.
+- The run table has one Control points column: per section, of the fit
+  (a search: of the fit it ended on). Python showed the count as set (for
+  a tolerance run, its start count) and the fitted count of the whole
+  curve in a second column, Fitted control points, which is gone.
 - A tolerance search whose largest deviation drops by less than a fifth
   while 10 control points are added (or three quarters of the count of the
   last fit that did drop, if more) stops with the closest fit and names the
   point where the deviation stays (a kink or noise in the data); Python kept
-  adding control points for all its rounds. The search has 200 rounds
-  instead of 40, as each adds one control point.
+  adding control points for all its rounds. A search runs at most 200 fits
+  instead of 40 rounds, as each fit adds one control point.
 - With sections of different counts the control-point readout gives the
   curve's count, each junction point once, as the status text and the runs
   plot do; Python added the sections' counts, so it read 13 where the status
   said 12.
 - A point in the runs plot names its run on hover, and a click selects that
   run, shows its fit and scrolls its row into view (in Python the points
-  did nothing): after a tolerance search, click any count to see that fit.
+  did nothing): after a tolerance search, click any count to see that fit
+  (its search opens to show the run).
 - While a tolerance search runs, the runs plot follows it: a point per
-  finished refit (control points against max deviation), the latest one
+  finished fit (control points against max deviation), the latest one
   marked, under the tolerance line. Python showed the search's runs only
   at its end.
 - The runs plot draws the tolerance as a dashed line when its y axis is the
-  error or the max deviation and every plotted run is a tolerance run with
-  the same tolerance.
+  max deviation and every plotted run belongs to a search of the same
+  tolerance (tolerance runs of older projects: also when it is the error,
+  their largest deviation).
 - Ctrl+Enter fits (also from a field you are typing in: the typed value
   counts), Esc cancels a running fit; Python had no keys for either.
 - The sidebar hides to a rail as the explorer does (the chevron on its Data
@@ -184,18 +196,10 @@ Python results), and differs on purpose where the behaviour was a defect:
   in the status bar in the error colour, as the error chime plays.
 - The explorer keeps the column order you drag its headers into between
   sessions (Python started from the default order every time).
-- With uniform knots, a tolerance search that meets the tolerance removes
-  control points 1, 2, 4, ... at a time while it still holds, then halves
-  the gap to the count that failed; Python removed one at a time and
-  stopped at the first count that failed. From a start count of 60 on
-  Darkstar root at 1e-5: 31 control points in 6.6 s instead of 41 in 11.9 s.
-- The earlier runs of a tolerance search keep the loss history of their own
-  refit; Python kept the history from the search's start in each, which
-  made a project several megabytes per search. The search's final run
-  keeps the whole history.
-- Along "Control points" the runs plot places a tolerance run at the count
-  its search found, as the sweep plot does; Python placed every tolerance
-  run at the start count they share. The column still shows the start count.
+- Each run of a tolerance search keeps the loss history and the time of
+  its own fit, as the run would alone; Python kept the history from the
+  search's start in each, which made a project several megabytes per
+  search.
 - The runs plot ticks only whole numbers when every run's x value is one
   (control points, sections, degree); pyqtgraph also ticked 25.2, 25.4, ...
 - A search that misses its tolerance ends its status with its own message

@@ -250,6 +250,7 @@ takes the `Palette`; none sets colors of its own.
 | Question | `dialogs::Confirm`: one paragraph of text, the buttons at the right (accept, another choice, Cancel); never the system's message box |
 | Report | the Report view of the bottom-left block: rows with `ok`/`warn` notes in the status colors; the Max deviation readout under Fit spline in `warn` when the fit missed its tolerance; the thickness and camber chart below (`plots::shape_plot`: thickness a `trace` line, the camber dashed `construction`, each maximum a dot ringed in the canvas color) |
 | Table of records | the run table (`explorer.rs`): no grid lines, rows selected whole; numbers monospaced and right-aligned, blanks for what does not apply; Pivot swaps rows and columns |
+| Group of records | a folder row in the table (a tolerance search): a `ChevronRight`/`ChevronDown` in `text_2` (`text` on hover) at the left of its first cell opens and closes it, its name in that cell ("Search 1"); the rows inside follow it, their first cell indented as far as the chevron; Right and Left open and close it from the keyboard |
 | Column filter | as in a spreadsheet: a `ChevronDown` in `text_3` at the right of each header opens a popup (sort, condition, checklist of values, previewing which values a condition unchecks in `text_3`); a filtered column shows the `Filter` funnel in `text`; the sorted column has `SortUp`/`SortDown` in `text_2` |
 
 **Layout of the main window**: sidebar (workflow order: data, method,
@@ -257,7 +258,8 @@ curve, advanced, then the fixed run bar with the primary action and the
 result readouts) | plots (main canvas with its toolbar, convergence and
 comparison below) | project explorer (the table of every run: filter it,
 sort it, plot the filtered runs along any column in the comparison plot,
-double-click a run to apply its settings).
+double-click a run to apply its settings; a tolerance search is a folder
+of its runs).
 
 ---
 

@@ -76,7 +76,7 @@ fn capitalized(text: &str) -> String {
     chars.next().map(|c| c.to_uppercase().chain(chars.flat_map(|c| c.to_lowercase())).collect()).unwrap_or_default()
 }
 
-pub const COLUMNS: [Column; 25] = [
+pub const COLUMNS: [Column; 24] = [
     Column {
         name: "Run",
         tooltip: "Order in which the runs were done; a number stays when other runs are deleted",
@@ -168,11 +168,11 @@ pub const COLUMNS: [Column; 25] = [
     },
     Column {
         name: "Control points",
-        tooltip: "Control points per section as set (the start count of a tolerance goal)",
+        tooltip: "Control points per section of the fit (a tolerance search: of the fit it ended on).\nSections that differ, in tolerance runs of older projects: of the whole curve, junction points once.",
         log: false,
-        metric: false,
+        metric: true,
         format: Format::Plain,
-        value: |r| Cell::Int(r.spline_config.num_control_points as i64),
+        value: |r| Cell::Int(r.result.control_points_per_section() as i64),
         applies: always,
     },
     Column {
@@ -257,15 +257,6 @@ pub const COLUMNS: [Column; 25] = [
         applies: always,
     },
     Column {
-        name: "Fitted control points",
-        tooltip: "Distinct control points of the fitted chain, junction points counted once",
-        log: false,
-        metric: true,
-        format: Format::Plain,
-        value: |r| Cell::Int(r.result.num_control_points() as i64),
-        applies: always,
-    },
-    Column {
         name: "Iterations",
         tooltip: "",
         log: false,
@@ -313,6 +304,8 @@ pub const COLUMNS: [Column; 25] = [
 ];
 
 pub const ERROR_COLUMN: usize = 16;
+const _: () = assert!(matches!(COLUMNS[ERROR_COLUMN].name.as_bytes(), b"Error"));
+const _: () = assert!(matches!(COLUMNS[CONTROL_POINTS_COLUMN].name.as_bytes(), b"Control points"));
 pub const CONTROL_POINTS_COLUMN: usize = 9;
 
 impl Column {

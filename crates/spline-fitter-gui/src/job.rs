@@ -61,8 +61,8 @@ pub struct Live {
     log: Mutex<ErrorLog>,
     published: Mutex<Published>,
     drawn: Condvar,
-    /// The finished refits of a tolerance search: control points (each
-    /// junction point once) and largest deviation.
+    /// The finished fits of a tolerance search: control points per
+    /// section and largest deviation.
     refits: Mutex<Vec<[f64; 2]>>,
 }
 
@@ -139,8 +139,8 @@ impl Monitor for Progress {
         }
         if u.kind == UpdateKind::Refit {
             self.last_refit = Some(u.error);
-            let sections = u.control_points.len();
-            let count = u.control_points.iter().map(Vec::len).sum::<usize>() + 1 - sections.max(1);
+            // Per section, as the runs plot shows the runs.
+            let count = u.control_points.first().map_or(0, Vec::len);
             self.live.refits.lock().unwrap().push([count as f64, u.error]);
             return false;
         }
@@ -154,7 +154,7 @@ impl Monitor for Progress {
             let counts: Vec<usize> = u.control_points.iter().map(Vec::len).collect();
             status += &format!("Control points {} | RMS error {}", crate::sidebar::count_text(&counts), format_error(u.error));
             if let Some(d) = self.last_refit {
-                status += &format!(" | Max deviation of last refit {}", format_error(d));
+                status += &format!(" | Max deviation of the last fit {}", format_error(d));
             }
         } else {
             status += &format!("Best error {}", format_error(self.best));
