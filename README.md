@@ -126,7 +126,11 @@ Python results), and differs on purpose where the behaviour was a defect:
   tolerance. The fits no longer depend on the tolerance, only where the
   search stops, so a looser tolerance never ends with more control points
   than a tighter one: on Darkstar root (one section from 6, uniform) 1e-5
-  ends at 30 control points, where Python ended at 35. Uniform knots start
+  ends at 30 control points, where Python ended at 35. The benchmark's
+  NACA 2412 (259 points, 1e-5) meets the tolerance with 17 control points
+  in 9.9 s, where the earlier search stopped at 19 without meeting it
+  (3.6 s); with two sections and free knots it ends at 7 + 8 in 13 s
+  instead of 9 + 10 in 27 s. Uniform knots start
   each refit from the parameters of the closest fit so far, and from the
   start parameters too when that does not get closer: a poor fit's
   parameters otherwise hold the following fits at its deviation.

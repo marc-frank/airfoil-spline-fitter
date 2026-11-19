@@ -61,6 +61,7 @@ fn main() {
         let start = Instant::now();
         let r = run_optimization(&config, &options, &data, &mut Unmonitored).unwrap();
         let seconds = start.elapsed().as_secs_f64();
-        println!("{name:30} | tolerance    | {:9.2} s  | error {:.3e} | evals {}", seconds, r.error, r.evaluations);
+        let counts: Vec<usize> = r.section_control_points.iter().map(Vec::len).collect();
+        println!("{name:30} | tolerance    | {:9.2} s  | error {:.3e} | evals {} | control points {counts:?}", seconds, r.error, r.evaluations);
     }
 }
