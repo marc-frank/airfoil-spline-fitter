@@ -160,10 +160,35 @@ fn light_theme_and_dialogs() {
     h.state_mut().settings.sections.value.set(2);
     h.run_steps(3);
     h.state_mut().on_fit();
-    finish(&mut h);
+    // While the search runs, the runs plot follows its refits: control
+    // points against the largest deviation, the latest marked, with the
+    // tolerance line.
+    let mut live = 0;
+    for _ in 0..3000 {
+        h.step();
+        if !h.state().fitting() {
+            break;
+        }
+        let c = &h.state().comparison;
+        if c.y_label == "Max deviation" {
+            assert_eq!((c.x_label.as_str(), c.tolerance, c.marked.len()), ("Control points", Some(2e-6), 1));
+            assert!(c.labels.is_empty(), "nothing to click while it runs");
+            if c.points.len() > live {
+                live = c.points.len();
+                if live == 2 {
+                    shot(&mut h, "6l_live_refits");
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    h.run_steps(3);
+    assert!(live >= 2, "the refits were drawn as they finished ({live})");
     {
         let app = h.state();
         assert!(app.status.starts_with("Completed (VarPro LM): "), "{}", app.status);
+        // At its end the plot shows the project's runs again.
+        assert_eq!(app.comparison.y_label, "Error");
         // Every refit of the search is a run of its own, told apart by its counts.
         let counts: Vec<Vec<usize>> = app.projects.runs().iter().map(|r| r.result.section_counts()).collect();
         assert!(counts.iter().enumerate().all(|(i, c)| !counts[..i].contains(c)), "{counts:?}");

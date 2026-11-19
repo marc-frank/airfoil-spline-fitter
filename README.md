@@ -143,6 +143,10 @@ Python results), and differs on purpose where the behaviour was a defect:
 - A point in the runs plot names its run on hover, and a click selects that
   run, shows its fit and scrolls its row into view (in Python the points
   did nothing): after a tolerance search, click any count to see that fit.
+- While a tolerance search runs, the runs plot follows it: a point per
+  finished refit (control points against max deviation), the latest one
+  marked, under the tolerance line. Python showed the search's runs only
+  at its end.
 - The runs plot draws the tolerance as a dashed line when its y axis is the
   error or the max deviation and every plotted run is a tolerance run with
   the same tolerance.

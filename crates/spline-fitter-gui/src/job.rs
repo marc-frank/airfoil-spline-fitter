@@ -61,6 +61,9 @@ pub struct Live {
     log: Mutex<ErrorLog>,
     published: Mutex<Published>,
     drawn: Condvar,
+    /// The finished refits of a tolerance search: control points (each
+    /// junction point once) and largest deviation.
+    refits: Mutex<Vec<[f64; 2]>>,
 }
 
 impl Live {
@@ -71,6 +74,7 @@ impl Live {
             log: Mutex::new(ErrorLog::new(run_name)),
             published: Mutex::new(Published::default()),
             drawn: Condvar::new(),
+            refits: Mutex::new(Vec::new()),
         })
     }
 
@@ -84,6 +88,11 @@ impl Live {
 
     pub fn cancelled(&self) -> bool {
         self.cancel.load(Ordering::Relaxed)
+    }
+
+    /// The finished refits so far: `[control points, largest deviation]`.
+    pub fn refits(&self) -> Vec<[f64; 2]> {
+        self.refits.lock().unwrap().clone()
     }
 
     /// The error history: `(iteration, seconds, error)`.
@@ -130,6 +139,9 @@ impl Monitor for Progress {
         }
         if u.kind == UpdateKind::Refit {
             self.last_refit = Some(u.error);
+            let sections = u.control_points.len();
+            let count = u.control_points.iter().map(Vec::len).sum::<usize>() + 1 - sections.max(1);
+            self.live.refits.lock().unwrap().push([count as f64, u.error]);
             return false;
         }
         self.iteration += 1;
@@ -181,6 +193,8 @@ pub struct FitJob {
     handle: Option<JoinHandle<Result<Outcome>>>,
     last_draw: Option<Instant>,
     last_status: Option<Instant>,
+    /// Refits of a tolerance search already in the runs plot.
+    pub shown_refits: usize,
 }
 
 impl FitJob {
@@ -200,7 +214,7 @@ impl FitJob {
             .name("spline-fitter-work".into())
             .spawn(move || work(c, o, a, monitor))
             .expect("the worker thread starts");
-        FitJob { live, config, options, handle: Some(handle), last_draw: None, last_status: None }
+        FitJob { live, config, options, handle: Some(handle), last_draw: None, last_status: None, shown_refits: 0 }
     }
 
     pub fn finished(&self) -> bool {

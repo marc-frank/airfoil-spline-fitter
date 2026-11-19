@@ -139,6 +139,25 @@ impl App {
         self.running = Some(Running::Fit(job));
     }
 
+    /// The refits of the running tolerance search in the runs plot.
+    fn show_live_refits(&mut self, refits: &[[f64; 2]], tolerance: f64) {
+        let mut points = refits.to_vec();
+        let latest = *points.last().expect("at least one refit");
+        points.sort_by(|a, b| a[0].total_cmp(&b[0]).then(a[1].total_cmp(&b[1])));
+        let c = &mut self.comparison;
+        c.x_label = "Control points".into();
+        c.y_label = "Max deviation".into();
+        c.log_x = false;
+        c.log_y = points.iter().all(|p| p[1] > 0.0) && tolerance > 0.0;
+        c.ticks = None;
+        c.tolerance = Some(tolerance);
+        c.labels.clear();
+        let unique = points.windows(2).all(|w| w[0][0] != w[1][0]);
+        c.set(points, unique);
+        c.marked = vec![latest];
+        self.explorer.forget_points();
+    }
+
     /// Follows the running job: live drawing, and its end.
     pub fn tick_job(&mut self, ctx: &eframe::egui::Context) {
         if let Some(prepared) = self.preparing.take() {
@@ -158,6 +177,16 @@ impl App {
         }
         if let Some(s) = status {
             self.status = s;
+        }
+        // A tolerance search draws its refits in the runs plot as they
+        // finish, the latest marked, with the tolerance line; at its end the
+        // plot goes back to the project's runs.
+        if let (Some(Running::Fit(job)), Some(tolerance)) = (self.running.as_mut(), tolerance) {
+            let refits = job.live.refits();
+            if refits.len() != job.shown_refits {
+                job.shown_refits = refits.len();
+                self.show_live_refits(&refits, tolerance);
+            }
         }
         if !self.running.as_mut().unwrap().job().finished() {
             return;
@@ -200,12 +229,20 @@ impl App {
                 eprintln!("Fitting error: {e}");
                 self.fail(format!("Fitting error: {e}"));
                 self.show_current_fit();
+                // The runs plot may show the search's refits.
+                self.explorer.forget_points();
+                self.refresh_comparison();
             }
             Ok(outcome) => {
                 let history: Vec<IterationRecord> =
                     log.history().map(|(i, t, e)| IterationRecord { iteration: i, error: e, elapsed_seconds: t }).collect();
                 self.add_earlier_runs(job, &outcome, &history);
                 let kept = !self.add_run(&job.config, &job.options, outcome.fit.clone(), history, true);
+                if kept {
+                    // Not added, so not replotted: the runs plot may show the search's refits.
+                    self.explorer.forget_points();
+                    self.refresh_comparison();
+                }
                 self.fit = Some(outcome.fit.clone());
                 self.show_current_fit();
                 let specs = job.config.junction_specs();
