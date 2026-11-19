@@ -68,6 +68,8 @@ pub struct App {
     pub close_now: bool,
     /// The display choices last written to the settings file.
     saved_display: Option<Display>,
+    /// The status text tells of a failure (drawn in the error colour).
+    pub status_failed: bool,
     /// A fit `on_fit` prepared: it starts on the next frame.
     pub preparing: Option<Box<(spline_fitter::models::SplineConfig, spline_fitter::models::OptimizationConfig, AirfoilData)>>,
     pub dialog: Option<Dialog>,
@@ -128,6 +130,7 @@ impl App {
             discard_confirmed: false,
             close_now: false,
             saved_display: None,
+            status_failed: false,
             preparing: None,
             dialog: None,
             report_panel: None,
@@ -211,11 +214,13 @@ impl App {
 
     pub fn set_status(&mut self, text: impl Into<String>) {
         self.status = text.into();
+        self.status_failed = false;
     }
 
-    /// A failure: the status text and the error chime.
+    /// A failure: the status text, in the error colour, and the error chime.
     pub fn fail(&mut self, text: impl Into<String>) {
         self.status = text.into();
+        self.status_failed = true;
         crate::chime::error();
     }
 
@@ -607,7 +612,8 @@ impl App {
         let p = &self.palette;
         let margin = egui::Margin { left: 8, right: 8, top: 2, bottom: 3 };
         egui::Panel::bottom("status").frame(egui::Frame::new().fill(p.window).inner_margin(margin)).show(ui, |ui| {
-            ui.label(RichText::new(&self.status).color(p.text_2));
+            let color = if self.status_failed { p.error } else { p.text_2 };
+            ui.label(RichText::new(&self.status).color(color));
             // The size grip in the window's corner (none when maximized).
             if !ui.input(|i| i.viewport().maximized.unwrap_or(false)) {
                 let corner = ui.max_rect().right_bottom() + egui::vec2(margin.right as f32, margin.bottom as f32);

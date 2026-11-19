@@ -1284,7 +1284,7 @@ In this order:
 
 1. `apply_theme()` (19.19) and `install_smooth_scrolling()` (19.20), then the `QMainWindow` is created; title `Airfoil Spline Fitter`.
 2. State: `airfoil = None`, `fit_result = None`, `is_fitting = False`, `cancel_requested = False`; `QSettings("MSFra", "AirfoilSplineFitter")`; empty sweep group.
-3. Build the menu bar (19.3) and the layout (19.2); status bar text `Ready`.
+3. Build the menu bar (19.3) and the layout (19.2); status bar text `Ready`. [Rust: a status set by a failure (the ones that play the error chime) is drawn in the `error` colour until the next status; others in `TEXT_2`.]
 4. Create the plot manager (19.14), the project manager (19.16), the fitting controller (19.12) and the batch controller (19.18); connect signals; take the Advanced baseline (19.9).
 5. Create the settings history (19.8) over these widgets, in this order: optimizer, goal, Auto tolerance, tolerance, knot placement, parameterization, grow points, sections, degree, continuity level, continuity type, control points, per-junction text, smoothing weight, optimize junctions, then the sweep widgets in creation order (degree, control points, sections, smoothing). Undo/Redo actions follow its `changed` signal.
 6. Accept drops (19.11).

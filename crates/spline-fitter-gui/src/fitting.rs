@@ -176,7 +176,7 @@ impl App {
             self.loss.set_data(history);
         }
         if let Some(s) = status {
-            self.status = s;
+            self.set_status(s);
         }
         // A tolerance search draws its refits in the runs plot as they
         // finish, the latest marked, with the tolerance line; at its end the

@@ -846,3 +846,23 @@ fn display_choices_are_kept() {
         assert_eq!(crate::runs::COLUMNS[app.explorer.y_column].name, "Max deviation");
     }
 }
+
+/// A failure's status is drawn in the error colour until the next message.
+#[test]
+fn failures_show_in_the_status_bar_in_the_error_colour() {
+    let mut h = harness();
+    h.run_steps(2);
+    // Saving with nothing to save is a plain message.
+    h.state_mut().on_fit();
+    h.run_steps(2);
+    assert_eq!(h.state().status, "Load an airfoil first.");
+    assert!(!h.state().status_failed);
+    h.state_mut().open_path(std::path::Path::new("Z:/no/such/airfoil.dat"));
+    h.run_steps(2);
+    assert!(h.state().status.starts_with("File not found: "), "{}", h.state().status);
+    assert!(h.state().status_failed);
+    shot(&mut h, "f_failed_status");
+    h.state_mut().new_naca_airfoil("2412", 41, true);
+    h.run_steps(2);
+    assert!(!h.state().status_failed, "the next message is plain again");
+}

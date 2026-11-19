@@ -176,6 +176,8 @@ Python results), and differs on purpose where the behaviour was a defect:
   Live preview, the convergence axes and the runs plot's columns are kept
   between sessions; the fit settings in the sidebar still start at their
   defaults.
+- Failures (a file not found, a fit that failed, a save that failed) show
+  in the status bar in the error colour, as the error chime plays.
 - The explorer keeps the column order you drag its headers into between
   sessions (Python started from the default order every time).
 - With uniform knots, a tolerance search that meets the tolerance removes
