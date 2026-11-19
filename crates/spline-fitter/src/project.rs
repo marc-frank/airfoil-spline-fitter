@@ -17,7 +17,12 @@ use crate::models::{
 };
 use crate::{bail, Error, Result, Vec2};
 
-pub const FORMAT_VERSION: &str = "1.0.0";
+/// 1.1: a tolerance run's `smoothing_weight` is the weight it was fitted
+/// with; before, tolerance fits ignored it and used
+/// [`OLD_TOLERANCE_SMOOTHING`].
+pub const FORMAT_VERSION: &str = "1.1.0";
+/// The smoothing weight of tolerance fits in projects before format 1.1.
+pub const OLD_TOLERANCE_SMOOTHING: f64 = 1e-7;
 
 /// Where and when a project was written.
 #[derive(Debug, Clone, PartialEq)]
@@ -446,6 +451,8 @@ pub fn project_text(project: &ProjectFile) -> String {
 pub fn save_project(project: &mut ProjectFile, path: &Path) -> Result<()> {
     let io = |e: std::io::Error| Error::new(e.to_string());
     project.metadata.modified = now_iso();
+    // Loading brought older runs to this format.
+    project.metadata.format_version = FORMAT_VERSION.into();
     let text = project_text(project);
     if let Ok(meta) = std::fs::metadata(path) {
         if meta.permissions().readonly() {
@@ -808,6 +815,7 @@ pub fn parse_project(text: &str) -> Result<LoadedProject> {
     if major > 1 {
         bail!("Project file version {version} is not supported. Please update the application.");
     }
+    let minor: u32 = version.split('.').nth(1).and_then(|m| m.trim().parse().ok()).unwrap_or(0);
     let mut warnings = Vec::new();
     let root = Part { json: &json, place: "Run list" };
     let runs = match root.optional("optimization_runs") {
@@ -817,6 +825,11 @@ pub fn parse_project(text: &str) -> Result<LoadedProject> {
     let mut runs: Vec<OptimizationRun> =
         runs.iter().enumerate().map(|(i, r)| decode_run(r, &format!("Run {}", i + 1), &mut warnings)).collect::<Result<_>>()?;
     number_runs(&mut runs, 0);
+    if major == 1 && minor < 1 {
+        for run in runs.iter_mut().filter(|r| r.optimization_config.tolerance.is_some()) {
+            run.optimization_config.smoothing_weight = OLD_TOLERANCE_SMOOTHING;
+        }
+    }
     let empty = Json::Object(vec![]);
     let m = Part { json: json.get("metadata").unwrap_or(&empty), place: "Metadata" };
     let metadata = ProjectMetadata {
@@ -952,8 +965,37 @@ mod tests {
         let text = project_text(&project()).replace("\"degree\": 5,", "");
         assert_eq!(parse_project(&text).unwrap_err().0, "Run 1 spline settings: the 'degree' field is missing.");
         assert_eq!(parse_project("[1]").unwrap_err().0, "The file is not a project file: it holds no project.");
-        let newer = project_text(&project()).replacen("\"1.0.0\"", "\"2.0.0\"", 1);
+        let newer = project_text(&project()).replacen("\"1.1.0\"", "\"2.0.0\"", 1);
         assert_eq!(parse_project(&newer).unwrap_err().0, "Project file version 2.0.0 is not supported. Please update the application.");
+    }
+
+    #[test]
+    fn older_tolerance_runs_were_fitted_with_old_smoothing() {
+        let tolerance_run = |version: &str| {
+            edited(|j| {
+                j["format_version"] = version.into();
+                j["optimization_runs"][0]["optimization_config"]["tolerance"] = 1e-5.into();
+                j["optimization_runs"][0]["optimization_config"]["smoothing_weight"] = 1e-3.into();
+            })
+        };
+        let smoothing = |text: &str| parse_project(text).unwrap().project.runs[0].optimization_config.smoothing_weight;
+        assert_eq!(smoothing(&tolerance_run("1.0.0")), OLD_TOLERANCE_SMOOTHING);
+        assert_eq!(smoothing(&tolerance_run("1.1.0")), 1e-3);
+        // A fixed-count run always used its own weight.
+        let fixed = edited(|j| {
+            j["format_version"] = "1.0.0".into();
+            j["optimization_runs"][0]["optimization_config"]["tolerance"] = serde_json::Value::Null;
+            j["optimization_runs"][0]["optimization_config"]["smoothing_weight"] = 1e-3.into();
+        });
+        assert_eq!(smoothing(&fixed), 1e-3);
+        // Saving writes the current format, so the weight is kept as loaded.
+        let mut p = parse_project(&tolerance_run("1.0.0")).unwrap().project;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.asfproj");
+        save_project(&mut p, &path).unwrap();
+        let again = load_project(&path).unwrap().project;
+        assert_eq!(again.metadata.format_version, FORMAT_VERSION);
+        assert_eq!(again.runs[0].optimization_config.smoothing_weight, OLD_TOLERANCE_SMOOTHING);
     }
 
     #[test]

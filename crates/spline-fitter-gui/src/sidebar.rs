@@ -337,7 +337,7 @@ impl App {
                                     let each = ((width - size::CONTROL_HEIGHT - size::TIGHT * boxes) / boxes).max(56.0);
                                     widgets::scientific_field(ui, &p, "smoothing", &mut sm.value, (0.0, f64::INFINITY), 1e-3, Field::new(each, "Bending energy weight for VarPro LM (0 turns it off; default 0.001)."));
                                     let mut active = sm.active;
-                                    if widgets::sweep_toggle(ui, &p, &mut active, sm.allowed) {
+                                    if widgets::sweep_toggle(ui, &p, &mut active, true) {
                                         sm.toggle(active);
                                     }
                                     if sm.active {

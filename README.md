@@ -119,6 +119,10 @@ Python results), and differs on purpose where the behaviour was a defect:
   already as narrow as the knot spacing allows says so ("the worst knot
   spans are as narrow as the knot spacing 0.05 allows") instead of Python's
   "no knot span can be refined further".
+- Tolerance fits use the sidebar's Smoothing weight (Python used a fixed
+  1e-7 and greyed the field out), and it can be swept in tolerance mode.
+  Project files are format 1.1.0; tolerance runs of older files are loaded
+  with the 1e-7 they were fitted with.
 - A tolerance search adds one control point a round to each section beyond
   the tolerance (with free knots: one knot, in its worst span); Python added
   one per knot span holding a point beyond it, so the count nearly doubled

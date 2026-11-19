@@ -112,17 +112,16 @@ pub struct FloatSweep {
     pub end: f64,
     pub step: f64,
     pub single_step: f64,
-    pub allowed: bool,
 }
 
 impl FloatSweep {
     pub fn new(value: f64, single_step: f64) -> Self {
-        FloatSweep { value, active: false, end: value, step: single_step, single_step, allowed: true }
+        FloatSweep { value, active: false, end: value, step: single_step, single_step }
     }
 
     /// Turns the sweep on (from the value, or one step, to ten times it) or off.
     pub fn toggle(&mut self, on: bool) {
-        if on == self.active || (on && !self.allowed) {
+        if on == self.active {
             return;
         }
         self.active = on;
@@ -131,13 +130,6 @@ impl FloatSweep {
             self.end = 10.0 * start;
             self.step = start;
         }
-    }
-
-    pub fn set_allowed(&mut self, allowed: bool) {
-        if !allowed {
-            self.toggle(false);
-        }
-        self.allowed = allowed;
     }
 
     /// The swept values: from the smaller end by the step, at most `limit`.
@@ -298,7 +290,7 @@ impl Settings {
             auto_enabled: editable && tolerance_mode,
             count_enabled: editable && self.count_used(),
             junction_controls_enabled: editable && has_junctions,
-            smoothing_enabled: !tolerance_mode,
+            smoothing_enabled: true,
             free_knots,
             knot_gap_enabled: editable && free_knots,
         }
@@ -314,19 +306,15 @@ impl Settings {
     }
 
     /// Runs after the optimizer, goal, Grow points, Auto or section count
-    /// change, after undo and redo, and after applying a run: sweeps of the
-    /// count and smoothing stop in tolerance mode, then the curve rule runs.
+    /// change, after undo and redo, and after applying a run: a sweep of the
+    /// count stops in tolerance mode, then the curve rule runs.
     pub fn optimizer_changed(&mut self) {
         let tolerance_mode = self.tolerance_mode();
-        if tolerance_mode {
-            if self.control_points.active {
-                self.control_points.toggle(false);
-                self.keep_curve_valid(Change::Count);
-            }
-            self.smoothing.toggle(false);
+        if tolerance_mode && self.control_points.active {
+            self.control_points.toggle(false);
+            self.keep_curve_valid(Change::Count);
         }
         self.control_points.set_allowed(!tolerance_mode);
-        self.smoothing.set_allowed(!tolerance_mode);
         self.keep_curve_valid(Change::Other);
     }
 
@@ -565,9 +553,6 @@ impl Settings {
         int(&mut self.control_points, v.count_sweep);
         int(&mut self.sections, v.sections_sweep);
         let (active, end, step) = v.smoothing_sweep;
-        if active {
-            self.smoothing.allowed = true;
-        }
         self.smoothing.toggle(active);
         if active {
             self.smoothing.end = end;
@@ -798,6 +783,20 @@ mod tests {
         s.tolerance_goal = true;
         s.settle(&before);
         assert!(!s.control_points.active && !s.control_points.allowed);
+    }
+
+    #[test]
+    fn smoothing_stays_usable_in_tolerance_mode() {
+        let mut s = Settings::default();
+        s.smoothing.toggle(true);
+        let before = s.clone();
+        s.tolerance_goal = true;
+        s.settle(&before);
+        assert!(s.tolerance_mode());
+        assert!(s.smoothing.active);
+        assert!(s.view(false).smoothing_enabled);
+        s.smoothing.value = 1e-7;
+        assert_eq!(s.optimization_config().unwrap().smoothing_weight, 1e-7);
     }
 
     #[test]

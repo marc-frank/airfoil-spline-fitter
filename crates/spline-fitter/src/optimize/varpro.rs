@@ -9,9 +9,6 @@ use super::{Monitor, RawResult, Update, UpdateKind};
 use crate::models::{OptimizationConfig, SplineConfig};
 use crate::{Result, Vec2};
 
-/// Bending-energy weight of tolerance fits (it gave the fewest control
-/// points and curvature extrema in the library's benchmark).
-const TOLERANCE_SMOOTHING: f64 = 1e-7;
 const REGULARIZATION: f64 = 1e-12;
 
 /// A finished refit of a tolerance search with its deviation, the
@@ -107,7 +104,7 @@ pub fn fit(config: &SplineConfig, options: &OptimizationConfig, sections: &[Vec<
         return Ok(raw(result, error, iterations, evaluations));
     };
     let tolerance_options = ToleranceOptions {
-        chain: chain_options(config, options, TOLERANCE_SMOOTHING)?,
+        chain: chain_options(config, options, options.smoothing_weight)?,
         initial_control_points: (!options.grow_control_points).then_some(config.num_control_points),
         knot_placement: options.knot_placement,
         min_knot_gap: options.min_knot_gap,

@@ -218,7 +218,7 @@ pub const COLUMNS: [Column; 25] = [
         metric: false,
         format: Format::Spec(".3g"),
         value: |r| Cell::Float(r.optimization_config.smoothing_weight),
-        applies: |r| varpro(r) && r.optimization_config.tolerance.is_none(),
+        applies: varpro,
     },
     Column {
         name: "Optimize junctions",

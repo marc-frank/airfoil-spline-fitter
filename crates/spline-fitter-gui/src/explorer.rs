@@ -80,7 +80,7 @@ fn same_settings(run: &OptimizationRun, config: &SplineConfig, opt: &Optimizatio
         && o.grow_control_points == opt.grow_control_points
         && o.optimizer == opt.optimizer
         && (opt.knot_placement != KnotPlacement::Free || o.min_knot_gap == opt.min_knot_gap)
-        && (opt.tolerance.is_some() || o.smoothing_weight == opt.smoothing_weight)
+        && o.smoothing_weight == opt.smoothing_weight
         && (opt.tolerance.is_none() || run.result.section_counts() == fit.section_counts())
 }
 
