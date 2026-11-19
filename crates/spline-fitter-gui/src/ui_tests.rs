@@ -666,6 +666,10 @@ fn a_missed_tolerance_is_not_a_solver_failure() {
     assert!(status.starts_with("Completed (VarPro LM): "), "{status}");
     assert!(status.contains(" | Tolerance not reached: "), "{status}");
     assert!(!status.contains("did not converge"), "{status}");
+    // The readout's report knows the tolerance it missed (drawn in warn).
+    let report = h.state().fit.as_ref().unwrap().report.clone().unwrap();
+    assert!(report.tolerance == Some(1e-7) && report.max_deviation > 1e-7);
+    shot(&mut h, "m_missed_tolerance");
 }
 
 /// Ctrl+Enter fits, with the value still being typed into a field; Esc

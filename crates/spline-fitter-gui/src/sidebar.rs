@@ -393,6 +393,13 @@ impl App {
             Some(r) => ("Max deviation", number(r.max_deviation, ".2e")),
             None => ("Error", format_error(fit.final_error)),
         };
+        // A tolerance the fit missed shows in the status colour: the search
+        // stopped short, and the readout says so at a glance.
+        let (error_color, error_tip) = match fit.report.as_ref().and_then(|r| r.tolerance.filter(|t| *t > 0.0).map(|t| (r, t))) {
+            Some((r, t)) if r.max_deviation > t * (1.0 + 1e-9) => (p.warn, format!("Above the tolerance {}", number(t, ".2e"))),
+            Some((_, t)) => (p.text, format!("Within the tolerance {}", number(t, ".2e"))),
+            None => (p.text, String::new()),
+        };
         let counts = fit.section_counts();
         let count_text = count_text(&counts);
         let count_tip = if counts.len() > 1 {
@@ -405,16 +412,16 @@ impl App {
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = size::GROUP;
             let readouts = [
-                (error_caption, error_value, String::new()),
-                ("Control points", count_text, count_tip),
-                ("Time", format_duration(fit.elapsed_seconds), String::new()),
+                (error_caption, error_value, error_tip, error_color),
+                ("Control points", count_text, count_tip, p.text),
+                ("Time", format_duration(fit.elapsed_seconds), String::new(), p.text),
             ];
-            for (caption, value, tip) in readouts {
+            for (caption, value, tip, color) in readouts {
                 ui.allocate_ui_with_layout(egui::vec2(column, 0.0), Layout::top_down(Align::Min), |ui| {
                     ui.set_width(column);
                     ui.spacing_mut().item_spacing.y = 0.0;
                     muted(ui, &p, caption);
-                    let r = ui.label(RichText::new(value).monospace().size(typeface::READOUT).color(p.text));
+                    let r = ui.label(RichText::new(value).monospace().size(typeface::READOUT).color(color));
                     ui.add_space((size::READOUT_LINE - r.rect.height()).max(0.0));
                     if !tip.is_empty() {
                         r.on_hover_text(tip);
