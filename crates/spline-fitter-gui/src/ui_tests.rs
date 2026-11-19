@@ -699,3 +699,21 @@ fn the_sidebar_hides_to_a_rail() {
     h.run_steps(2);
     assert!(!h.state().sidebar_visible, "the Data caption's button hides it");
 }
+
+/// Pivot is an icon toggle at the right of the filter row, kept between
+/// sessions as the theme is.
+#[test]
+fn pivot_is_an_icon_toggle_that_is_kept() {
+    let mut h = harness();
+    h.state_mut().new_naca_airfoil("2412", 41, true);
+    h.run_steps(3);
+    assert!(!h.state().explorer.pivot);
+    // The square button at the right end of the filter row (no project yet).
+    click_at(&mut h, 1475.0, 104.0);
+    h.run_steps(2);
+    assert!(h.state().explorer.pivot);
+    assert!(h.state().store.bool("explorer/pivot", false));
+    click_at(&mut h, 1475.0, 104.0);
+    h.run_steps(2);
+    assert!(!h.state().explorer.pivot && !h.state().store.bool("explorer/pivot", true));
+}

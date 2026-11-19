@@ -368,6 +368,8 @@ pub enum Glyph {
     Dash,
     /// The clear button of a text field.
     Cross,
+    /// Swapping rows and columns: a corner with an arrow at each end.
+    Pivot,
 }
 
 impl Glyph {
@@ -385,6 +387,11 @@ impl Glyph {
             Glyph::MenuCheck => &[&[(4.0, 6.0), (6.0, 8.2), (10.0, 3.5)]],
             Glyph::Dash => &[&[(3.0, 6.0), (9.0, 6.0)]],
             Glyph::Cross => &[&[(3.5, 3.5), (8.5, 8.5)], &[(8.5, 3.5), (3.5, 8.5)]],
+            Glyph::Pivot => &[
+                &[(11.1, 3.1), (3.1, 3.1), (3.1, 11.1)],
+                &[(8.9, 0.9), (11.1, 3.1), (8.9, 5.3)],
+                &[(0.9, 8.9), (3.1, 11.1), (5.3, 8.9)],
+            ],
             Glyph::Range => &[
                 &[(1.0, 3.0), (1.0, 9.0)],
                 &[(11.0, 3.0), (11.0, 9.0)],

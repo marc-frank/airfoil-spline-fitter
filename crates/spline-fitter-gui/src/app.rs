@@ -79,7 +79,8 @@ impl App {
         let temperature = store.int("theme/temperature", 0).clamp(-100, 100) as i32;
         let scroll_ms = (store.int("motion/scroll_ms", DEFAULT_SCROLL_MS as i64).clamp(0, MAX_MOTION_MS as i64)) as u64;
         let zoom_ms = (store.int("motion/zoom_ms", DEFAULT_ZOOM_MS as i64).clamp(0, MAX_MOTION_MS as i64)) as u64;
-        let explorer = ExplorerState::with_column_names(&store.string("explorer/columns", ""));
+        let mut explorer = ExplorerState::with_column_names(&store.string("explorer/columns", ""));
+        explorer.pivot = store.bool("explorer/pivot", false);
         let (explorer_visible, sidebar_visible) = (store.bool("panels/explorer", true), store.bool("panels/sidebar", true));
         let settings = Settings::default();
         let mut app = App {

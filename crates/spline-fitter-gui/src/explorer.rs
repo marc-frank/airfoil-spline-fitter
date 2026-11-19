@@ -562,8 +562,10 @@ impl App {
         let row = egui::vec2(ui.available_width(), size::CONTROL_HEIGHT);
         ui.allocate_ui_with_layout(row, Layout::right_to_left(Align::Center), |ui| {
             let pivot = self.explorer.pivot;
-            if widgets::toggle_button(ui, &p, "Pivot", pivot, "Swap rows and columns: one column per run, one row per setting").clicked() {
+            if widgets::icon_button(ui, &p, Glyph::Pivot, pivot, "Pivot: swap rows and columns, one column per run and one row per setting").clicked() {
                 self.explorer.pivot = !pivot;
+                // Kept between sessions, as the theme is.
+                self.store.set_bool("explorer/pivot", !pivot);
             }
             let invert = self.explorer.filters.invert;
             if widgets::toggle_button(ui, &p, "Invert", invert, "Show the runs the filters do not match").clicked() {

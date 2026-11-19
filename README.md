@@ -159,6 +159,8 @@ Python results), and differs on purpose where the behaviour was a defect:
 - The sidebar hides to a rail as the explorer does (the chevron on its Data
   caption, View > Sidebar or Ctrl+B), and both panels stay shown or hidden
   between sessions.
+- Pivot is a small icon toggle beside Invert and stays on or off between
+  sessions.
 - The explorer keeps the column order you drag its headers into between
   sessions (Python started from the default order every time).
 - With uniform knots, a tolerance search that meets the tolerance removes

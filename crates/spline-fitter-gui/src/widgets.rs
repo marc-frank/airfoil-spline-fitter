@@ -418,7 +418,7 @@ pub fn icon_button(ui: &mut Ui, p: &Palette, glyph: Glyph, checked: bool, toolti
     } else {
         p.text_2
     };
-    let glyph_side = if glyph == Glyph::Range { size::GLYPH_LARGE } else { size::GLYPH };
+    let glyph_side = if matches!(glyph, Glyph::Range | Glyph::Pivot) { size::GLYPH_LARGE } else { size::GLYPH };
     glyph.paint(ui.painter(), response.rect.center(), glyph_side, color);
     if tooltip.is_empty() {
         response
