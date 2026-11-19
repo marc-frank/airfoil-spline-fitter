@@ -1303,6 +1303,7 @@ Central widget, left to right: a horizontal splitter `[sidebar | centre | explor
 - **Explorer panel** (`Explorer`): margins 12, 10, 12, 12, spacing 8: a header (caption `PROJECT`, stretch, an icon button with `chevron_right` and tooltip `Hide the project explorer (Ctrl+Shift+E)`), the project label (`Muted`, word wrap, initially `No project`), the run table (19.17, stretch 1), the run details (`ReadoutList`, initial message `Select a run to view details`), and a button row `Load settings` (disabled; tooltip `Set the sidebar to the selected run's settings (or double-click the run)`) and `Delete` (disabled; tooltip `Delete the selected runs from the project (Delete key).` / `Edit > Restore deleted runs brings them back.`), then stretch.
 - **Explorer rail** (`ExplorerRail`): hidden at start; margins 4, 10, 4, 12; one icon button with `chevron_left`, tooltip `Show the project explorer (Ctrl+Shift+E)`, then stretch.
 - Hiding the explorer (button, menu or shortcut) hides the panel and shows the rail; showing does the reverse. The hide button unchecks View > Project explorer; the rail button checks it.
+- [Rust: the sidebar hides the same way: an icon button with `chevron_left` on the `DATA` caption line at the right (tooltip `Hide the sidebar (Ctrl+B)`), a rail at the left with `chevron_right` (`Show the sidebar (Ctrl+B)`), View > Sidebar (checkable, Ctrl+B). Whether the sidebar and the explorer are shown is kept between sessions (settings keys `panels/sidebar`, `panels/explorer`).]
 
 ### 19.3 Menus
 

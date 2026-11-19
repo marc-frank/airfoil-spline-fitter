@@ -156,6 +156,9 @@ Python results), and differs on purpose where the behaviour was a defect:
   the same tolerance.
 - Ctrl+Enter fits (also from a field you are typing in: the typed value
   counts), Esc cancels a running fit; Python had no keys for either.
+- The sidebar hides to a rail as the explorer does (the chevron on its Data
+  caption, View > Sidebar or Ctrl+B), and both panels stay shown or hidden
+  between sessions.
 - The explorer keeps the column order you drag its headers into between
   sessions (Python started from the default order every time).
 - With uniform knots, a tolerance search that meets the tolerance removes

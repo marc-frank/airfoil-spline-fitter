@@ -675,3 +675,27 @@ fn ctrl_enter_fits_with_the_typed_value_and_esc_cancels() {
     finish(&mut h);
     assert!(h.state().status.starts_with("Cancelled: "), "{}", h.state().status);
 }
+
+/// The sidebar hides to a rail and comes back, as the explorer does.
+#[test]
+fn the_sidebar_hides_to_a_rail() {
+    let mut h = harness();
+    h.state_mut().new_naca_airfoil("2412", 81, true);
+    h.run_steps(3);
+    let shown = |h: &Harness<'static, App>| h.state().sidebar_visible && h.state().sidebar_rect.width() > 200.0;
+    assert!(shown(&h));
+    shot(&mut h, "s1_sidebar_shown");
+    key(&mut h, egui::Key::B, egui::Modifiers::COMMAND);
+    h.run_steps(2);
+    assert!(!h.state().sidebar_visible && h.state().sidebar_rect == egui::Rect::NOTHING);
+    shot(&mut h, "s2_sidebar_rail");
+    // The rail's button, at the window's left edge under the menu bar.
+    click_at(&mut h, 16.0, 46.0);
+    h.run_steps(2);
+    assert!(shown(&h), "the rail button shows it again");
+    // Its own hide button, on the Data caption line at the right.
+    let right = h.state().sidebar_rect.right();
+    click_at(&mut h, right - 12.0 - 12.0, 46.0);
+    h.run_steps(2);
+    assert!(!h.state().sidebar_visible, "the Data caption's button hides it");
+}

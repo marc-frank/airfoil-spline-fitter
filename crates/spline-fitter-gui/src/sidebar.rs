@@ -7,7 +7,7 @@ use spline_fitter::models::{OptimizerType, Parameterization};
 
 use crate::app::App;
 use crate::settings::{Change, IntSweep};
-use crate::theme::{size, typeface, Palette};
+use crate::theme::{size, typeface, Glyph, Palette};
 use crate::widgets::{self, caption, form_row, muted, Field, IntOptions};
 
 /// A section's margins; the bottom one holds the rule below it (Qt draws
@@ -90,9 +90,36 @@ impl App {
         }
     }
 
+    /// The hidden sidebar: a rail with the button that shows it, as the
+    /// explorer's.
+    pub fn sidebar_rail(&mut self, ui: &mut Ui) {
+        let p = self.palette.clone();
+        egui::Panel::left("sidebar_rail")
+            .resizable(false)
+            .exact_size(size::CONTROL_HEIGHT + 8.0)
+            .frame(egui::Frame::new().fill(p.panel).inner_margin(egui::Margin { left: 4, right: 4, top: 10, bottom: 12 }))
+            .show(ui, |ui| {
+                if widgets::flat_icon_button(ui, &p, Glyph::ChevronRight, "Show the sidebar (Ctrl+B)").clicked() {
+                    self.set_sidebar_visible(true);
+                }
+            });
+    }
+
     fn data_card(&mut self, ui: &mut Ui) {
         let p = self.palette.clone();
         let fitting = self.fitting();
+        // The hide button sits on the caption line, at the right, as the
+        // explorer's does, without moving the section's content.
+        let top = ui.max_rect();
+        let line = egui::Rect::from_min_size(
+            egui::pos2(top.right() - SECTION_MARGIN.right as f32 - size::CONTROL_HEIGHT, top.top() + SECTION_MARGIN.top as f32),
+            egui::vec2(size::CONTROL_HEIGHT, size::CAPTION_LINE),
+        );
+        let button = egui::Rect::from_center_size(line.center(), egui::vec2(size::CONTROL_HEIGHT, size::CONTROL_HEIGHT));
+        let mut place = ui.new_child(egui::UiBuilder::new().max_rect(button));
+        if widgets::flat_icon_button(&mut place, &p, Glyph::ChevronLeft, "Hide the sidebar (Ctrl+B)").clicked() {
+            self.set_sidebar_visible(false);
+        }
         section(ui, &p, "Data", |ui| {
             ui.horizontal(|ui| {
                 let (name, detail) = match &self.airfoil {

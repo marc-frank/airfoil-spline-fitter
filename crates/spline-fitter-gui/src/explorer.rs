@@ -452,7 +452,7 @@ impl App {
             .frame(egui::Frame::new().fill(p.panel).inner_margin(egui::Margin { left: 4, right: 4, top: 10, bottom: 12 }))
             .show(ui, |ui| {
                 if widgets::flat_icon_button(ui, &p, Glyph::ChevronLeft, "Show the project explorer (Ctrl+Shift+E)").clicked() {
-                    self.explorer_visible = true;
+                    self.set_explorer_visible(true);
                 }
             });
     }
@@ -473,7 +473,7 @@ impl App {
                 caption(ui, &p, "Project");
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if widgets::flat_icon_button(ui, &p, Glyph::ChevronRight, "Hide the project explorer (Ctrl+Shift+E)").clicked() {
-                        self.explorer_visible = false;
+                        self.set_explorer_visible(false);
                     }
                 });
             });

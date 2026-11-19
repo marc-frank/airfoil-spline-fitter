@@ -52,6 +52,7 @@ pub struct App {
     pub projects: Projects,
     pub explorer: ExplorerState,
     pub explorer_visible: bool,
+    pub sidebar_visible: bool,
     /// Where the sidebar was on the last frame (its fields are settings).
     pub sidebar_rect: egui::Rect,
     /// Put the side panels back to their default widths on the next frame.
@@ -79,6 +80,7 @@ impl App {
         let scroll_ms = (store.int("motion/scroll_ms", DEFAULT_SCROLL_MS as i64).clamp(0, MAX_MOTION_MS as i64)) as u64;
         let zoom_ms = (store.int("motion/zoom_ms", DEFAULT_ZOOM_MS as i64).clamp(0, MAX_MOTION_MS as i64)) as u64;
         let explorer = ExplorerState::with_column_names(&store.string("explorer/columns", ""));
+        let (explorer_visible, sidebar_visible) = (store.bool("panels/explorer", true), store.bool("panels/sidebar", true));
         let settings = Settings::default();
         let mut app = App {
             palette: Palette::new(true, temperature),
@@ -105,7 +107,8 @@ impl App {
             comparison: ComparisonPlot::default(),
             projects: Projects::default(),
             explorer,
-            explorer_visible: true,
+            explorer_visible,
+            sidebar_visible,
             sidebar_rect: egui::Rect::NOTHING,
             reset_sidebar: false,
             reset_explorer: false,
@@ -224,6 +227,21 @@ impl App {
         self.before = self.settings.clone();
     }
 
+    /// Shows or hides the project explorer; kept between sessions.
+    pub fn set_explorer_visible(&mut self, visible: bool) {
+        self.explorer_visible = visible;
+        self.store.set_bool("panels/explorer", visible);
+    }
+
+    /// Shows or hides the sidebar; kept between sessions.
+    pub fn set_sidebar_visible(&mut self, visible: bool) {
+        self.sidebar_visible = visible;
+        if !visible {
+            self.sidebar_rect = egui::Rect::NOTHING;
+        }
+        self.store.set_bool("panels/sidebar", visible);
+    }
+
     fn shortcuts(&mut self, ctx: &egui::Context) {
         let ctrl = |key| KeyboardShortcut::new(Modifiers::COMMAND, key);
         let ctrl_shift = |key| KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, key);
@@ -233,7 +251,10 @@ impl App {
             self.on_open_project();
         }
         if pressed(ctrl_shift(Key::E)) {
-            self.explorer_visible = !self.explorer_visible;
+            self.set_explorer_visible(!self.explorer_visible);
+        }
+        if pressed(ctrl(Key::B)) {
+            self.set_sidebar_visible(!self.sidebar_visible);
         }
         if pressed(ctrl(Key::N)) {
             self.on_new_naca();
@@ -424,6 +445,7 @@ impl App {
                 let entries = [
                     ("&Fit report...", "Ctrl+R"),
                     ("Project &explorer", "Ctrl+Shift+E"),
+                    ("&Sidebar", "Ctrl+B"),
                     ("&Theme...", ""),
                     ("&Scrolling and zooming...", ""),
                 ];
@@ -433,13 +455,16 @@ impl App {
                 }
                 menu_separator(ui);
                 if m.item(ui, &p, entries[1], true, Some(self.explorer_visible)) {
-                    self.explorer_visible = !self.explorer_visible;
+                    self.set_explorer_visible(!self.explorer_visible);
+                }
+                if m.item(ui, &p, entries[2], true, Some(self.sidebar_visible)) {
+                    self.set_sidebar_visible(!self.sidebar_visible);
                 }
                 menu_separator(ui);
-                if m.item(ui, &p, entries[2], true, None) {
+                if m.item(ui, &p, entries[3], true, None) {
                     self.dialog = Some(Dialog::theme(self));
                 }
-                if m.item(ui, &p, entries[3], true, None) {
+                if m.item(ui, &p, entries[4], true, None) {
                     self.dialog = Some(Dialog::motion(self));
                 }
             }));
@@ -784,7 +809,11 @@ impl eframe::App for App {
         let r = menu.response.rect;
         ui.painter().hline(r.x_range(), r.bottom() - 0.5, egui::Stroke::new(1.0, p.rule));
         self.status_bar(ui);
-        self.sidebar(ui);
+        if self.sidebar_visible {
+            self.sidebar(ui);
+        } else {
+            self.sidebar_rail(ui);
+        }
         if self.explorer_visible {
             self.explorer_panel(ui);
         } else {
