@@ -625,8 +625,7 @@ impl App {
                     } else {
                         "The thickness and camber of the shown fit: fit a spline or pick a run"
                     };
-                    let font = egui::FontId::proportional(crate::theme::typeface::BASE);
-                    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, text, font, p.text_3);
+                    crate::plots::centred_hint(ui.painter(), rect, text, p.text_3, size::PAD_LARGE);
                 }
             }
         });

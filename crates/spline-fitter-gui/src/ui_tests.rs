@@ -136,6 +136,22 @@ fn reference_session() {
     shot(&mut h, "10_pivot");
 }
 
+/// The empty window says how to start: the main plot names the ways to
+/// load an airfoil, the run table what it will hold.
+#[test]
+fn the_empty_window_says_how_to_start() {
+    let mut h = harness();
+    h.run_steps(3);
+    shot(&mut h, "1e_empty_hints");
+    assert!(crate::plots::EMPTY_PLOT_HINT.contains("Ctrl+O") && crate::plots::EMPTY_PLOT_HINT.contains("Ctrl+N"));
+    assert!(h.state().projects.runs().is_empty());
+    h.state_mut().new_naca_airfoil("2412", 41, true);
+    h.run_steps(2);
+    h.state_mut().on_fit();
+    finish(&mut h);
+    assert_eq!(h.state().projects.runs().len(), 1, "the table's hint gives way to the run");
+}
+
 #[test]
 fn light_theme_and_dialogs() {
     let mut h = harness();

@@ -706,8 +706,34 @@ impl MainPlot {
                 c.polyline(section.iter().map(xy), Stroke::new(size::CURVE_WIDTH, INK), false);
             }
             c.markers(self.knots.iter().map(xy), Marker::Diamond, size::KNOT_SIZE, p.knots, Stroke::new(1.0, p.canvas));
+            // Nothing loaded yet: the ways to start.
+            if self.data.is_empty() {
+                empty_hint(c, p, EMPTY_PLOT_HINT);
+            }
         });
     }
+}
+
+/// What the empty main plot says.
+pub const EMPTY_PLOT_HINT: &str =
+    "Open an airfoil file (Ctrl+O) or drop one here, paste coordinates (Ctrl+V) or create a NACA airfoil (Ctrl+N)";
+
+/// A hint in the caption grey, wrapped in the plot's frame, every line
+/// centred.
+fn empty_hint(c: &Canvas, p: &Palette, text: &str) {
+    centred_hint(&c.painter, c.frame(), text, p.text_3, size::PAD_LARGE);
+}
+
+/// `text` in the middle of `rect`, wrapped `margin` inside it, every line
+/// centred.
+pub fn centred_hint(painter: &egui::Painter, rect: Rect, text: &str, color: Color32, margin: f32) {
+    let font = egui::FontId::proportional(typeface::BASE);
+    let mut job = egui::text::LayoutJob::simple(text.to_string(), font, color, (rect.width() - 2.0 * margin).max(60.0));
+    job.halign = egui::Align::Center;
+    let galley = painter.layout_job(job);
+    // With centred lines the galley's x origin is its middle.
+    let at = egui::pos2(rect.center().x, rect.center().y - galley.size().y / 2.0);
+    painter.galley(at, galley, color);
 }
 
 /// The convergence plot.

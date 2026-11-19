@@ -112,6 +112,9 @@ pub struct ExplorerState {
     reveal: bool,
 }
 
+/// What the empty run table says.
+pub const EMPTY_TABLE_HINT: &str = "Every fit is kept here as a run, to compare, reload and save as a project";
+
 impl Default for ExplorerState {
     fn default() -> Self {
         ExplorerState {
@@ -522,6 +525,10 @@ impl App {
                         inside.ctx().request_repaint();
                     }
                 }
+            }
+            // No runs yet: what will be here.
+            if self.projects.runs().is_empty() {
+                crate::plots::centred_hint(ui.painter(), rect, EMPTY_TABLE_HINT, p.text_3, size::PAD);
             }
             ui.painter().rect_stroke(rect, radius, egui::Stroke::new(1.0, p.rule), egui::StrokeKind::Inside);
             let top = ui.cursor().top();
