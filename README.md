@@ -136,6 +136,10 @@ Python results), and differs on purpose where the behaviour was a defect:
   point where the deviation stays (a kink or noise in the data); Python kept
   adding control points for all its rounds. The search has 200 rounds
   instead of 40, as each adds one control point.
+- The earlier runs of a tolerance search keep the loss history of their own
+  refit; Python kept the history from the search's start in each, which
+  made a project several megabytes per search. The search's final run
+  keeps the whole history.
 - Along "Control points" the runs plot places a tolerance run at the count
   its search found, as the sweep plot does; Python placed every tolerance
   run at the start count they share. The column still shows the start count.

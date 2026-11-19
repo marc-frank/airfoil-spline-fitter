@@ -166,6 +166,13 @@ fn light_theme_and_dialogs() {
         let counts: Vec<Vec<usize>> = app.projects.runs().iter().map(|r| r.result.section_counts()).collect();
         assert!(counts.iter().enumerate().all(|(i, c)| !counts[..i].contains(c)), "{counts:?}");
         assert_eq!(counts.last(), Some(&app.fit.as_ref().unwrap().section_counts()));
+        // Each earlier refit keeps only its own evaluations; the last run
+        // has the whole search.
+        let runs = app.projects.runs();
+        let (last, earlier) = runs.split_last().unwrap();
+        let own: usize = earlier.iter().map(|r| r.loss_history.len()).sum();
+        assert!(earlier.iter().all(|r| !r.loss_history.is_empty()));
+        assert!(own <= last.loss_history.len(), "{own} > {}", last.loss_history.len());
     }
     h.state_mut().main_plot.deviation_on = true;
     h.state_mut().main_plot.show_knots = true;

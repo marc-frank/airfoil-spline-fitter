@@ -179,11 +179,16 @@ impl App {
     }
 
     /// Stores the earlier fits of a tolerance search as runs of their own,
-    /// each with the loss history up to its time.
+    /// each with the loss history of its own refit (from the fit before it);
+    /// the search's last fit keeps the whole history. A search adds one
+    /// control point a round, so histories up to each fit's time would hold
+    /// the search's evaluations many times over.
     fn add_earlier_runs(&mut self, job: &FitJob, outcome: &Outcome, history: &[IterationRecord]) {
+        let mut since = f64::NEG_INFINITY;
         for fit in &outcome.earlier {
-            let upto = history.iter().filter(|r| r.elapsed_seconds <= fit.elapsed_seconds).copied().collect();
-            self.add_run(&job.config, &job.options, fit.clone(), upto, false);
+            let own = history.iter().filter(|r| r.elapsed_seconds > since && r.elapsed_seconds <= fit.elapsed_seconds).copied().collect();
+            since = fit.elapsed_seconds;
+            self.add_run(&job.config, &job.options, fit.clone(), own, false);
         }
     }
 
