@@ -12,7 +12,8 @@ use crate::{Result, Vec2};
 pub enum UpdateKind {
     /// A residual evaluation; the error is the RMS error.
     Evaluation,
-    /// A finished fit of a tolerance search; the error is its maximum deviation.
+    /// A finished fit of a tolerance search; the error is the tolerance's
+    /// metric of its deviations (by default the largest).
     Refit,
 }
 
@@ -72,6 +73,8 @@ pub struct RawResult {
 pub struct SearchOutcome {
     /// Control points per section of the fit it ended on.
     pub count: usize,
+    /// That fit's value of the tolerance's metric.
+    pub deviation: f64,
     /// That fit's largest orthogonal deviation.
     pub max_deviation: f64,
     /// Whether that fit is within the tolerance.
@@ -151,6 +154,42 @@ pub(crate) mod tests {
         let from_above = down.search.unwrap();
         assert!(from_above.met && from_above.count <= search.count, "{} > {}", from_above.count, search.count);
         assert_eq!(down.section_control_points[0].len(), from_above.count);
+    }
+
+    /// With the RMS deviation as the target the search ends on the fewest
+    /// whose RMS meets the tolerance: never more than for the largest
+    /// deviation, which is at least the RMS.
+    #[test]
+    fn the_target_can_be_the_rms_deviation() {
+        use crate::models::ToleranceMetric;
+        let airfoil = naca2412();
+        let config = SplineConfig { num_control_points: 8, num_sections: 2, ..Default::default() };
+        let max = OptimizationConfig { tolerance: Some(2e-5), ..Default::default() };
+        let rms = OptimizationConfig { tolerance_metric: ToleranceMetric::RmsDeviation, ..max.clone() };
+        let by_max = run_optimization(&config, &max, &airfoil, &mut Unmonitored).unwrap().search.unwrap();
+        let r = run_optimization(&config, &rms, &airfoil, &mut Unmonitored).unwrap();
+        let by_rms = r.search.clone().unwrap();
+        assert!(by_rms.met && by_rms.deviation <= 2e-5 && by_rms.deviation <= by_rms.max_deviation);
+        assert!(by_rms.count < by_max.count, "{} >= {}", by_rms.count, by_max.count);
+        // The search's value is the report's RMS deviation.
+        let fit = crate::models::FitResult {
+            section_control_points: r.section_control_points.clone(),
+            degree: config.degree,
+            final_error: r.error,
+            num_iterations: 1,
+            num_evaluations: 1,
+            elapsed_seconds: 0.0,
+            converged: true,
+            cancelled: false,
+            section_knots: r.section_knots.clone(),
+            report: None,
+            rms_error: Some(r.rms_error),
+        };
+        let report = crate::analysis::fit_report_for(&airfoil.sections, &fit, Some(6), Some(2e-5), ToleranceMetric::RmsDeviation);
+        assert!((report.rms_deviation - by_rms.deviation).abs() <= 1e-3 * by_rms.deviation, "{} {}", report.rms_deviation, by_rms.deviation);
+        assert_eq!((report.target(), report.within_tolerance()), (report.rms_deviation, Some(true)));
+        assert!(report.rows().iter().any(|row| row.label == "RMS tolerance"));
+        assert!(report.summary_line().ends_with("(RMS tolerance 2.00e-05)"), "{}", report.summary_line());
     }
 
     #[test]

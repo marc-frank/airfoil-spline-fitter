@@ -76,7 +76,7 @@ fn capitalized(text: &str) -> String {
     chars.next().map(|c| c.to_uppercase().chain(chars.flat_map(|c| c.to_lowercase())).collect()).unwrap_or_default()
 }
 
-pub const COLUMNS: [Column; 24] = [
+pub const COLUMNS: [Column; 25] = [
     Column {
         name: "Run",
         tooltip: "Order in which the runs were done; a number stays when other runs are deleted",
@@ -106,11 +106,20 @@ pub const COLUMNS: [Column; 24] = [
     },
     Column {
         name: "Tolerance",
-        tooltip: "Max deviation the tolerance goal had to meet",
+        tooltip: "The tolerance the search had to meet, of its target",
         log: true,
         metric: false,
         format: Format::Spec(".3g"),
         value: |r| opt_float(r.optimization_config.tolerance),
+        applies: |r| varpro(r) && r.optimization_config.tolerance.is_some(),
+    },
+    Column {
+        name: "Target",
+        tooltip: "What the tolerance limits: the largest distance of a point to the curve, or their RMS",
+        log: false,
+        metric: false,
+        format: Format::Plain,
+        value: |r| Cell::Text(r.optimization_config.tolerance_metric.name().into()),
         applies: |r| varpro(r) && r.optimization_config.tolerance.is_some(),
     },
     Column {
@@ -303,10 +312,10 @@ pub const COLUMNS: [Column; 24] = [
     },
 ];
 
-pub const ERROR_COLUMN: usize = 16;
+pub const ERROR_COLUMN: usize = 17;
 const _: () = assert!(matches!(COLUMNS[ERROR_COLUMN].name.as_bytes(), b"Error"));
 const _: () = assert!(matches!(COLUMNS[CONTROL_POINTS_COLUMN].name.as_bytes(), b"Control points"));
-pub const CONTROL_POINTS_COLUMN: usize = 9;
+pub const CONTROL_POINTS_COLUMN: usize = 10;
 
 impl Column {
     pub fn cell(&self, run: &OptimizationRun) -> Cell {

@@ -7,7 +7,7 @@ use bspline_varpro::diagnostics::{fairness, junctions, project};
 use bspline_varpro::{interior_knots, BSpline};
 
 use crate::formatting::number;
-use crate::models::FitResult;
+use crate::models::{FitResult, ToleranceMetric};
 use crate::Vec2;
 
 /// Curvature measures of a fit of degree 2 or more.
@@ -51,6 +51,8 @@ pub struct Report {
     pub section_interior_knots: Vec<usize>,
     pub degree: usize,
     pub tolerance: Option<f64>,
+    /// What the tolerance limits.
+    pub tolerance_metric: ToleranceMetric,
     /// Largest error the rounding of the data alone causes.
     pub precision_floor: Option<f64>,
     pub fairness: Option<FairnessReport>,
@@ -63,6 +65,17 @@ pub struct Report {
 
 /// Measures a fit against the sections it was fitted to.
 pub fn fit_report(sections: &[Vec<Vec2>], fit: &FitResult, precision: Option<i32>, tolerance: Option<f64>) -> Report {
+    fit_report_for(sections, fit, precision, tolerance, ToleranceMetric::MaxDeviation)
+}
+
+/// [`fit_report`] for a tolerance of `metric`.
+pub fn fit_report_for(
+    sections: &[Vec<Vec2>],
+    fit: &FitResult,
+    precision: Option<i32>,
+    tolerance: Option<f64>,
+    tolerance_metric: ToleranceMetric,
+) -> Report {
     let curves = fit.curves();
     let data = chain_data(sections);
     let distances: Vec<Vec<f64>> = curves.iter().map(|c| project(&data, c).into_iter().map(|(_, d)| d).collect()).collect();
@@ -102,6 +115,7 @@ pub fn fit_report(sections: &[Vec<Vec2>], fit: &FitResult, precision: Option<i32
             .collect(),
         degree,
         tolerance,
+        tolerance_metric,
         precision_floor: precision.map(|p| 0.5 * 2f64.sqrt() * 10f64.powi(-p)),
         fairness,
         shape: airfoil_shape(&curves),
@@ -121,6 +135,19 @@ pub fn airfoil_shape(curves: &[BSpline]) -> Option<ShapeReport> {
 }
 
 impl Report {
+    /// The value its tolerance limits.
+    pub fn target(&self) -> f64 {
+        match self.tolerance_metric {
+            ToleranceMetric::MaxDeviation => self.max_deviation,
+            ToleranceMetric::RmsDeviation => self.rms_deviation,
+        }
+    }
+
+    /// Whether the fit is within its tolerance (`None` without one).
+    pub fn within_tolerance(&self) -> Option<bool> {
+        self.tolerance.filter(|t| *t != 0.0).map(|t| self.target() <= t * (1.0 + 1e-9))
+    }
+
     /// One line for the status bar.
     pub fn summary_line(&self) -> String {
         let mut text = format!(
@@ -130,7 +157,8 @@ impl Report {
             self.control_points
         );
         if let Some(t) = self.tolerance.filter(|t| *t != 0.0) {
-            text += &format!(" (tolerance {})", number(t, ".2e"));
+            let rms = if self.tolerance_metric == ToleranceMetric::RmsDeviation { "RMS " } else { "" };
+            text += &format!(" ({rms}tolerance {})", number(t, ".2e"));
         }
         text
     }
@@ -148,9 +176,12 @@ impl Report {
         ];
         let tolerance = self.tolerance.filter(|t| *t != 0.0);
         if let Some(t) = tolerance {
-            let met = self.max_deviation <= t * (1.0 + 1e-9);
+            let met = self.within_tolerance() == Some(true);
             rows.push(ReportRow {
-                label: "Tolerance",
+                label: match self.tolerance_metric {
+                    ToleranceMetric::MaxDeviation => "Tolerance",
+                    ToleranceMetric::RmsDeviation => "RMS tolerance",
+                },
                 value: number(t, ".3e"),
                 note: Some(if met { Note::Ok("met") } else { Note::Warn("not met") }),
             });

@@ -3,7 +3,7 @@
 use eframe::egui::{self, Align, Layout, RichText, Ui};
 use spline_fitter::bspline_varpro::KnotPlacement;
 use spline_fitter::formatting::{format_duration, format_error, number};
-use spline_fitter::models::{OptimizerType, Parameterization};
+use spline_fitter::models::{OptimizerType, Parameterization, ToleranceMetric};
 
 use crate::app::App;
 use crate::settings::{Change, IntSweep};
@@ -188,7 +188,35 @@ impl App {
                         width,
                     );
                 });
-                form_row(ui, &p, "Max deviation", view.tolerance_mode, "", |ui| {
+                form_row(ui, &p, "Target", view.tolerance_mode, "", |ui| {
+                    ui.add_enabled_ui(view.tolerance_mode, |ui| {
+                        widgets::segmented(
+                            ui,
+                            &p,
+                            &mut s.tolerance_metric,
+                            &[
+                                (
+                                    ToleranceMetric::MaxDeviation,
+                                    ToleranceMetric::MaxDeviation.name(),
+                                    "Every data point within the tolerance of the curve.",
+                                ),
+                                (
+                                    ToleranceMetric::RmsDeviation,
+                                    ToleranceMetric::RmsDeviation.name(),
+                                    "The root mean square of the points' distances to the\ncurve within the tolerance: single points may lie farther.",
+                                ),
+                            ],
+                            width,
+                        );
+                    });
+                });
+                // Named for what it limits.
+                let tolerance_tip = match s.tolerance_metric {
+                    ToleranceMetric::MaxDeviation => "Maximum orthogonal distance of any data point to the curve.",
+                    ToleranceMetric::RmsDeviation => "Root mean square of the orthogonal distances of the data points to the curve.",
+                };
+                let tolerance_label = s.tolerance_metric.name();
+                form_row(ui, &p, tolerance_label, view.tolerance_mode, "", |ui| {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = size::GAP;
                         let auto_w = widgets::checkbox_width(ui, "Auto");
@@ -200,7 +228,7 @@ impl App {
                                 &mut s.tolerance,
                                 (1e-9, f64::INFINITY),
                                 1e-6,
-                                Field::new(width - auto_w - size::GAP, "Maximum orthogonal distance of any data point to the curve."),
+                                Field::new(width - auto_w - size::GAP, tolerance_tip),
                             );
                         });
                         ui.add_enabled_ui(view.tolerance_mode, |ui| {
@@ -390,14 +418,16 @@ impl App {
         }
         let Some(fit) = self.fit.clone().filter(|_| !self.fitting()) else { return };
         ui.add_space(size::PAD - ui.spacing().item_spacing.y);
+        // The value a tolerance limited (else the largest deviation).
         let (error_caption, error_value) = match &fit.report {
+            Some(r) if r.tolerance.is_some() => (r.tolerance_metric.name(), number(r.target(), ".2e")),
             Some(r) => ("Max deviation", number(r.max_deviation, ".2e")),
             None => ("Error", format_error(fit.final_error)),
         };
         // A tolerance the fit missed shows in the status colour: the search
         // stopped short, and the readout says so at a glance.
         let (error_color, error_tip) = match fit.report.as_ref().and_then(|r| r.tolerance.filter(|t| *t > 0.0).map(|t| (r, t))) {
-            Some((r, t)) if r.max_deviation > t * (1.0 + 1e-9) => (p.warn, format!("Above the tolerance {}", number(t, ".2e"))),
+            Some((r, t)) if r.within_tolerance() == Some(false) => (p.warn, format!("Above the tolerance {}", number(t, ".2e"))),
             Some((_, t)) => (p.text, format!("Within the tolerance {}", number(t, ".2e"))),
             None => (p.text, String::new()),
         };

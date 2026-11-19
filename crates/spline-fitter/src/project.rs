@@ -13,7 +13,7 @@ use crate::analysis::{FairnessReport, JunctionReport, Report, ShapeReport};
 use crate::geometry::AirfoilData;
 use crate::models::{
     placement_from_value, placement_value, ContinuityMode, FitResult, IterationRecord, OptimizationConfig, OptimizerType, Parameterization,
-    SplineConfig,
+    SplineConfig, ToleranceMetric,
 };
 use crate::{bail, Error, Result, Vec2};
 
@@ -384,7 +384,7 @@ fn encode_spline_config(c: &SplineConfig) -> Json {
 }
 
 fn encode_optimization_config(c: &OptimizationConfig) -> Json {
-    obj(vec![
+    let mut json = obj(vec![
         ("optimizer", string(c.optimizer.value())),
         ("smoothing_weight", float(c.smoothing_weight)),
         ("optimize_le_position", Json::Bool(c.optimize_le_position)),
@@ -395,7 +395,15 @@ fn encode_optimization_config(c: &OptimizationConfig) -> Json {
         ("min_knot_gap", float(c.min_knot_gap)),
         // Kept for older readers: data parameters given by the caller, never set.
         ("custom_parameters", Json::Null),
-    ])
+    ]);
+    // Written only when not the default, so other projects keep the layout
+    // of format 1.0.
+    if c.tolerance_metric != ToleranceMetric::MaxDeviation {
+        if let Json::Object(fields) = &mut json {
+            fields.push(("tolerance_metric".into(), string(c.tolerance_metric.value())));
+        }
+    }
+    json
 }
 
 fn encode_report(r: &Report) -> Json {
@@ -410,6 +418,9 @@ fn encode_report(r: &Report) -> Json {
         ("tolerance", opt_float(r.tolerance)),
         ("precision_floor", opt_float(r.precision_floor)),
     ];
+    if r.tolerance_metric != ToleranceMetric::MaxDeviation {
+        fields.push(("tolerance_metric", string(r.tolerance_metric.value())));
+    }
     if let Some(f) = &r.fairness {
         fields.extend([
             ("curvature_extrema", int(f.curvature_extrema)),
@@ -761,6 +772,7 @@ fn decode_optimization_config(json: &Json, place: &str) -> Result<(OptimizationC
         smoothing_weight: part.float_or("smoothing_weight", 1e-3)?,
         parameterization: Parameterization::from_value(part.text_or("parameterization", "centripetal")?).map_err(|e| part.error(e.0))?,
         tolerance,
+        tolerance_metric: ToleranceMetric::from_value(part.text_or("tolerance_metric", "max_deviation")?).map_err(|e| part.error(e.0))?,
         knot_placement,
         grow_control_points: part.bool_or("grow_control_points", tolerance.is_some())?,
         // Projects from before this setting were fitted with 0.001.
@@ -816,6 +828,7 @@ fn decode_report(json: &Json, place: &str) -> Result<Report> {
         section_interior_knots: part.counts("section_interior_knots")?,
         degree: part.count("degree")?,
         tolerance: part.opt_float("tolerance")?,
+        tolerance_metric: ToleranceMetric::from_value(part.text_or("tolerance_metric", "max_deviation")?).map_err(|e| part.error(e.0))?,
         precision_floor: part.opt_float("precision_floor")?,
         fairness,
         shape,
@@ -1029,6 +1042,7 @@ mod tests {
                 section_interior_knots: vec![0, 0],
                 degree: 5,
                 tolerance: None,
+                tolerance_metric: ToleranceMetric::MaxDeviation,
                 precision_floor: None,
                 fairness: None,
                 shape,
@@ -1150,7 +1164,11 @@ mod tests {
             number: 1,
             timestamp: "2026-11-19T10:00:00".into(),
             spline_config: SplineConfig::default(),
-            optimization_config: OptimizationConfig { tolerance: Some(1e-4), ..OptimizationConfig::default() },
+            optimization_config: OptimizationConfig {
+                tolerance: Some(1e-4),
+                tolerance_metric: ToleranceMetric::RmsDeviation,
+                ..OptimizationConfig::default()
+            },
             result_run: "fit-of-search".into(),
             control_points: 2,
             max_deviation: 9e-5,
@@ -1161,7 +1179,9 @@ mod tests {
             elapsed_seconds: 0.25,
             cancelled: false,
         });
-        let loaded = parse_project(&project_text(&p)).unwrap();
+        let text = project_text(&p);
+        assert!(text.contains("\"tolerance_metric\": \"rms_deviation\""));
+        let loaded = parse_project(&text).unwrap();
         assert_eq!(loaded.project, p);
         assert_eq!(p.search_runs("s1").count(), 1);
         // A search without runs is dropped; a run naming a missing search

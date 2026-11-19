@@ -8,7 +8,7 @@ use eframe::egui::{self, Align, Key, Layout, RichText, Sense, Ui};
 use egui_extras::{Column as TableColumn, TableBuilder};
 use spline_fitter::bspline_varpro::KnotPlacement;
 use spline_fitter::formatting::{format_duration, number};
-use spline_fitter::models::{FitResult, IterationRecord, OptimizationConfig, SplineConfig};
+use spline_fitter::models::{FitResult, IterationRecord, OptimizationConfig, SplineConfig, ToleranceMetric};
 use spline_fitter::project::{number_runs, OptimizationRun, ProjectFile, ToleranceSearch};
 
 use crate::app::App;
@@ -583,7 +583,10 @@ impl App {
         let tolerance_of = |id: &str| {
             let run = self.projects.run(id)?;
             match run.search.as_deref().and_then(|s| self.projects.search(s)) {
-                Some(search) => search.optimization_config.tolerance.filter(|_| y == "Max deviation"),
+                Some(search) => {
+                    let o = &search.optimization_config;
+                    o.tolerance.filter(|_| y == o.tolerance_metric.name())
+                }
                 None => run.optimization_config.tolerance.filter(|_| matches!(y, "Error" | "Max deviation")),
             }
         };
@@ -1230,7 +1233,8 @@ impl App {
             } else {
                 "tolerance not reached"
             };
-            let pairs = vec![
+            let mut pairs = vec![
+                ("Target".to_string(), o.tolerance_metric.name().to_string()),
                 ("Tolerance".to_string(), number(search.tolerance(), ".3e")),
                 ("Start count".to_string(), start),
                 ("Control points".to_string(), search.control_points.to_string()),
@@ -1240,6 +1244,13 @@ impl App {
                 ("Evaluations".to_string(), search.evaluations.to_string()),
                 ("Time".to_string(), format_duration(search.elapsed_seconds)),
             ];
+            // With an RMS target, its value beside the largest deviation.
+            if o.tolerance_metric == ToleranceMetric::RmsDeviation {
+                let rms = self.projects.search_result(search).and_then(|r| r.result.report.as_ref()).map(|r| r.rms_deviation);
+                if let Some(rms) = rms {
+                    pairs.insert(4, ("RMS deviation".to_string(), number(rms, ".3e")));
+                }
+            }
             return widgets::readout_list(ui, &p, &format!("Tolerance search {}", search.number), &pairs);
         }
         let Some(run) = self.projects.run(id) else { return };

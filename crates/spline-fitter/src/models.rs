@@ -240,6 +240,52 @@ pub fn placement_from_value(value: &str) -> Result<KnotPlacement> {
     }
 }
 
+/// What a tolerance limits: the largest orthogonal deviation of a data
+/// point from the curve, or their root mean square.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ToleranceMetric {
+    #[default]
+    MaxDeviation,
+    RmsDeviation,
+}
+
+impl ToleranceMetric {
+    pub const ALL: [ToleranceMetric; 2] = [Self::MaxDeviation, Self::RmsDeviation];
+
+    /// The stored value.
+    pub fn value(self) -> &'static str {
+        match self {
+            Self::MaxDeviation => "max_deviation",
+            Self::RmsDeviation => "rms_deviation",
+        }
+    }
+
+    pub fn from_value(value: &str) -> Result<Self> {
+        match value {
+            "max_deviation" => Ok(Self::MaxDeviation),
+            "rms_deviation" => Ok(Self::RmsDeviation),
+            _ => bail!("tolerance_metric must be 'max_deviation' or 'rms_deviation', got {}", bspline_varpro::numfmt::quoted(value)),
+        }
+    }
+
+    /// The name as the window shows it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::MaxDeviation => "Max deviation",
+            Self::RmsDeviation => "RMS deviation",
+        }
+    }
+
+    /// The metric of orthogonal deviations.
+    pub fn of(self, deviations: &[f64]) -> f64 {
+        match self {
+            Self::MaxDeviation => deviations.iter().copied().fold(0.0, f64::max),
+            Self::RmsDeviation if deviations.is_empty() => 0.0,
+            Self::RmsDeviation => (deviations.iter().map(|d| d * d).sum::<f64>() / deviations.len() as f64).sqrt(),
+        }
+    }
+}
+
 /// Fitting method settings.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OptimizationConfig {
@@ -250,8 +296,11 @@ pub struct OptimizationConfig {
     pub smoothing_weight: f64,
     /// Direct LSQ start parameters.
     pub parameterization: Parameterization,
-    /// Maximum deviation; `None` fits a fixed count.
+    /// The tolerance of the metric `tolerance_metric`; `None` fits a fixed
+    /// count.
     pub tolerance: Option<f64>,
+    /// What the tolerance limits.
+    pub tolerance_metric: ToleranceMetric,
     /// Uniform knots, or free knots whose positions are unknowns of the fit.
     pub knot_placement: KnotPlacement,
     /// Start from the fewest control points and add them where the fit is worst.
@@ -268,6 +317,7 @@ impl Default for OptimizationConfig {
             smoothing_weight: 1e-3,
             parameterization: Parameterization::Centripetal,
             tolerance: None,
+            tolerance_metric: ToleranceMetric::MaxDeviation,
             knot_placement: KnotPlacement::Uniform,
             grow_control_points: false,
             min_knot_gap: bspline_varpro::MIN_KNOT_GAP,

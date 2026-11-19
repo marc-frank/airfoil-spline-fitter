@@ -114,7 +114,9 @@ pub fn fit(config: &SplineConfig, options: &OptimizationConfig, sections: &[Vec<
 struct Fitted {
     raw: RawResult,
     count: usize,
+    /// The tolerance's metric of its deviations.
     deviation: f64,
+    max_deviation: f64,
     /// The data point farthest from the curve.
     worst: Vec2,
     stopped: bool,
@@ -157,11 +159,12 @@ fn search(
         let result = bspline_varpro::fit(sections, &vec![count; sections.len()], degree, &fit_options, relay)?;
         let deviations = chain_deviations(&data, &result.curves());
         let worst = (0..deviations.len()).fold(0, |b, i| if deviations[i] > deviations[b] { i } else { b });
-        let deviation = deviations.get(worst).copied().unwrap_or(0.0);
+        let max_deviation = deviations.get(worst).copied().unwrap_or(0.0);
+        let deviation = options.tolerance_metric.of(&deviations);
         let stopped = result.stopped || relay.refit(&result, deviation);
         let mut fit = raw(result, relay.evaluations - before);
         fit.seconds = Some(began.elapsed().as_secs_f64());
-        Ok(Fitted { raw: fit, count, deviation, worst: data[worst], stopped })
+        Ok(Fitted { raw: fit, count, deviation, max_deviation, worst: data[worst], stopped })
     };
 
     // The fit the search ends on, with whether it met the tolerance and why.
@@ -231,7 +234,8 @@ fn search(
     let mut result = found.raw;
     result.search = Some(SearchOutcome {
         count: found.count,
-        max_deviation: found.deviation,
+        deviation: found.deviation,
+        max_deviation: found.max_deviation,
         met,
         message,
         fits: fits.len() + 1,

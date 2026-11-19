@@ -9,7 +9,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use spline_fitter::analysis::fit_report;
+use spline_fitter::analysis::fit_report_for;
 use spline_fitter::formatting::{format_duration, format_error};
 use spline_fitter::geometry::AirfoilData;
 use spline_fitter::models::{FitResult, OptimizationConfig, SplineConfig};
@@ -276,7 +276,7 @@ fn work(config: SplineConfig, options: OptimizationConfig, airfoil: AirfoilData,
             report: None,
             rms_error: Some(r.rms_error),
         };
-        fit.report = Some(fit_report(&airfoil.sections, &fit, Some(airfoil.precision), options.tolerance));
+        fit.report = Some(fit_report_for(&airfoil.sections, &fit, Some(airfoil.precision), options.tolerance, options.tolerance_metric));
         fit
     };
     let fit = fit_of(&raw, elapsed, cancelled);

@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use eframe::egui;
 use egui_kittest::Harness;
-use spline_fitter::models::OptimizerType;
+use spline_fitter::models::{OptimizerType, ToleranceMetric};
 
 use crate::app::App;
 
@@ -717,6 +717,42 @@ fn a_missed_tolerance_is_not_a_solver_failure() {
     shot(&mut h, "m_missed_tolerance");
 }
 
+/// The tolerance can limit the RMS deviation instead of the largest: the
+/// sidebar names the field for it, and the search, its folder and the
+/// readout follow.
+#[test]
+fn the_target_can_be_the_rms_deviation() {
+    use egui_kittest::kittest::Queryable;
+    let mut h = harness();
+    h.state_mut().new_naca_airfoil("2412", 41, true);
+    h.run_steps(2);
+    {
+        let app = h.state_mut();
+        app.settings.tolerance_goal = true;
+        app.settings.auto_tolerance = false;
+        app.settings.tolerance = 2e-5;
+    }
+    h.run_steps(2);
+    assert!(h.query_by_label("Max deviation").is_some());
+    h.get_by_label("RMS deviation").click();
+    h.run_steps(2);
+    assert_eq!(h.state().settings.tolerance_metric, ToleranceMetric::RmsDeviation);
+    shot(&mut h, "t_rms_target");
+    h.state_mut().on_fit();
+    finish(&mut h);
+    let app = h.state();
+    let search = &app.projects.searches()[0];
+    assert_eq!(search.optimization_config.tolerance_metric, ToleranceMetric::RmsDeviation);
+    assert!(search.met, "{}", search.message);
+    let report = app.fit.as_ref().unwrap().report.clone().unwrap();
+    assert!(report.tolerance_metric == ToleranceMetric::RmsDeviation && report.rms_deviation <= 2e-5);
+    let rows = app.visible_rows();
+    let target = crate::runs::COLUMNS.iter().position(|c| c.name == "Target").unwrap();
+    assert_eq!(rows[0].1[target].1, "RMS deviation");
+    // Kept with the other sidebar settings.
+    assert_eq!(app.store.value("sidebar").unwrap()["tolerance_metric"], "rms_deviation");
+}
+
 /// Ctrl+Enter fits, with the value still being typed into a field; Esc
 /// cancels the running fit.
 #[test]
@@ -731,8 +767,8 @@ fn ctrl_enter_fits_with_the_typed_value_and_esc_cancels() {
         app.settings.tolerance = 1e-4;
     }
     h.run_steps(2);
-    // Into the Max deviation field, a new value typed and not yet committed.
-    click_at(&mut h, 220.0, 208.0);
+    // Into the Max deviation field (below Target), a new value typed and not yet committed.
+    click_at(&mut h, 220.0, 240.0);
     key(&mut h, egui::Key::A, egui::Modifiers::COMMAND);
     h.input_mut().events.push(egui::Event::Text("1e-7".into()));
     h.run_steps(1);

@@ -9,7 +9,7 @@ use spline_fitter::batch::{airfoil_files, prepare, write_result, BatchItem};
 use spline_fitter::bspline_varpro::KnotPlacement;
 use spline_fitter::formatting::{format_count, format_duration, format_error, number};
 use spline_fitter::geometry::AirfoilData;
-use spline_fitter::models::{FitResult, IterationRecord, OptimizationConfig, SplineConfig};
+use spline_fitter::models::{FitResult, IterationRecord, OptimizationConfig, SplineConfig, ToleranceMetric};
 use spline_fitter::project::{number_runs, OptimizationRun, ProjectFile, ToleranceSearch};
 use spline_fitter::BSpline;
 
@@ -76,6 +76,12 @@ fn plural_noun(k: usize, noun: &str) -> String {
     format!("{k} {noun}{}", if k == 1 { "" } else { "s" })
 }
 
+/// The tolerance line of the deviation overlay: a bound for every point,
+/// so only a tolerance of the largest deviation.
+fn deviation_line(tolerance: Option<f64>, metric: ToleranceMetric) -> Option<f64> {
+    tolerance.filter(|_| metric == ToleranceMetric::MaxDeviation)
+}
+
 /// Curves of a live preview.
 fn preview_curves(preview: &crate::job::Preview) -> Vec<BSpline> {
     preview
@@ -140,14 +146,15 @@ impl App {
         self.running = Some(Running::Fit(job));
     }
 
-    /// The refits of the running tolerance search in the runs plot.
-    fn show_live_refits(&mut self, refits: &[[f64; 2]], tolerance: f64) {
+    /// The refits of the running tolerance search in the runs plot, against
+    /// the tolerance's metric (`y`).
+    fn show_live_refits(&mut self, refits: &[[f64; 2]], tolerance: f64, y: &str) {
         let mut points = refits.to_vec();
         let latest = *points.last().expect("at least one refit");
         points.sort_by(|a, b| a[0].total_cmp(&b[0]).then(a[1].total_cmp(&b[1])));
         let c = &mut self.comparison;
         c.x_label = "Control points".into();
-        c.y_label = "Max deviation".into();
+        c.y_label = y.into();
         c.log_x = false;
         c.log_y = points.iter().all(|p| p[1] > 0.0) && tolerance > 0.0;
         c.ticks = None;
@@ -170,10 +177,11 @@ impl App {
         let Some(running) = self.running.as_mut() else { return };
         let job = running.job();
         let tolerance = job.options.tolerance;
+        let metric = job.options.tolerance_metric;
         let (preview, status) = job.tick(mode);
         let history = job.live.history();
         if let Some(p) = preview {
-            self.main_plot.show_curves(preview_curves(&p), tolerance);
+            self.main_plot.show_curves(preview_curves(&p), deviation_line(tolerance, metric));
             self.loss.set_data(history);
         }
         if let Some(s) = status {
@@ -186,7 +194,7 @@ impl App {
             let refits = job.live.refits();
             if refits.len() != job.shown_refits {
                 job.shown_refits = refits.len();
-                self.show_live_refits(&refits, tolerance);
+                self.show_live_refits(&refits, tolerance, metric.name());
             }
         }
         if !self.running.as_mut().unwrap().job().finished() {
@@ -368,8 +376,8 @@ impl App {
     pub fn show_current_fit(&mut self) {
         match &self.fit {
             Some(fit) => {
-                let tolerance = fit.report.as_ref().and_then(|r| r.tolerance);
-                self.main_plot.show_curves(fit.curves(), tolerance);
+                let line = fit.report.as_ref().and_then(|r| deviation_line(r.tolerance, r.tolerance_metric));
+                self.main_plot.show_curves(fit.curves(), line);
             }
             None => self.main_plot.clear_items(),
         }
@@ -736,7 +744,7 @@ impl App {
             if !outcome.raw.success {
                 return Err(spline_fitter::Error::new(format!("Optimizer did not converge: {}", outcome.raw.message)));
             }
-            self.main_plot.show_curves(outcome.fit.curves(), job.options.tolerance);
+            self.main_plot.show_curves(outcome.fit.curves(), deviation_line(job.options.tolerance, job.options.tolerance_metric));
             write_result(&item, &batch.config, &outcome.raw)?;
             Ok(Some(outcome))
         });

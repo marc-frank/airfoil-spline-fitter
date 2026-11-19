@@ -148,6 +148,14 @@ Python results), and differs on purpose where the behaviour was a defect:
   (a search: of the fit it ended on). Python showed the count as set (for
   a tolerance run, its start count) and the fitted count of the whole
   curve in a second column, Fitted control points, which is gone.
+- A tolerance can limit the largest deviation (as in Python) or the RMS
+  deviation: Target in the sidebar, under Goal. The field below is named
+  for it, and the search, the report ("RMS tolerance"), the readout under
+  Fit spline, the run table's Target column and the runs plot's tolerance
+  line follow it. The deviation overlay draws its tolerance line only for
+  the largest deviation, a bound for every point. Projects and batch file
+  names record an RMS target (`tolerance_metric`, `.rms`); others keep the
+  layout of format 1.0.
 - A tolerance search runs until a fit meets the tolerance, up to 200 fits
   (Python: 40 rounds) or as many control points as a section's points
   allow; one that ends without meeting it keeps the closest fit and names

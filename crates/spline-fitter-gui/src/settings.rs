@@ -5,7 +5,7 @@ use spline_fitter::bspline_varpro::KnotPlacement;
 use spline_fitter::formatting::number;
 use spline_fitter::models::{
     minimum_control_points, placement_from_value, placement_value, ContinuityMode, OptimizationConfig, OptimizerType, Parameterization,
-    SplineConfig,
+    SplineConfig, ToleranceMetric,
 };
 use spline_fitter::project::OptimizationRun;
 use spline_fitter::Result;
@@ -174,6 +174,8 @@ pub struct Settings {
     pub tolerance_goal: bool,
     pub auto_tolerance: bool,
     pub tolerance: f64,
+    /// What the tolerance limits.
+    pub tolerance_metric: ToleranceMetric,
     pub knot_placement: KnotPlacement,
     pub parameterization: Parameterization,
     pub grow: bool,
@@ -198,6 +200,7 @@ impl Default for Settings {
             tolerance_goal: o.tolerance.is_some(),
             auto_tolerance: true,
             tolerance: o.tolerance.unwrap_or(1e-5),
+            tolerance_metric: o.tolerance_metric,
             knot_placement: o.knot_placement,
             parameterization: o.parameterization,
             grow: o.grow_control_points,
@@ -223,6 +226,7 @@ pub struct Values {
     tolerance_goal: bool,
     auto_tolerance: bool,
     tolerance: f64,
+    tolerance_metric: ToleranceMetric,
     knot_placement: KnotPlacement,
     parameterization: Parameterization,
     grow: bool,
@@ -250,6 +254,7 @@ impl Values {
             "tolerance_goal": self.tolerance_goal,
             "auto_tolerance": self.auto_tolerance,
             "tolerance": self.tolerance,
+            "tolerance_metric": self.tolerance_metric.value(),
             "knot_placement": placement_value(self.knot_placement),
             "parameterization": self.parameterization.value(),
             "grow": self.grow,
@@ -279,6 +284,7 @@ impl Values {
             tolerance_goal: flag("tolerance_goal", d.tolerance_goal),
             auto_tolerance: flag("auto_tolerance", d.auto_tolerance),
             tolerance: float("tolerance", d.tolerance, |v| v.is_finite() && v > 0.0),
+            tolerance_metric: text("tolerance_metric").and_then(|t| ToleranceMetric::from_value(t).ok()).unwrap_or(d.tolerance_metric),
             knot_placement: text("knot_placement").and_then(|t| placement_from_value(t).ok()).unwrap_or(d.knot_placement),
             parameterization: text("parameterization").and_then(|t| Parameterization::from_value(t).ok()).unwrap_or(d.parameterization),
             grow: flag("grow", d.grow),
@@ -526,6 +532,7 @@ impl Settings {
             smoothing_weight: self.smoothing.value,
             parameterization: self.parameterization,
             tolerance: self.tolerance_mode().then_some(self.tolerance),
+            tolerance_metric: self.tolerance_metric,
             knot_placement: self.knot_placement,
             grow_control_points: self.grow,
             min_knot_gap: self.knot_gap,
@@ -542,6 +549,7 @@ impl Settings {
         if let Some(t) = o.tolerance {
             self.auto_tolerance = false;
             self.tolerance = t.max(1e-9);
+            self.tolerance_metric = o.tolerance_metric;
         }
         self.knot_placement = o.knot_placement;
         self.parameterization = o.parameterization;
@@ -564,6 +572,7 @@ impl Settings {
             tolerance_goal: self.tolerance_goal,
             auto_tolerance: self.auto_tolerance,
             tolerance: self.tolerance,
+            tolerance_metric: self.tolerance_metric,
             knot_placement: self.knot_placement,
             parameterization: self.parameterization,
             grow: self.grow,
@@ -589,6 +598,7 @@ impl Settings {
         self.tolerance_goal = v.tolerance_goal;
         self.auto_tolerance = v.auto_tolerance;
         self.tolerance = v.tolerance;
+        self.tolerance_metric = v.tolerance_metric;
         self.knot_placement = v.knot_placement;
         self.parameterization = v.parameterization;
         self.grow = v.grow;

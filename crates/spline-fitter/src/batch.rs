@@ -61,6 +61,9 @@ pub fn output_name(stem: &str, config: &SplineConfig, opt: &OptimizationConfig, 
     }
     if let Some(t) = opt.tolerance {
         parts.push(if auto_tolerance { "tol-auto".into() } else { format!("tol{}", num(t)) });
+        if opt.tolerance_metric == crate::models::ToleranceMetric::RmsDeviation {
+            parts.push("rms".into());
+        }
     }
     if opt.knot_placement != reference_opt.knot_placement {
         parts.push(format!("knots-{}", crate::models::placement_value(opt.knot_placement)));
