@@ -588,6 +588,15 @@ impl App {
                 if widgets::caption_tabs(ui, &p, &mut view, &BOTTOM_VIEWS) {
                     self.set_bottom_view(view);
                 }
+                if self.bottom_view == 1 {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let enabled = self.report_panel.is_some() && !self.fitting();
+                        let tip = "Copy the report as text: a line per value, tab separated, so it\npastes into a spreadsheet as cells";
+                        if widgets::push_button(ui, &p, enabled, "Copy").on_hover_text(tip).clicked() {
+                            self.copy_report();
+                        }
+                    });
+                }
                 if self.bottom_view == 0 {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if widgets::combo(ui, &p, "loss_log", &mut self.loss.log_mode, &["None", "X only", "Y only", "Both"], 0.0, "") {
@@ -629,6 +638,16 @@ impl App {
                 }
             }
         });
+    }
+
+    /// Copies the shown report to the clipboard as text.
+    pub fn copy_report(&mut self) {
+        let Some(panel) = &self.report_panel else { return };
+        let text = panel.report.text(&panel.title);
+        match arboard::Clipboard::new().and_then(|mut c| c.set_text(text)) {
+            Ok(()) => self.set_status("Copied the fit report"),
+            Err(e) => self.fail(format!("Copy failed: {e}")),
+        }
     }
 
     /// Chooses the bottom block's view, kept between sessions.
@@ -681,7 +700,8 @@ pub const BOTTOM_VIEWS: [&str; 3] = ["Convergence", "Report", "Shape"];
 /// scrolling document with a heading, a table of label and value rows and
 /// the junction table.
 fn report_document(ui: &mut Ui, p: &Palette, rect: egui::Rect, title: &str, report: &Report) {
-    const ROW: f32 = 31.0;
+    // Rows as close as the run details beside it: the block is short.
+    const ROW: f32 = 24.0;
     let radius = egui::CornerRadius::same(size::RADIUS);
     // Framed as the plots beside it.
     ui.painter().rect_filled(rect, radius, p.canvas);

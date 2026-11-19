@@ -187,6 +187,27 @@ impl Report {
         rows
     }
 
+    /// The report as text: `title`, then a line per row (label, tab,
+    /// value and its note in parentheses), then the junction table with tab
+    /// separated columns; it pastes into a spreadsheet as cells.
+    pub fn text(&self, title: &str) -> String {
+        let mut lines = vec![title.to_string()];
+        for row in self.rows() {
+            let note = match row.note {
+                Some(Note::Ok(t) | Note::Warn(t)) => format!(" ({t})"),
+                None => String::new(),
+            };
+            lines.push(format!("{}\t{}{note}", row.label, row.value));
+        }
+        let junctions = self.junction_rows();
+        if !junctions.is_empty() {
+            lines.push(String::new());
+            lines.push(JUNCTION_COLUMNS.join("\t"));
+            lines.extend(junctions.iter().map(|r| r.join("\t")));
+        }
+        lines.join("\n") + "\n"
+    }
+
     /// The junction table: index, gap, tangent angle, Δκ, Δ dκ/ds.
     pub fn junction_rows(&self) -> Vec<[String; 5]> {
         let Some(f) = &self.fairness else { return vec![] };
@@ -326,6 +347,14 @@ mod tests {
         assert!(close(s.max_thickness, 0.12004, 1e-4) && close(s.max_thickness_x, 0.2988, 1e-3));
         assert!(close(s.max_camber, 0.020000, 1e-3) && close(s.max_camber_x, 0.4065, 1e-3));
         assert_eq!(r.summary_line(), "max deviation 4.59e-06, RMS 8.98e-07, 49 control points");
+        // As text: the title, a tab between label and value, the junction table.
+        let text = r.text("NACA 2412");
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines[0], "NACA 2412");
+        assert_eq!(lines[1], "Max orthogonal deviation\t4.587e-06");
+        assert!(lines.contains(&"Control points (chain)\t49"), "{text}");
+        assert!(lines.contains(&"Junction\tGap\tTangent angle\tΔκ\tΔ dκ/ds"), "{text}");
+        assert!(text.ends_with('\n'));
 
         let config = SplineConfig { continuity: ContinuityMode::G2, geometric_continuity: false, ..Default::default() };
         let options = OptimizationConfig { optimizer: crate::models::OptimizerType::DirectLsq, ..options };

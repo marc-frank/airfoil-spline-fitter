@@ -166,7 +166,8 @@ Python results), and differs on purpose where the behaviour was a defect:
 - The fit report is not a window: the bottom-left block has tabs for the
   convergence plot, the report and the thickness and camber chart of the
   shown fit (View > Fit report or Ctrl+R picks Report), and the chosen tab
-  is kept between sessions.
+  is kept between sessions. Copy puts the report on the clipboard as tab
+  separated text, which pastes into a spreadsheet as cells.
 - The empty window says how to start: the main plot names the ways to load
   an airfoil (with their keys), the empty run table what it will hold.
 - The explorer keeps the column order you drag its headers into between
