@@ -532,31 +532,31 @@ impl App {
     pub fn comparison_block(&mut self, ui: &mut Ui) {
         let p = self.palette.clone();
         ui.vertical(|ui| {
-            ui.horizontal(|ui| {
+            // As the block beside it: the caption at the left, the axis
+            // choices compact at the right.
+            let row = egui::vec2(ui.available_width(), size::CONTROL_HEIGHT);
+            ui.allocate_ui_with_layout(row, Layout::left_to_right(Align::Center), |ui| {
                 widgets::caption(ui, &p, "Runs");
-                // The two combos share the width left after the labels (and
-                // the three gaps between the four).
-                let font = egui::FontId::proportional(crate::theme::typeface::BASE);
-                let labels: f32 = ["X axis", "Y axis"].iter().map(|t| crate::fonts::layout_width(ui, t, &font, false)).sum();
-                let each = ((ui.available_width() - labels - 3.0 * ui.spacing().item_spacing.x) / 2.0).max(60.0);
-                widgets::toolbar_label(ui, &p, "X axis");
-                let all: Vec<&str> = COLUMNS.iter().map(|c| c.name).collect();
-                let mut x = self.explorer.x_column;
-                let tip = "The explorer column the runs are plotted along.\nOnly the runs that pass the explorer's filter are shown.";
-                if widgets::combo(ui, &p, "cmp_x", &mut x, &all, each, tip) {
-                    self.explorer.x_column = x;
-                    self.explorer.forget_points();
-                    self.refresh_comparison();
-                }
-                widgets::toolbar_label(ui, &p, "Y axis");
-                let metrics: Vec<usize> = (0..COLUMNS.len()).filter(|&c| COLUMNS[c].metric).collect();
-                let names: Vec<&str> = metrics.iter().map(|&c| COLUMNS[c].name).collect();
-                let mut y = metrics.iter().position(|&c| c == self.explorer.y_column).unwrap_or(0);
-                if widgets::combo(ui, &p, "cmp_y", &mut y, &names, each, "The fit metric plotted for each run") {
-                    self.explorer.y_column = metrics[y];
-                    self.explorer.forget_points();
-                    self.refresh_comparison();
-                }
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let metrics: Vec<usize> = (0..COLUMNS.len()).filter(|&c| COLUMNS[c].metric).collect();
+                    let names: Vec<&str> = metrics.iter().map(|&c| COLUMNS[c].name).collect();
+                    let mut y = metrics.iter().position(|&c| c == self.explorer.y_column).unwrap_or(0);
+                    if widgets::combo(ui, &p, "cmp_y", &mut y, &names, 0.0, "The fit metric plotted for each run") {
+                        self.explorer.y_column = metrics[y];
+                        self.explorer.forget_points();
+                        self.refresh_comparison();
+                    }
+                    widgets::toolbar_label(ui, &p, "Y axis");
+                    let all: Vec<&str> = COLUMNS.iter().map(|c| c.name).collect();
+                    let mut x = self.explorer.x_column;
+                    let tip = "The explorer column the runs are plotted along.\nOnly the runs that pass the explorer's filter are shown.";
+                    if widgets::combo(ui, &p, "cmp_x", &mut x, &all, 0.0, tip) {
+                        self.explorer.x_column = x;
+                        self.explorer.forget_points();
+                        self.refresh_comparison();
+                    }
+                    widgets::toolbar_label(ui, &p, "X axis");
+                });
             });
             if let Some(i) = self.comparison.show(ui, &p, self.zoom_ms) {
                 self.click_plotted_run(i);
@@ -565,7 +565,6 @@ impl App {
     }
 }
 
-/// The fit report window.
 /// The report of the shown fit, for the Report and Shape views of the
 /// bottom block; `key` tells the fit it belongs to.
 pub struct ReportPanel {

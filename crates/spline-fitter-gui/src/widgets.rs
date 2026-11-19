@@ -21,6 +21,11 @@ pub fn caption(ui: &mut Ui, p: &Palette, text: &str) -> Response {
 /// text colour, the others in the caption grey (lighter on hover); true
 /// when the choice changed.
 pub fn caption_tabs(ui: &mut Ui, p: &Palette, current: &mut usize, names: &[&str]) -> bool {
+    // The tabs' wider spacing stays with them, not the rest of the row.
+    ui.scope(|ui| caption_tab_row(ui, p, current, names)).inner
+}
+
+fn caption_tab_row(ui: &mut Ui, p: &Palette, current: &mut usize, names: &[&str]) -> bool {
     let mut changed = false;
     ui.spacing_mut().item_spacing.x = size::PAD_LARGE;
     for (i, name) in names.iter().enumerate() {
