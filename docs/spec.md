@@ -1546,7 +1546,7 @@ Modes (combo `Live preview`: `Minimal`, `Moderate`, `Detailed`; default `Moderat
 1. `cancel_requested`: return true.
 2. If `step`: mark that steps arrive. Else if steps have arrived: remember `error` as the last refit's deviation; return false.
 3. Record: `iteration = increment_iteration()`; `logger.log(iteration, get_evaluation_count(), error, now - start)`.
-4. Status text: `"{prefix}Fitting... {format_duration(elapsed)} | Evaluations {count} | "` + (steps arrive: `"RMS error {format_error(error)}"` plus `" | Max deviation of last refit {format_error(dev)}"` when known; else `"Best error {format_error(min of logged errors)}"`).
+4. Status text: `"{prefix}Fitting... {format_duration(elapsed)} | Evaluations {count} | "` + (steps arrive: `"RMS error {format_error(error)}"` [Rust: `"Control points {count} | RMS error ..."`, with the step's control points per section as in the count readout (`25`, `2 × 10`, or the total), since the search adds them as it goes] plus `" | Max deviation of last refit {format_error(dev)}"` when known; else `"Best error {format_error(min of logged errors)}"`).
 5. Clear the "drawn" event; publish `{x copy, preview, new: True, status}`.
 6. Detailed mode: request an immediate tick (19.12.3) and wait for the "drawn" event in 50 ms slices, returning true if a cancel is requested meanwhile.
 7. Return false.

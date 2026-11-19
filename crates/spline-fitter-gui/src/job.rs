@@ -138,7 +138,9 @@ impl Monitor for Progress {
         self.best = self.best.min(u.error);
         let mut status = format!("{}Fitting... {} | Evaluations {} | ", self.prefix, format_duration(elapsed), u.evaluations);
         if self.tolerance_mode {
-            status += &format!("RMS error {}", format_error(u.error));
+            // The search adds control points as it goes: show where it is.
+            let counts: Vec<usize> = u.control_points.iter().map(Vec::len).collect();
+            status += &format!("Control points {} | RMS error {}", crate::sidebar::count_text(&counts), format_error(u.error));
             if let Some(d) = self.last_refit {
                 status += &format!(" | Max deviation of last refit {}", format_error(d));
             }
@@ -266,4 +268,32 @@ fn work(config: SplineConfig, options: OptimizationConfig, airfoil: AirfoilData,
     let fit = fit_of(&raw, elapsed, cancelled);
     let earlier = raw.earlier.iter().map(|r| fit_of(r, r.seconds.unwrap_or(0.0), false)).collect();
     Ok(Outcome { raw, fit, earlier, cancelled, elapsed })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_tolerance_search_shows_its_control_points() {
+        let live = Live::new("test", LiveMode::Moderate);
+        let mut progress = Progress {
+            live: live.clone(),
+            start: Instant::now(),
+            prefix: String::new(),
+            tolerance_mode: true,
+            iteration: 0,
+            best: f64::INFINITY,
+            last_refit: None,
+        };
+        let points = |n| vec![Vec2::new(0.0, 0.0); n];
+        let mut update = |sections: Vec<Vec<Vec2>>| {
+            let u = Update { kind: UpdateKind::Evaluation, control_points: &sections, knots: &[], degree: 5, error: 1e-4, evaluations: 3 };
+            assert!(!progress.update(&u));
+            live.take().unwrap().1
+        };
+        assert!(update(vec![points(23)]).contains("| Control points 23 | RMS error "));
+        assert!(update(vec![points(10), points(10)]).contains("| Control points 2 × 10 | "));
+        assert!(update(vec![points(10), points(12)]).contains("| Control points 22 | "));
+    }
 }

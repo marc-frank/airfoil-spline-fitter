@@ -362,13 +362,7 @@ impl App {
             None => ("Error", format_error(fit.final_error)),
         };
         let counts = fit.section_counts();
-        let count_text = if counts.len() == 1 {
-            counts[0].to_string()
-        } else if counts.iter().all(|&c| c == counts[0]) {
-            format!("{} × {}", counts.len(), counts[0])
-        } else {
-            counts.iter().sum::<usize>().to_string()
-        };
+        let count_text = count_text(&counts);
         let count_tip = if counts.len() > 1 {
             format!("{} per section", counts.iter().map(usize::to_string).collect::<Vec<_>>().join(", "))
         } else {
@@ -425,4 +419,14 @@ fn knot_gap_field(ui: &mut Ui, p: &Palette, value: &mut f64, width: f32) {
     let fmt = widgets::NumberFormat { format: &format, parse: &parse, step: &step };
     let tooltip = "Smallest spacing of free knots, as a fraction of a section.\nCloser knots follow the data more tightly but can bend the\ncurve sharply between the points, and fits take longer.";
     widgets::number_field(ui, p, "knot_gap", value, (0.0, 0.5), Field::new(width, tooltip), &fmt);
+}
+
+/// Control points per section as one readout: "25", "2 × 10" for equal
+/// sections, else the total.
+pub(crate) fn count_text(counts: &[usize]) -> String {
+    match counts {
+        [one] => one.to_string(),
+        [first, ..] if counts.iter().all(|c| c == first) => format!("{} × {first}", counts.len()),
+        _ => counts.iter().sum::<usize>().to_string(),
+    }
 }
