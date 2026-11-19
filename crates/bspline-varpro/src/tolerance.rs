@@ -4,10 +4,10 @@
 //! optimization of [`solve_problem`](crate::fitting) or, with free knots,
 //! of [`solve_free_knots`], whose unknowns include the interior knot
 //! positions. Nothing runs between or after those fits. The tolerance search
-//! starts from the fewest control points the end conditions allow, inserts a
-//! knot into every knot span that holds a point beyond the tolerance and
-//! refits, warm-started; once the tolerance is met it removes the knots that
-//! are not needed.
+//! starts from the fewest control points the end conditions allow and adds
+//! one control point per round to every section beyond the tolerance (a
+//! knot in its worst span), refitting warm-started; once the tolerance is
+//! met it removes the knots that are not needed.
 
 use nalgebra::{DMatrix, DVector};
 
@@ -25,11 +25,13 @@ use crate::{bail, Observer, Progress, Result, Vec2, STOPPED};
 
 /// Smallest knot span an insertion of uniform knots may create.
 const MIN_SPAN: f64 = 1e-4;
-/// Insertion rounds without a gain of [`STALL_GAIN`] in the largest
-/// deviation after which the search stops.
-const STALL_ROUNDS: usize = 5;
+/// Control points added without a gain of [`STALL_GAIN`] in the largest
+/// deviation after which the search stops: this many, or three quarters of
+/// the best fit's count if that is more. The deviation of measured airfoils
+/// stays level for up to 20 control points before it drops again.
+const STALL_POINTS: usize = 10;
 /// The relative drop of the largest deviation that counts as a gain.
-const STALL_GAIN: f64 = 0.01;
+const STALL_GAIN: f64 = 0.2;
 
 /// What every fit of one procedure shares: the data, degree, constraints,
 /// budget and the knot setting.
@@ -485,7 +487,7 @@ impl Default for ToleranceOptions {
             max_control_points: None,
             remove_knots: true,
             max_nfev: None,
-            max_iterations: 40,
+            max_iterations: 200,
             knot_placement: KnotPlacement::Free,
             min_knot_gap: MIN_KNOT_GAP,
         }
@@ -548,6 +550,7 @@ pub fn fit_to_tolerance(
         bail!("Section {} needs {n} control points for its end conditions, more than the limit of {limit}.", s + 1);
     }
     let mut u = start_parameters(options.initial_parameters.as_ref(), sections)?;
+    let start_u = u.clone();
     let data = chain_data(sections);
     let mut theta: Option<Vec<f64>> = None;
     let min_span = if uniform { MIN_SPAN } else { MIN_SPAN.max(options.min_knot_gap) };
@@ -568,17 +571,29 @@ pub fn fit_to_tolerance(
 
     let mut met = None;
     let mut last = None;
-    // The lowest largest deviation so far, its fit and worst point, and the
-    // rounds since it last dropped by STALL_GAIN.
-    let mut best: Option<(FitResult, f64, usize)> = None;
-    let mut stalled = 0;
+    // The closest fit so far: its largest deviation, worst point and fit.
+    let mut closest: Option<(f64, usize, FitResult)> = None;
+    // The largest deviation and control points of the last fit that gained
+    // STALL_GAIN on the one before.
+    let mut gained: Option<(f64, usize)> = None;
     for _ in 0..options.max_iterations {
-        let fitted = setup.refit(knots.clone(), &u, theta.as_deref(), !uniform, &mut steps)?;
+        let mut fitted = setup.refit(knots.clone(), &u, theta.as_deref(), !uniform, &mut steps)?;
+        let mut devs = chain_deviations(&data, &fitted.curves());
+        let mut deviation = devs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        // A warm start that is no closer than the closest fit so far may be
+        // held by its parameters: fit uniform knots from the start
+        // parameters too and keep the closer one.
+        if uniform && !fitted.stopped && closest.as_ref().is_some_and(|c| deviation >= c.0) && u != start_u {
+            let fresh = setup.refit(knots.clone(), &start_u, None, false, &mut steps)?;
+            let fresh_devs = chain_deviations(&data, &fresh.curves());
+            let fresh_deviation = fresh_devs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            if fresh.stopped || fresh_deviation < deviation {
+                (fitted, devs, deviation) = (fresh, fresh_devs, fresh_deviation);
+            }
+        }
         u = fitted.parameters.clone();
         theta = Some(fitted.theta.clone());
         knots = fitted.knots.clone();
-        let devs = chain_deviations(&data, &fitted.curves());
-        let deviation = devs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
         if fitted.stopped || steps.inner.refit(&fitted, deviation) {
             return stopped(fitted, deviation);
         }
@@ -586,21 +601,23 @@ pub fn fit_to_tolerance(
             met = Some((fitted, deviation));
             break;
         }
-        // A kink or noise in the data holds the largest deviation where more
-        // control points cannot lower it: stop with the best fit instead of
-        // adding them until max_iterations.
-        match &best {
-            Some((_, lowest, _)) if deviation > (1.0 - STALL_GAIN) * lowest => stalled += 1,
-            _ => {
-                best = Some((fitted.clone(), deviation, argmax(&devs)));
-                stalled = 0;
-            }
+        if closest.as_ref().is_none_or(|c| deviation < c.0) {
+            closest = Some((deviation, argmax(&devs), fitted.clone()));
         }
-        if stalled >= STALL_ROUNDS {
-            let (result, lowest, worst) = best.expect("set on the first round");
+        // A kink or noise in the data holds the largest deviation where more
+        // control points cannot lower it: stop with the closest fit instead
+        // of adding them until max_iterations.
+        let total: usize = fitted.num_control_points().iter().sum();
+        if gained.is_none_or(|(d, _)| deviation <= (1.0 - STALL_GAIN) * d) {
+            gained = Some((deviation, total));
+        }
+        let at_gain = gained.expect("set above").1;
+        let added = total - at_gain;
+        if added >= STALL_POINTS.max(3 * at_gain / 4) {
+            let (lowest, worst, result) = closest.expect("set above");
             let p = data[worst];
             let message = format!(
-                "Tolerance not reached: {STALL_ROUNDS} more rounds of control points did not lower the largest deviation, which stays near ({:.4}, {:.4}); the data may have a kink or noise there.",
+                "Tolerance not reached: {added} more control points lowered the largest deviation by less than a fifth; it stays near ({:.4}, {:.4}); the data may have a kink or noise there.",
                 p.x, p.y
             );
             return finish(result, lowest, false, message);
@@ -614,16 +631,25 @@ pub fn fit_to_tolerance(
             }
             let count = num_control_points(&knots[s], degree);
             let room = limits[s] as i64 - count as i64;
+            // One control point a round: the fits then do not depend on the
+            // tolerance, which only says where the search stops, so a looser
+            // tolerance never ends with more control points than a tighter one.
             let mut new = new_knots(&knots[s], &local, &dev, tolerance, min_span);
             narrow |= room > 0 && new.is_empty() && too_narrow(&knots[s], &local, &dev, tolerance, min_span);
-            new.truncate(room.max(0) as usize);
+            new.truncate(room.clamp(0, 1) as usize);
             if uniform && room > 0 {
-                knots[s] = open_uniform_knots(degree, count + new.len().max(1))?;
+                knots[s] = open_uniform_knots(degree, count + 1)?;
                 inserted = true;
             } else if !uniform && !new.is_empty() {
                 knots[s] = with_knots(&knots[s], degree, &new);
                 inserted = true;
             }
+        }
+        // Uniform knots are respaced every round, so only the parameters
+        // carry over: take those of the closest fit so far, as a poor fit's
+        // parameters hold every later fit near its poor shape.
+        if uniform {
+            u.clone_from(&closest.as_ref().expect("set above").2.parameters);
         }
         if !inserted {
             // Free knots crowd where the curve is hard to fit, down to the
@@ -782,11 +808,44 @@ mod tests {
         let options = ToleranceOptions { knot_placement: KnotPlacement::Uniform, ..Default::default() };
         let result = fit_to_tolerance(&[points], 1e-4, 3, &options, &mut crate::Silent).unwrap();
         assert!(!result.success);
-        assert!(result.message.starts_with("Tolerance not reached: 5 more rounds of control points did not lower"), "{}", result.message);
+        assert!(result.message.starts_with("Tolerance not reached: 10 more control points lowered the largest deviation by less than a fifth"), "{}", result.message);
         assert!(result.message.ends_with("the data may have a kink or noise there."), "{}", result.message);
-        // Long before the 40 rounds, or one control point per data point.
+        // Long before the 200 rounds, or one control point per data point.
         assert!(result.control_points[0].len() < 30, "{} control points", result.control_points[0].len());
         assert!(result.max_deviation.unwrap() > 9e-4);
+    }
+
+    /// The control-point counts of every refit.
+    struct Counts(Vec<usize>);
+
+    impl Observer for Counts {
+        fn refit(&mut self, result: &FitResult, _: f64) -> bool {
+            self.0.push(result.num_control_points().iter().sum());
+            false
+        }
+    }
+
+    #[test]
+    fn the_search_adds_one_control_point_a_round_whatever_the_tolerance() {
+        let points = crate::airfoil::Naca4::new("2412", true).unwrap().points(60);
+        let options = ToleranceOptions { knot_placement: KnotPlacement::Uniform, ..Default::default() };
+        let mut ends = Vec::new();
+        for tolerance in [1e-3, 3e-4, 1e-4] {
+            let mut counts = Counts(Vec::new());
+            let result = fit_to_tolerance(std::slice::from_ref(&points), tolerance, 5, &options, &mut counts).unwrap();
+            assert!(result.success, "{tolerance}: {}", result.message);
+            // Up one at a time until the tolerance is met, then down.
+            let top = counts.0.iter().position(|&c| c == *counts.0.iter().max().unwrap()).unwrap();
+            assert!(counts.0[..=top].windows(2).all(|w| w[1] == w[0] + 1), "{tolerance}: {:?}", counts.0);
+            ends.push((counts.0[..=top].to_vec(), result.num_control_points()[0]));
+        }
+        // The fits do not depend on the tolerance, only where they stop: a
+        // tighter one goes on from where a looser one stopped.
+        for pair in ends.windows(2) {
+            let ((loose, loose_end), (tight, tight_end)) = (&pair[0], &pair[1]);
+            assert_eq!(loose[..], tight[..loose.len()]);
+            assert!(loose_end <= tight_end, "{loose_end} > {tight_end}");
+        }
     }
 
     #[test]

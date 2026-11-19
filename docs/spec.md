@@ -721,7 +721,7 @@ There is no `polish_knots`. The source ran it after a fit: a second optimization
 
 ### 9.6 Tolerance search (`fit_to_tolerance`)
 
-Signature: `fit_to_tolerance(points, tolerance, degree=5, *, continuity="G2", fix_junctions=True, fix_ends=True, start_tangent=None, end_tangent=None, smoothing=1e-7, regularization=1e-12, initial_knots=None, initial_control_points=None, initial_parameters=None, max_control_points=None, remove_knots=True, max_nfev=None, max_iterations=40, callback=None, knot_placement="free", should_stop=None, step_callback=None)`.
+Signature: `fit_to_tolerance(points, tolerance, degree=5, *, continuity="G2", fix_junctions=True, fix_ends=True, start_tangent=None, end_tangent=None, smoothing=1e-7, regularization=1e-12, initial_knots=None, initial_control_points=None, initial_parameters=None, max_control_points=None, remove_knots=True, max_nfev=None, max_iterations=40 [Rust: 200], callback=None, knot_placement="free", should_stop=None, step_callback=None)`.
 
 Validation (`ValueError`): tolerance finite and `> 0` (`"Tolerance must be positive."`); placement (`"knot_placement must be 'free' or 'uniform'."`); `max_iterations >= 1` (`"max_iterations must be at least 1."`); sections as in 8.10.
 
@@ -734,8 +734,8 @@ Validation (`ValueError`): tolerance finite and `> 0` (`"Tolerance must be posit
 7. Insertion, at most `max_iterations` rounds:
    1. `result = _refit(sections, knots, p, options, u, θ, max_nfev, step, free = placement is free)`; `u, θ, knots ← result's` `[D20]`; `devs = chain_deviations(D, result.curves())`; `dev = max(devs)`.
    2. Stopped, or `record("insert", result, dev)` true: `finish(result, dev, False, STOPPED)`.
-   3. `dev <= tolerance`: leave the loop. [Rust: otherwise, when `dev` is not below 0.99 times the lowest `dev` of the earlier rounds for 5 rounds in a row, `finish(best, its dev, False, "Tolerance not reached: 5 more rounds of control points did not lower the largest deviation, which stays near ({x:.4f}, {y:.4f}); the data may have a kink or noise there.")`, with `best` the round that set that lowest `dev` and `(x, y)` its worst data point. A kink or noise in the data (NACA 4-digit camber has a curvature jump at its maximum camber) holds the deviation where more control points cannot lower it, and Python added them until `max_iterations`.]
-   4. For each section whose located points have `max dev > tolerance`: `count` = its control points, `room = limit_s - count`; `new = new_knots(t_s, local, devs_s, tolerance, min_span)[:max(room, 0)]` with `min_span = 1e-4` for uniform placement and `max(1e-4, min_knot_gap)` for free placement `[D22]`; uniform with `room > 0`: `t_s = open_uniform_knots(p, count + max(len(new), 1))` (inserted); free with `new` non-empty: insert them.
+   3. `dev <= tolerance`: leave the loop. [Rust: otherwise, with `gained` the control points (summed over the sections) of the last round whose `dev` was at most 0.8 times that of the round before it that set `gained` (the first round sets it), when the count has grown by `max(10, 3·gained // 4)` since: `finish(closest, its dev, False, "Tolerance not reached: {added} more control points lowered the largest deviation by less than a fifth; it stays near ({x:.4f}, {y:.4f}); the data may have a kink or noise there.")`, with `closest` the round of lowest `dev` so far and `(x, y)` its worst data point. A kink or noise in the data (NACA 4-digit camber has a curvature jump at its maximum camber) holds the deviation where more control points cannot lower it, and Python added them until `max_iterations`. With uniform placement, when a round's `dev` is not below the lowest so far, the round is refitted from the start parameters (θ = None) as well and the closer fit kept; the next round starts from the parameters of `closest`.]
+   4. For each section whose located points have `max dev > tolerance`: `count` = its control points, `room = limit_s - count`; `new = new_knots(t_s, local, devs_s, tolerance, min_span)[:max(room, 0)]` [Rust: `[:min(max(room, 0), 1)]`, and uniform `count + 1`: one control point a round, so the fits do not depend on the tolerance and a looser one never ends with more control points] with `min_span = 1e-4` for uniform placement and `max(1e-4, min_knot_gap)` for free placement `[D22]`; uniform with `room > 0`: `t_s = open_uniform_knots(p, count + max(len(new), 1))` (inserted); free with `new` non-empty: insert them.
    5. Nothing inserted: `finish(result, dev, False, "Tolerance not reached: no knot span can be refined further.")`. [Rust: with free placement, when `min_knot_gap > 1e-4` and a section with room had a span holding a point beyond the tolerance that is narrower than `2·min_span`, the message is `"Tolerance not reached: the worst knot spans are as narrow as the knot spacing {min_knot_gap:g} allows."`, naming the setting that stopped the search.]
 
    All rounds used without meeting the tolerance: `finish(result, dev, False, "Tolerance not reached within max_iterations.")`.
@@ -839,7 +839,7 @@ Callback form `[D9]`: an application callback is always called as `callback(x, e
 
 Both modes return `RawOptimResult(x = flat control points, fun, nit, section_control_points as float tuples, parameters, success, message, section_knots as lists, rms_error)`.
 
-Tolerance mode never reads `smoothing_weight` (fixed 1e-7) and passes `fit_to_tolerance` defaults for `max_iterations` (40), `remove_knots`, `max_control_points`, `max_nfev`.
+Tolerance mode never reads `smoothing_weight` (fixed 1e-7) and passes `fit_to_tolerance` defaults for `max_iterations` (40) [Rust: 200], `remove_knots`, `max_control_points`, `max_nfev`.
 
 ### 11.4 Counters (`optimization/tracking.py`)
 

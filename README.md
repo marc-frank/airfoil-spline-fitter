@@ -119,10 +119,23 @@ Python results), and differs on purpose where the behaviour was a defect:
   already as narrow as the knot spacing allows says so ("the worst knot
   spans are as narrow as the knot spacing 0.05 allows") instead of Python's
   "no knot span can be refined further".
-- A tolerance search whose largest deviation drops by less than 1 % in
-  five rounds of added control points stops with the best fit and names the
+- A tolerance search adds one control point a round to each section beyond
+  the tolerance (with free knots: one knot, in its worst span); Python added
+  one per knot span holding a point beyond it, so the count nearly doubled
+  each round (6, 7, 9, 13, 21, 37, ...) and jumped past counts that meet the
+  tolerance. The fits no longer depend on the tolerance, only where the
+  search stops, so a looser tolerance never ends with more control points
+  than a tighter one: on Darkstar root (one section from 6, uniform) 1e-5
+  ends at 30 control points, where Python ended at 35. Uniform knots start
+  each refit from the parameters of the closest fit so far, and from the
+  start parameters too when that does not get closer: a poor fit's
+  parameters otherwise hold the following fits at its deviation.
+- A tolerance search whose largest deviation drops by less than a fifth
+  while 10 control points are added (or three quarters of the count of the
+  last fit that did drop, if more) stops with the closest fit and names the
   point where the deviation stays (a kink or noise in the data); Python kept
-  adding control points for all 40 rounds.
+  adding control points for all its rounds. The search has 200 rounds
+  instead of 40, as each adds one control point.
 - Along "Control points" the runs plot places a tolerance run at the count
   its search found, as the sweep plot does; Python placed every tolerance
   run at the start count they share. The column still shows the start count.
