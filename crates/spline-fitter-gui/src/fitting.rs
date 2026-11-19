@@ -273,7 +273,14 @@ impl App {
                     status += &format!(" | {}", r.summary_line());
                 }
                 if !outcome.raw.success && !outcome.cancelled {
-                    status += &format!(" | Solver did not converge: {}", outcome.raw.message);
+                    // A search that misses its tolerance converged; its
+                    // message says what stopped it.
+                    let message = &outcome.raw.message;
+                    if message.starts_with("Tolerance not reached") {
+                        status += &format!(" | {message}");
+                    } else {
+                        status += &format!(" | Solver did not converge: {message}");
+                    }
                 }
                 if kept {
                     status += " | The project keeps its finished run of these settings";

@@ -166,6 +166,9 @@ Python results), and differs on purpose where the behaviour was a defect:
   run at the start count they share. The column still shows the start count.
 - The runs plot ticks only whole numbers when every run's x value is one
   (control points, sections, degree); pyqtgraph also ticked 25.2, 25.4, ...
+- A search that misses its tolerance ends its status with its own message
+  ("Tolerance not reached: ..."); Python put "Solver did not converge:"
+  before it, though every fit of the search converged.
 - A tolerance fit of a section with too few points names the section and
   the counts ("Section 1 has 4 points, too few for its end conditions: they
   need 6 control points, so at least 7 points.").

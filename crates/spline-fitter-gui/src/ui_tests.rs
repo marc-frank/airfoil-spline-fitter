@@ -616,3 +616,29 @@ fn the_run_table_pages_and_follows_the_runs_plot() {
     h.run_steps(3);
     assert!(in_run_column(&h, "1"), "run 1 brought into view");
 }
+
+/// A search that misses its tolerance says what stopped it, not that the
+/// solver did not converge.
+#[test]
+fn a_missed_tolerance_is_not_a_solver_failure() {
+    let mut h = harness();
+    h.state_mut().new_naca_airfoil("2412", 41, true);
+    h.run_steps(2);
+    {
+        let app = h.state_mut();
+        app.settings.tolerance_goal = true;
+        app.settings.auto_tolerance = false;
+        app.settings.tolerance = 1e-7;
+        app.settings.grow = true;
+        // Free knots at most two to a section: no span can be split.
+        app.settings.knot_placement = spline_fitter::bspline_varpro::KnotPlacement::Free;
+        app.settings.knot_gap = 0.4;
+    }
+    h.run_steps(2);
+    h.state_mut().on_fit();
+    finish(&mut h);
+    let status = &h.state().status;
+    assert!(status.starts_with("Completed (VarPro LM): "), "{status}");
+    assert!(status.contains(" | Tolerance not reached: "), "{status}");
+    assert!(!status.contains("did not converge"), "{status}");
+}
