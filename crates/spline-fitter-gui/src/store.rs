@@ -1,5 +1,6 @@
-//! Settings kept between sessions: recent files, dialog choices, theme and
-//! motion. Nothing else persists; the sidebar starts at its defaults.
+//! Settings kept between sessions: recent files, dialog choices, theme,
+//! motion and the explorer's column order. Nothing else persists; the
+//! sidebar starts at its defaults.
 
 use std::path::PathBuf;
 

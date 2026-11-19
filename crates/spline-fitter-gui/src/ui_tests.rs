@@ -529,3 +529,17 @@ fn dialogs_focus_their_first_control() {
     assert_eq!(h.state().temperature, 0, "Enter pressed the focused Neutral");
     assert!(h.state().dialog.is_some(), "and not Close");
 }
+
+#[test]
+fn the_column_order_is_kept_by_name() {
+    use crate::explorer::ExplorerState;
+    let default = ExplorerState::default().column_names();
+    assert!(default.starts_with("Run,Optimizer,Goal,"), "{default}");
+    assert_eq!(ExplorerState::with_column_names("").column_names(), default);
+    // Named columns first, unknown and repeated names skipped, the rest after.
+    let state = ExplorerState::with_column_names("Max deviation,Control points,Gone,Max deviation,Run");
+    let names = state.column_names();
+    assert!(names.starts_with("Max deviation,Control points,Run,Optimizer,Goal,"), "{names}");
+    assert_eq!(names.split(',').count(), default.split(',').count());
+    assert_eq!(ExplorerState::with_column_names(&names).column_names(), names);
+}

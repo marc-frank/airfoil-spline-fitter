@@ -141,6 +141,26 @@ impl ExplorerState {
     pub fn forget_points(&mut self) {
         self.points = None;
     }
+
+    /// The explorer with its columns in the order `names` (the stored
+    /// [`column_names`](Self::column_names)); unknown names are skipped
+    /// and columns not named follow in their usual order.
+    pub fn with_column_names(names: &str) -> Self {
+        let mut order: Vec<usize> = Vec::new();
+        for name in names.split(',') {
+            if let Some(c) = COLUMNS.iter().position(|col| col.name == name).filter(|c| !order.contains(c)) {
+                order.push(c);
+            }
+        }
+        let rest: Vec<usize> = (0..COLUMNS.len()).filter(|c| !order.contains(c)).collect();
+        order.extend(rest);
+        ExplorerState { order, ..ExplorerState::default() }
+    }
+
+    /// The columns' names in the order shown, to keep between sessions.
+    pub fn column_names(&self) -> String {
+        self.order.iter().map(|&c| COLUMNS[c].name).collect::<Vec<_>>().join(",")
+    }
 }
 
 /// Run table: header and row heights, and what a header and a cell add to
@@ -586,6 +606,9 @@ impl App {
                     let to = order.iter().position(|&c| c == target).unwrap_or(0);
                     order.retain(|&c| c != column);
                     order.insert(to.min(order.len()), column);
+                    // The order is kept between sessions.
+                    let names = self.explorer.column_names();
+                    self.store.set_string("explorer/columns", &names);
                 }
             }
         }

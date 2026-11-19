@@ -136,6 +136,8 @@ Python results), and differs on purpose where the behaviour was a defect:
   point where the deviation stays (a kink or noise in the data); Python kept
   adding control points for all its rounds. The search has 200 rounds
   instead of 40, as each adds one control point.
+- The explorer keeps the column order you drag its headers into between
+  sessions (Python started from the default order every time).
 - The earlier runs of a tolerance search keep the loss history of their own
   refit; Python kept the history from the search's start in each, which
   made a project several megabytes per search. The search's final run

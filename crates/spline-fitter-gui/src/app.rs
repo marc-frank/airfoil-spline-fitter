@@ -76,6 +76,7 @@ impl App {
         let temperature = store.int("theme/temperature", 0).clamp(-100, 100) as i32;
         let scroll_ms = (store.int("motion/scroll_ms", DEFAULT_SCROLL_MS as i64).clamp(0, MAX_MOTION_MS as i64)) as u64;
         let zoom_ms = (store.int("motion/zoom_ms", DEFAULT_ZOOM_MS as i64).clamp(0, MAX_MOTION_MS as i64)) as u64;
+        let explorer = ExplorerState::with_column_names(&store.string("explorer/columns", ""));
         let settings = Settings::default();
         let mut app = App {
             palette: Palette::new(true, temperature),
@@ -101,7 +102,7 @@ impl App {
             loss: LossPlot::new(),
             comparison: ComparisonPlot::default(),
             projects: Projects::default(),
-            explorer: ExplorerState::default(),
+            explorer,
             explorer_visible: true,
             sidebar_rect: egui::Rect::NOTHING,
             reset_sidebar: false,
