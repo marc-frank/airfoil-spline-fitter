@@ -112,13 +112,7 @@ pub struct Fairness {
 /// Fairness of a chain. Curvature reversals smaller than 1e-5 of the
 /// largest curvature, or at the level of rounding noise, are not counted.
 pub fn fairness(curves: &[BSpline]) -> Fairness {
-    const MIN_AMPLITUDE: f64 = 1e-5;
-    let grids: Vec<Vec<f64>> = curves.iter().map(|c| span_grid(c, 64)).collect();
-    let kappas: Vec<Vec<f64>> = curves.iter().zip(&grids).map(|(c, g)| g.iter().map(|&u| c.curvature(u)).collect()).collect();
-    let max_curvature = kappas.iter().flatten().map(|k| k.abs()).fold(f64::NEG_INFINITY, f64::max);
-    let size = largest_extent(curves.iter().flat_map(|c| &c.control_points));
-    let noise = 1e3 * f64::EPSILON / if size == 0.0 { 1.0 } else { size };
-    let threshold = (MIN_AMPLITUDE * max_curvature).max(noise);
+    let (grids, kappas, threshold, max_curvature) = curvature_samples(curves);
     let curvature_extrema = kappas.iter().map(|k| count_turns(k, threshold)).sum();
     let (nodes, weights) = gauss_legendre(8);
     let mut roughness = 0.0;
@@ -139,6 +133,28 @@ pub fn fairness(curves: &[BSpline]) -> Fairness {
     Fairness { curvature_extrema, roughness, max_curvature_slope, max_curvature }
 }
 
+/// The curvature of every curve on a grid of 64 steps per knot span, the
+/// smallest reversal that counts as an extremum (a 1e-5 part of the
+/// largest curvature, above rounding) and that largest curvature.
+#[allow(clippy::type_complexity)]
+fn curvature_samples(curves: &[BSpline]) -> (Vec<Vec<f64>>, Vec<Vec<f64>>, f64, f64) {
+    const MIN_AMPLITUDE: f64 = 1e-5;
+    let grids: Vec<Vec<f64>> = curves.iter().map(|c| span_grid(c, 64)).collect();
+    let kappas: Vec<Vec<f64>> = curves.iter().zip(&grids).map(|(c, g)| g.iter().map(|&u| c.curvature(u)).collect()).collect();
+    let max_curvature = kappas.iter().flatten().map(|k| k.abs()).fold(f64::NEG_INFINITY, f64::max);
+    let size = largest_extent(curves.iter().flat_map(|c| &c.control_points));
+    let noise = 1e3 * f64::EPSILON / if size == 0.0 { 1.0 } else { size };
+    let threshold = (MIN_AMPLITUDE * max_curvature).max(noise);
+    (grids, kappas, threshold, max_curvature)
+}
+
+/// Where the curvature has the extrema [`fairness`] counts: `(curve,
+/// parameter)` of each.
+pub fn curvature_extrema(curves: &[BSpline]) -> Vec<(usize, f64)> {
+    let (grids, kappas, threshold, _) = curvature_samples(curves);
+    kappas.iter().zip(&grids).enumerate().flat_map(|(s, (k, g))| turns(k, threshold).into_iter().map(move |i| (s, g[i]))).collect()
+}
+
 /// `κ` and `dκ/ds` (the third derivative is zero below degree 3).
 fn slope_at(curve: &BSpline, u: f64) -> (f64, f64) {
     curve.curvature_and_slope(u)
@@ -146,39 +162,50 @@ fn slope_at(curve: &BSpline, u: f64) -> (f64, f64) {
 
 /// Interior extrema of a sequence, ignoring reversals smaller than `threshold`.
 pub fn count_turns(values: &[f64], threshold: f64) -> usize {
-    let mut turns = 0;
+    turns(values, threshold).len()
+}
+
+/// The indices of the interior extrema [`count_turns`] counts: each
+/// reversal larger than `threshold`, at the value it turns from.
+pub fn turns(values: &[f64], threshold: f64) -> Vec<usize> {
+    let mut turns = Vec::new();
     let mut direction = 0;
     let (mut lo, mut hi) = (values[0], values[0]);
-    for &v in &values[1..] {
+    let (mut lo_at, mut hi_at) = (0, 0);
+    for (i, &v) in values.iter().enumerate().skip(1) {
         match direction {
             0 => {
                 if v - lo > threshold {
                     direction = 1;
-                    hi = v;
+                    (hi, hi_at) = (v, i);
                 } else if hi - v > threshold {
                     direction = -1;
-                    lo = v;
+                    (lo, lo_at) = (v, i);
                 } else {
-                    lo = lo.min(v);
-                    hi = hi.max(v);
+                    if v < lo {
+                        (lo, lo_at) = (v, i);
+                    }
+                    if v > hi {
+                        (hi, hi_at) = (v, i);
+                    }
                 }
             }
             1 => {
                 if v > hi {
-                    hi = v;
+                    (hi, hi_at) = (v, i);
                 } else if hi - v > threshold {
-                    turns += 1;
+                    turns.push(hi_at);
                     direction = -1;
-                    lo = v;
+                    (lo, lo_at) = (v, i);
                 }
             }
             _ => {
                 if v < lo {
-                    lo = v;
+                    (lo, lo_at) = (v, i);
                 } else if v - lo > threshold {
-                    turns += 1;
+                    turns.push(lo_at);
                     direction = 1;
-                    hi = v;
+                    (hi, hi_at) = (v, i);
                 }
             }
         }
@@ -221,6 +248,27 @@ pub fn junctions(curves: &[BSpline]) -> Vec<JunctionMeasure> {
 mod tests {
     use super::*;
 
+    /// The extrema found are the ones the fairness report counts, at the
+    /// curvature's turns.
+    #[test]
+    fn curvature_extrema_are_where_the_report_counts_them() {
+        // A wavy curve: its curvature turns several times.
+        let points: Vec<Vec2> = (0..12).map(|i| Vec2::new(i as f64 / 11.0, if i % 3 == 0 { 0.05 } else { 0.0 })).collect();
+        let curve = BSpline::uniform(5, points).unwrap();
+        let curves = [curve.clone()];
+        let found = curvature_extrema(&curves);
+        assert!(found.len() >= 4, "{found:?}");
+        assert_eq!(found.len(), fairness(&curves).curvature_extrema);
+        let step = 1e-4;
+        for &(s, u) in &found {
+            assert_eq!(s, 0);
+            // Not a monotone stretch: the curvature turns within a step of it.
+            let k = |v: f64| curve.curvature(v.clamp(0.0, 1.0));
+            let (before, at, after) = (k(u - 0.02), k(u), k(u + 0.02));
+            assert!((at - before) * (after - at) <= step, "{u}: {before} {at} {after}");
+        }
+    }
+
     #[test]
     fn projects_onto_a_line() {
         let line = BSpline::uniform(3, (0..6).map(|i| Vec2::new(i as f64 / 5.0, 0.0)).collect()).unwrap();
@@ -235,5 +283,7 @@ mod tests {
     fn counts_turns() {
         assert_eq!(count_turns(&[0.0, 1.0, 0.0, 1.0, 0.0], 0.5), 3);
         assert_eq!(count_turns(&[0.0, 0.1, 0.0], 0.5), 0);
+        // Each at the value it turns from.
+        assert_eq!(turns(&[0.0, 1.0, 0.9, 1.2, 0.0, 0.2, 1.0], 0.5), vec![3, 4]);
     }
 }

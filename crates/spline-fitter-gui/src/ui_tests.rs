@@ -717,6 +717,27 @@ fn a_missed_tolerance_is_not_a_solver_failure() {
     shot(&mut h, "m_missed_tolerance");
 }
 
+/// The Curvature extrema toggle marks on the curve the extrema the fit
+/// report counts, and is kept with the other display choices.
+#[test]
+fn the_curvature_extrema_are_marked() {
+    use egui_kittest::kittest::Queryable;
+    let mut h = harness();
+    h.state_mut().new_naca_airfoil("2412", 41, true);
+    h.run_steps(2);
+    h.state_mut().on_fit();
+    finish(&mut h);
+    assert!(h.state().main_plot.extrema.is_empty(), "off by default");
+    h.get_by_label("Curvature extrema").click();
+    h.run_steps(3);
+    let app = h.state();
+    let count = app.fit.as_ref().unwrap().report.as_ref().unwrap().fairness.as_ref().unwrap().curvature_extrema;
+    assert!(count > 0);
+    assert_eq!(app.main_plot.extrema.len(), count);
+    assert!(app.store.bool("display/extrema", false));
+    shot(&mut h, "x_curvature_extrema");
+}
+
 /// Zoomed with the wheel, a plot stops following its data; the autoscale
 /// button in its lower left corner, or a double-click, shows the data again.
 #[test]
@@ -740,10 +761,9 @@ fn plots_autoscale() {
     zoom(&mut h);
     assert!(!h.state().main_plot.view.follow, "zoomed");
     shot(&mut h, "z_autoscale_button");
-    // The button, in the plot's lower left corner, points.
-    h.input_mut().events.push(egui::Event::PointerMoved(egui::pos2(484.0, 512.0)));
-    h.run_steps(1);
-    click_at(&mut h, 484.0, 512.0);
+    // The button, in the plot's lower left corner.
+    let button = h.state().main_plot.view.autoscale_at.expect("an autoscale button");
+    click_at(&mut h, button.x, button.y);
     h.run_steps(2);
     assert!(h.state().main_plot.view.follow, "the button autoscales");
     // A double-click does the same.

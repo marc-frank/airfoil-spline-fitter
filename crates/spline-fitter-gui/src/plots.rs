@@ -38,6 +38,9 @@ pub struct View {
     pub follow: bool,
     /// The data bounds last fitted: what autoscale shows again.
     home: Option<PlotBounds>,
+    /// Where the autoscale button was last drawn.
+    #[cfg(test)]
+    pub autoscale_at: Option<egui::Pos2>,
     /// Width of the left axis's labels and height of the bottom axis's.
     left_text: f32,
     bottom_text: f32,
@@ -45,7 +48,16 @@ pub struct View {
 
 impl Default for View {
     fn default() -> Self {
-        View { glide: None, pending: None, follow: true, home: None, left_text: 30.0, bottom_text: 18.0 }
+        View {
+            glide: None,
+            pending: None,
+            follow: true,
+            home: None,
+            #[cfg(test)]
+            autoscale_at: None,
+            left_text: 30.0,
+            bottom_text: 18.0,
+        }
     }
 }
 
@@ -200,11 +212,16 @@ fn axis_ticks(
     }
 }
 
+/// Where the autoscale button sits: 4 px in from the frame's lower left.
+fn autoscale_rect(frame: Rect) -> Rect {
+    let side = size::CONTROL_HEIGHT - 4.0;
+    Rect::from_min_size(egui::pos2(frame.left() + 4.0, frame.bottom() - 4.0 - side), EVec2::splat(side))
+}
+
 /// The autoscale button in the lower left corner of `frame`; true when
 /// clicked.
 fn autoscale_button(ui: &mut Ui, p: &Palette, id: &str, frame: Rect) -> bool {
-    let side = size::CONTROL_HEIGHT - 4.0;
-    let rect = Rect::from_min_size(egui::pos2(frame.left() + 4.0, frame.bottom() - 4.0 - side), EVec2::splat(side));
+    let rect = autoscale_rect(frame);
     let response = ui.interact(rect, ui.make_persistent_id((id, "autoscale")), egui::Sense::click());
     let radius = egui::CornerRadius::same(size::RADIUS);
     let fill = if response.hovered() { p.field_hover } else { p.field };
@@ -337,6 +354,10 @@ pub fn show_plot(
     }
     // Zoomed or panned: the autoscale button in the plot's lower left
     // corner, as pyqtgraph's "A".
+    #[cfg(test)]
+    {
+        view.autoscale_at = (!view.follow).then(|| autoscale_rect(frame).center());
+    }
     if !view.follow && autoscale_button(ui, p, id, frame) {
         view.autoscale();
         ui.ctx().request_repaint();
@@ -603,12 +624,16 @@ pub struct MainPlot {
     pub show_knots: bool,
     pub comb_on: bool,
     pub comb: CombSettings,
+    /// Mark the curvature extrema the report counts.
+    pub show_extrema: bool,
     pub deviation_on: bool,
     pub deviation_height: f64,
     data: Vec<Vec2>,
     curves: Vec<BSpline>,
     sampled: Vec<Vec<Vec2>>,
     knots: Vec<Vec2>,
+    /// The curvature extrema with their section.
+    pub(crate) extrema: Vec<(usize, Vec2)>,
     comb_strokes: Option<ParityStrokes>,
     deviation: Option<Deviation>,
     tolerance: Option<f64>,
@@ -624,12 +649,14 @@ impl Default for MainPlot {
             show_knots: false,
             comb_on: false,
             comb: CombSettings::default(),
+            show_extrema: false,
             deviation_on: false,
             deviation_height: 0.05,
             data: vec![],
             curves: vec![],
             sampled: vec![],
             knots: vec![],
+            extrema: vec![],
             comb_strokes: None,
             deviation: None,
             tolerance: None,
@@ -653,6 +680,7 @@ impl MainPlot {
         self.sampled.clear();
         self.knots.clear();
         self.comb_strokes = None;
+        self.extrema.clear();
         self.deviation = None;
         self.feet = None;
     }
@@ -664,8 +692,20 @@ impl MainPlot {
         self.curves = curves;
         self.tolerance = tolerance;
         self.refresh_knots();
+        self.refresh_extrema();
         self.refresh_comb();
         self.refresh_deviation();
+    }
+
+    pub fn refresh_extrema(&mut self) {
+        self.extrema = if self.show_extrema && !self.curves.is_empty() {
+            spline_fitter::bspline_varpro::diagnostics::curvature_extrema(&self.curves)
+                .into_iter()
+                .map(|(s, u)| (s, self.curves[s].point(u)))
+                .collect()
+        } else {
+            vec![]
+        };
     }
 
     pub fn refresh_knots(&mut self) {
@@ -743,6 +783,11 @@ impl MainPlot {
                 c.polyline(section.iter().map(xy), Stroke::new(size::CURVE_WIDTH, INK), false);
             }
             c.markers(self.knots.iter().map(xy), Marker::Diamond, size::KNOT_SIZE, p.knots, Stroke::new(1.0, p.canvas));
+            // Derived: the curvature extrema, in their section's comb colour.
+            for parity in 0..2 {
+                let points = self.extrema.iter().filter(|(s, _)| s % 2 == parity).map(|(_, q)| xy(q));
+                c.markers(points, Marker::Circle, size::EXTREMUM_SIZE, p.comb(parity), Stroke::new(2.0, p.canvas));
+            }
             // Nothing loaded yet: the ways to start.
             if self.data.is_empty() {
                 empty_hint(c, p, EMPTY_PLOT_HINT);

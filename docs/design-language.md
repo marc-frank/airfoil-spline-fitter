@@ -121,6 +121,7 @@ Named by what they draw, never by hue.
 | `INK` | solid line, `size::CURVE_WIDTH` | The fitted spline (the batten) |
 | `construction` | dashed pencil grey line, hollow squares | Control polygon and control points (CAD convention: squares) |
 | `knots` | sulfur diamonds with a canvas outline | Knots (the ducks that hold the batten) |
+| `comb_even` / `comb_odd` dots | dots `size::EXTREMUM_SIZE` in the section's comb color, ringed in the canvas color | Curvature extrema (derived: where the comb turns) |
 | `comb_even` | sky blue | Comb on the first, third, ... spline section (a single section is all sky blue) |
 | `comb_odd` | rose | Comb on the second, fourth, ... spline section |
 | `deviation(outside)` | the comb's colors by side: rose outside the curve, sky blue inside; faint whiskers drawn outward from the curve, an envelope through their tips with a dot at each tip | Size of each data point's deviation from the curve, magnified along the outward normal; the tolerance is one faint dashed `construction` line outside the curve, at the height setting |

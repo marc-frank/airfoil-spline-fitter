@@ -248,6 +248,8 @@ pub mod size {
     pub const DATA_SIZE: f32 = 4.0;
     pub const CONTROL_SIZE: f32 = 6.0;
     pub const KNOT_SIZE: f32 = 8.0;
+    /// A curvature extremum on the airfoil plot (ringed in the canvas colour).
+    pub const EXTREMUM_SIZE: f32 = 8.0;
     pub const TRACE_POINT: f32 = 4.0;
     pub const MARKER_SIZE: f32 = 13.0;
 }

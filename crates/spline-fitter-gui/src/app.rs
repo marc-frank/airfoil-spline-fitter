@@ -155,6 +155,7 @@ impl App {
         let m = &self.main_plot;
         Display {
             knots: m.show_knots,
+            extrema: m.show_extrema,
             comb: m.comb_on,
             comb_quantity: m.comb.quantity,
             comb_height: m.comb.height,
@@ -175,6 +176,7 @@ impl App {
         let s = &self.store;
         let m = &mut self.main_plot;
         m.show_knots = s.bool("display/knots", d.knots);
+        m.show_extrema = s.bool("display/extrema", d.extrema);
         m.comb_on = s.bool("display/comb", d.comb);
         m.comb.quantity = (s.int("display/comb_quantity", d.comb_quantity as i64).max(0) as usize).min(crate::overlays::QUANTITIES.len() - 1);
         m.comb.height = s.float("display/comb_height", d.comb_height).max(0.0);
@@ -210,6 +212,7 @@ impl App {
         }
         let s = &mut self.store;
         s.set_bool("display/knots", d.knots);
+        s.set_bool("display/extrema", d.extrema);
         s.set_bool("display/comb", d.comb);
         s.set_int("display/comb_quantity", d.comb_quantity as i64);
         s.set_float("display/comb_height", d.comb_height);
@@ -691,6 +694,11 @@ impl App {
                 self.main_plot.refresh_knots();
             }
             crate::dialogs::comb_toggle(self, ui);
+            let tip = "Mark where the curvature has a maximum or a minimum,\nthe curvature extrema the fit report counts.";
+            if widgets::toggle_button(ui, &p, "Curvature extrema", self.main_plot.show_extrema, tip).clicked() {
+                self.main_plot.show_extrema = !self.main_plot.show_extrema;
+                self.main_plot.refresh_extrema();
+            }
             crate::dialogs::deviation_toggle(self, ui);
             wraps = ui.available_width() < live_width + size::GAP;
             if !wraps {
@@ -729,6 +737,7 @@ impl App {
 #[derive(Debug, Clone, PartialEq)]
 struct Display {
     knots: bool,
+    extrema: bool,
     comb: bool,
     comb_quantity: usize,
     comb_height: f64,
