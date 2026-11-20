@@ -186,6 +186,12 @@ Python results), and differs on purpose where the behaviour was a defect:
   RMS deviation. The runs plot plots the RMS deviation by default, a number
   in the filter (">1e-5") compares it, and the solver's error is called
   RMS error wherever it shows (status bar, convergence plot, run details).
+- Every plot autoscales as pyqtgraph's do: it follows its data until you
+  zoom or pan; then a button in its lower left corner (the corners of a
+  frame, where pyqtgraph shows "A") or a double-click shows all the data
+  again and follows it. Before, a double-click only set the airfoil and
+  runs plots to follow without fitting them, so only the convergence and
+  shape plots rescaled.
 - Ctrl+Enter fits (also from a field you are typing in: the typed value
   counts), Esc cancels a running fit; Python had no keys for either.
 - The sidebar hides to a rail as the explorer does (the chevron on its Data

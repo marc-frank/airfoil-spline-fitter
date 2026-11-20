@@ -18,7 +18,7 @@ use spline_fitter::{BSpline, Vec2};
 
 use crate::axes;
 use crate::overlays::{comb, deviation, Deviation, ParityStrokes, Strokes, OUTSIDE};
-use crate::theme::{alpha, size, typeface, Palette, INK, TEETH_ALPHA};
+use crate::theme::{alpha, size, typeface, Glyph, Palette, INK, TEETH_ALPHA};
 
 /// A running zoom glide.
 struct Glide {
@@ -36,6 +36,8 @@ pub struct View {
     pending: Option<PlotBounds>,
     /// Fit the range to the data when it changes, until the user zooms or pans.
     pub follow: bool,
+    /// The data bounds last fitted: what autoscale shows again.
+    home: Option<PlotBounds>,
     /// Width of the left axis's labels and height of the bottom axis's.
     left_text: f32,
     bottom_text: f32,
@@ -43,7 +45,7 @@ pub struct View {
 
 impl Default for View {
     fn default() -> Self {
-        View { glide: None, pending: None, follow: true, left_text: 30.0, bottom_text: 18.0 }
+        View { glide: None, pending: None, follow: true, home: None, left_text: 30.0, bottom_text: 18.0 }
     }
 }
 
@@ -58,8 +60,19 @@ impl View {
     pub fn fit(&mut self, bounds: Option<PlotBounds>) {
         if let Some(b) = bounds {
             self.pending = Some(b);
+            self.home = Some(b);
         }
         self.glide = None;
+    }
+
+    /// Autoscale (pyqtgraph's "A" button, or a double-click): the data in
+    /// view again, and followed as it changes.
+    pub fn autoscale(&mut self) {
+        self.follow = true;
+        self.glide = None;
+        if let Some(b) = self.home {
+            self.pending = Some(b);
+        }
     }
 }
 
@@ -187,6 +200,23 @@ fn axis_ticks(
     }
 }
 
+/// The autoscale button in the lower left corner of `frame`; true when
+/// clicked.
+fn autoscale_button(ui: &mut Ui, p: &Palette, id: &str, frame: Rect) -> bool {
+    let side = size::CONTROL_HEIGHT - 4.0;
+    let rect = Rect::from_min_size(egui::pos2(frame.left() + 4.0, frame.bottom() - 4.0 - side), EVec2::splat(side));
+    let response = ui.interact(rect, ui.make_persistent_id((id, "autoscale")), egui::Sense::click());
+    let radius = egui::CornerRadius::same(size::RADIUS);
+    let fill = if response.hovered() { p.field_hover } else { p.field };
+    ui.painter().rect_filled(rect, radius, fill);
+    ui.painter().rect_stroke(rect, radius, Stroke::new(1.0, if response.hovered() { p.rule_strong } else { p.rule }), egui::StrokeKind::Inside);
+    Glyph::Autoscale.paint(ui.painter(), rect.center(), size::GLYPH, if response.hovered() { p.text } else { p.text_2 });
+    if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    response.on_hover_text("Autoscale: show all the data again (or double-click the plot)").clicked()
+}
+
 /// Shows a framed plot and returns its response; `paint` draws the items.
 pub fn show_plot(
     ui: &mut Ui,
@@ -302,7 +332,14 @@ pub fn show_plot(
         view.follow = false;
     }
     if response.response.double_clicked() {
-        view.follow = true;
+        view.autoscale();
+        ui.ctx().request_repaint();
+    }
+    // Zoomed or panned: the autoscale button in the plot's lower left
+    // corner, as pyqtgraph's "A".
+    if !view.follow && autoscale_button(ui, p, id, frame) {
+        view.autoscale();
+        ui.ctx().request_repaint();
     }
     let transform = response.transform;
     let frame = *transform.frame();
@@ -898,9 +935,10 @@ pub fn shape_plot(ui: &mut Ui, p: &Palette, shape: &spline_fitter::bspline_varpr
     let pct = |xs: &[f64], ys: &[f64]| xs.iter().zip(ys).map(|(x, y)| [100.0 * x, 100.0 * y]).collect::<Vec<_>>();
     let thickness = pct(&shape.stations, &shape.thickness);
     let camber = pct(&shape.stations, &shape.camber);
-    if view.follow && view.pending.is_none() {
+    // Fitted to the chart until zoomed or panned; a double-click or the
+    // autoscale button fits it again.
+    if view.follow {
         view.fit(bounds_of(thickness.iter().chain(camber.iter()).copied()));
-        view.follow = false;
     }
     let axes = Axes {
         x_label: "Chord (%)",
@@ -965,5 +1003,18 @@ mod tests {
         view.reset();
         assert!(view.follow);
         assert_eq!((view.left_text, view.bottom_text), (20.0, 18.0));
+    }
+
+    /// Autoscale shows the data last fitted again and follows it.
+    #[test]
+    fn autoscale_shows_the_data_again() {
+        let mut view = View::default();
+        let data = PlotBounds::from_min_max([0.0, -0.1], [1.0, 0.1]);
+        view.fit(Some(data));
+        view.pending = None;
+        view.follow = false;
+        view.autoscale();
+        assert!(view.follow);
+        assert_eq!(view.pending, Some(data));
     }
 }

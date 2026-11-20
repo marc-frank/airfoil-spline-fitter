@@ -245,7 +245,7 @@ takes the `Palette`; none sets colors of its own.
 | Choice of 2-4 short options | `widgets::segmented` (not a combo box) in the sidebar and dialogs; the plot toolbars keep compact combo boxes (`widgets::combo`) |
 | Numeric range sweep | `widgets::sweep_toggle` beside the field and its end field |
 | Numbers spanning decades | `widgets::scientific_field` |
-| Plot | `plots::show_plot` with its `Axes`; items painted through the `Canvas` in palette colors, in drawing order |
+| Plot | `plots::show_plot` with its `Axes`; items painted through the `Canvas` in palette colors, in drawing order. Zoomed or panned, a `Glyph::Autoscale` button (a field-coloured square, `CONTROL_HEIGHT - 4` wide) in the plot frame's lower left corner fits it to its data again, as a double-click does |
 | Dialog | `dialogs::modal` with form rows and `dialogs::buttons` (reset role left, then accept, then reject) |
 | Question | `dialogs::Confirm`: one paragraph of text, the buttons at the right (accept, another choice, Cancel); never the system's message box |
 | Report | the Report view of the bottom-left block: rows with `ok`/`warn` notes in the status colors; the Max deviation readout under Fit spline in `warn` when the fit missed its tolerance; the thickness and camber chart below (`plots::shape_plot`: thickness a `trace` line, the camber dashed `construction`, each maximum a dot ringed in the canvas color) |

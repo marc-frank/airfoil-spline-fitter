@@ -1965,7 +1965,7 @@ Title `Theme`, deleted on close, form with 16 px padding:
 
 #### 19.20.2 Smooth zoom (`SmoothViewBox`)
 
-On a wheel event (optionally restricted to one axis, honouring mouse-enabled axes): `log = ln(1.02) · delta · wheelScaleFactor` (pyqtgraph's own factor); if a glide is running, add what remains of it (`total · (1 - done)`); centre = the cursor in view coordinates. Animate progress 0→1 over `ZOOM_MS` with out-cubic easing; each step scales by `exp(total · (progress - done))` about the centre and records the range; if the view range changed by anything else meanwhile (auto-range, panning), the glide stops. Duration 0 applies the whole zoom at once. The event is accepted and reported as a manual range change.
+On a wheel event (optionally restricted to one axis, honouring mouse-enabled axes): `log = ln(1.02) · delta · wheelScaleFactor` (pyqtgraph's own factor); if a glide is running, add what remains of it (`total · (1 - done)`); centre = the cursor in view coordinates. Animate progress 0→1 over `ZOOM_MS` with out-cubic easing; each step scales by `exp(total · (progress - done))` about the centre and records the range; if the view range changed by anything else meanwhile (auto-range, panning), the glide stops. Duration 0 applies the whole zoom at once. The event is accepted and reported as a manual range change. [Rust: every plot keeps the data bounds it last fitted; zooming or panning stops it following its data, and then an autoscale button (pyqtgraph's `A`, drawn as the four corners of a frame, tooltip `Autoscale: show all the data again (or double-click the plot)`) sits in the lower left corner of the plot frame; it, or a double-click, shows those bounds again and follows the data.]
 
 #### 19.20.3 Scrolling and zooming dialog
 

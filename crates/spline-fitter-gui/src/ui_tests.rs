@@ -717,6 +717,43 @@ fn a_missed_tolerance_is_not_a_solver_failure() {
     shot(&mut h, "m_missed_tolerance");
 }
 
+/// Zoomed with the wheel, a plot stops following its data; the autoscale
+/// button in its lower left corner, or a double-click, shows the data again.
+#[test]
+fn plots_autoscale() {
+    let mut h = harness();
+    h.state_mut().new_naca_airfoil("2412", 41, true);
+    h.run_steps(3);
+    let centre = egui::pos2(880.0, 380.0);
+    let zoom = |h: &mut Harness<'static, App>| {
+        h.input_mut().events.push(egui::Event::PointerMoved(centre));
+        h.run_steps(1);
+        h.input_mut().events.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: egui::vec2(0.0, 3.0),
+            modifiers: Default::default(),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Wheel,
+        });
+        h.run_steps(30);
+    };
+    zoom(&mut h);
+    assert!(!h.state().main_plot.view.follow, "zoomed");
+    shot(&mut h, "z_autoscale_button");
+    // The button, in the plot's lower left corner, points.
+    h.input_mut().events.push(egui::Event::PointerMoved(egui::pos2(484.0, 512.0)));
+    h.run_steps(1);
+    click_at(&mut h, 484.0, 512.0);
+    h.run_steps(2);
+    assert!(h.state().main_plot.view.follow, "the button autoscales");
+    // A double-click does the same.
+    zoom(&mut h);
+    assert!(!h.state().main_plot.view.follow);
+    double_click_at(&mut h, centre.x, centre.y);
+    h.run_steps(2);
+    assert!(h.state().main_plot.view.follow, "a double-click autoscales");
+}
+
 /// The tolerance can limit the RMS deviation instead of the largest: the
 /// sidebar names the field for it, and the search, its folder and the
 /// readout follow.
