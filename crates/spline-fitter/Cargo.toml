@@ -1,0 +1,17 @@
+[package]
+name = "spline-fitter"
+version = "2.0.0"
+description = "B-spline fitting of airfoil coordinates: file formats, fitting, reports and projects"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bspline-varpro = { path = "../bspline-varpro" }
+nalgebra.workspace = true
+serde_json.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+uuid = { version = "1", features = ["v4"] }
+regex = "1"
+encoding_rs = "0.8"
+tempfile = "3"

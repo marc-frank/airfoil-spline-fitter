@@ -1,0 +1,21 @@
+[package]
+name = "bspline-varpro-py"
+version = "3.0.0"
+description = "Python bindings of bspline-varpro: airfoil B-spline fitting from scripts and notebooks"
+publish = false
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+# The Python module: `import bspline_varpro`
+name = "bspline_varpro"
+crate-type = ["cdylib"]
+test = false
+doctest = false
+
+[dependencies]
+varpro = { package = "bspline-varpro", path = "../bspline-varpro" }
+app = { package = "spline-fitter", path = "../spline-fitter" }
+# The stable ABI: one build serves Python 3.9 and every later version
+pyo3 = { version = "0.30", features = ["extension-module", "abi3-py39"] }

@@ -1,0 +1,28 @@
+[package]
+name = "spline-fitter-gui"
+version = "2.0.0"
+description = "Airfoil Spline Fitter desktop application"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "spline-fitter"
+path = "src/main.rs"
+
+[dependencies]
+spline-fitter = { path = "../spline-fitter" }
+eframe = { version = "0.37", default-features = false, features = ["default_fonts", "glow", "persistence", "wayland", "x11"] }
+egui_plot = "0.38"
+egui_extras = "0.37"
+rfd = "0.18"
+arboard = { version = "3.7", default-features = false }
+rodio = { version = "0.23", default-features = false, features = ["playback"] }
+sys-locale = "0.3"
+dirs = "7"
+serde_json.workspace = true
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[dev-dependencies]
+egui_kittest = { version = "0.37", features = ["eframe", "wgpu", "snapshot"] }
+tempfile = "3"

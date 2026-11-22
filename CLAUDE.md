@@ -1,29 +1,37 @@
 # Spline Fitter
 
+A Rust workspace: `crates/bspline-varpro` (fitting library), `crates/spline-fitter`
+(application core), `crates/spline-fitter-gui` (egui desktop application),
+`crates/bspline-varpro-py` (the Python module `bspline_varpro`, PyO3; keep it in
+step when the library's or the app's fitting API changes).
+[docs/spec.md](docs/spec.md) specifies the behaviour; README.md lists where the
+Rust version deliberately differs from it.
+
 ## GUI design language
 
 The GUI follows the **Loft** design language: read
 [docs/design-language.md](docs/design-language.md) before adding or changing
-anything in `src/spline_fitter/gui/`.
+anything in `crates/spline-fitter-gui/src/`.
 
-- All colors, fonts, sizes and stylesheets live in `src/spline_fitter/gui/theme.py`.
-  Other modules use its tokens (`Palette`, `Ink`, `Z`, `Size`, `Type`) and helpers
-  (`style_plot`, `label_plot`, `pen`, `brush`, `text_browser`), and style widgets by
-  object name (`PrimaryButton`, `SectionCaption`, `Muted`, `Readout`, ...), never with
-  `setStyleSheet`, hex colors or RGB tuples.
-- Orange ink is reserved for the fitted curve, the one primary button and the
-  current-run marker. The chrome is grey; selection is a lighter grey. Every input and
-  button is `Size.CONTROL_HEIGHT` tall.
-- The user chooses light/dark/system and a cool-to-warm temperature (View > Theme...),
-  applied live. Greys are lightness values in `GREY_LIGHTNESS`, never hex; read tokens at
-  draw time, and restyle on `theme_changed` whatever the stylesheet does not cover.
-- Labels: sentence case, spelled out (no "pts"), no trailing colons; captions uppercase;
-  no emoji.
-- `tests/test_design_language.py` enforces this; run it after GUI changes.
+- All colors, fonts and sizes live in `crates/spline-fitter-gui/src/theme.rs`
+  (`Palette`, `size`, `typeface`, `Glyph`). Other modules take colors from the
+  `Palette` they are given and never write `Color32::from_rgb` or hex colors.
+- Orange ink (`theme::INK`) is reserved for the fitted curve, the one primary
+  button and the current-run marker. The chrome is grey; selection is a
+  lighter grey. Every input and button is `size::CONTROL_HEIGHT` tall.
+- The user chooses light/dark/system and a cool-to-warm temperature (View >
+  Theme...), applied live. Greys are lightness values in `GREY_LIGHTNESS`,
+  never hex; read the palette at draw time.
+- Labels: sentence case, spelled out (no "pts"), no trailing colons; captions
+  uppercase; no emoji.
+- `crates/spline-fitter-gui/tests/design_language.rs` checks this.
 
 ## Running
 
 ```bash
-python -m pytest
-python -m src.spline_fitter
+cargo test --workspace
+cargo run --release
 ```
+
+GUI tests drive the real window headlessly (`src/ui_tests.rs`, egui_kittest);
+set `SPLINE_FITTER_SHOTS` to a folder to save screenshots of each step.
