@@ -1,7 +1,9 @@
 # Spline Fitter
 
 A Rust workspace: `crates/bspline-varpro` (fitting library), `crates/spline-fitter`
-(application core), `crates/spline-fitter-gui` (egui desktop application).
+(application core), `crates/spline-fitter-gui` (egui desktop application),
+`crates/bspline-varpro-py` (the Python module `bspline_varpro`, PyO3; keep it in
+step when the library's or the app's fitting API changes).
 [docs/spec.md](docs/spec.md) specifies the behaviour; README.md lists where the
 Rust version deliberately differs from it.
 

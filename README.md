@@ -57,6 +57,53 @@ minutes and are ignored by default:
 cargo test --release -p bspline-varpro -- --ignored
 ```
 
+Building the workspace needs Python 3.9 or later installed, for the Python
+module's crate.
+
+## Python
+
+The fitting library is also a Python module, `bspline_varpro`, built from
+the same Rust code ([`crates/bspline-varpro-py`](crates/bspline-varpro-py)).
+Install it into the active Python with [maturin](https://www.maturin.rs):
+
+```bash
+pip install maturin
+cd crates/bspline-varpro-py
+maturin develop --release
+```
+
+or build a wheel with `maturin build --release`. One wheel serves Python
+3.9 and every later version.
+
+```python
+import bspline_varpro as bv
+
+name, points, decimals = bv.read_airfoil("naca2412.dat")
+fit = bv.fit_airfoil(points, decimals=decimals)   # as the app fits it
+print(fit)                       # control points, RMS error, max deviation
+report = fit.measure(points)     # deviation, curvature, junctions, LE radius,
+                                 # max thickness and camber
+fit.export("naca2412.step", scale=100.0, units="mm", merge=True)
+```
+
+| Function | Does |
+|---|---|
+| `read_airfoil(path)` | `(name, points, decimals)` of a Selig or Lednicer file |
+| `naca4(code, n_per_side=81)` | Points of a NACA 4-digit section |
+| `split_sections(points, count=2)` | Sections sharing their junction points |
+| `default_tolerance(points, decimals=None)` | The tolerance the data support |
+| `fit_airfoil(points, tolerance=None, ...)` | The app's tolerance search with its defaults |
+| `fit(sections, control_points, ...)` | A fit with fixed control-point counts |
+| `fit_to_tolerance(sections, tolerance, ...)` | The library's free-knot tolerance search |
+
+A `Fit` holds `control_points`, `knots`, `degree`, `rms_error`,
+`max_deviation`, `success` and `message`, and has `evaluate(u)`,
+`resample(n)`, `deviations(points)`, `measure(points)` and
+`export(path, ...)`. Points come back as NumPy arrays; `continuity` is one
+spec for all junctions (`"G2"`) or one per junction (`["G2", "C1"]` or
+`"G2, C1"`). Tests: `pytest crates/bspline-varpro-py/tests` after
+`maturin develop`.
+
 ## Workspace
 
 | Crate | Purpose |
@@ -64,6 +111,7 @@ cargo test --release -p bspline-varpro -- --ignored
 | [`bspline-varpro`](crates/bspline-varpro) | The fitting library: knots and basis, variable projection, Levenberg-Marquardt, tolerance search, free knots, diagnostics, airfoil helpers, STEP/IGES/DXF export. No GUI. |
 | [`spline-fitter`](crates/spline-fitter) | The application core: airfoil and spline files, section splitting, fit settings, the VarPro and Direct LSQ adapters, the fit report, project files, batch naming, optimizer logs. |
 | [`spline-fitter-gui`](crates/spline-fitter-gui) | The desktop application (egui): sidebar, plots, explorer, dialogs. |
+| [`bspline-varpro-py`](crates/bspline-varpro-py) | The Python module `bspline_varpro` (PyO3): reading, fitting, measuring and exporting from scripts and notebooks. |
 
 ## Spline file format
 

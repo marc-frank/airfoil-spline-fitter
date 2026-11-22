@@ -1,0 +1,14 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "bspline-varpro"
+description = "CAD-grade B-spline fitting of airfoils by variable projection (Rust, with Python bindings)"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+dynamic = ["version"]
+dependencies = ["numpy"]
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
