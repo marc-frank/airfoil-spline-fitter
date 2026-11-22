@@ -82,6 +82,7 @@ values are OKLab (dark / light).
 | `text_3` | 0.686 / 0.580 | Captions, hints, disabled text |
 | `select` | 0.405 / 0.895 | Checked toggles, selected rows, menu highlight |
 | `select_line` | 0.609 / 0.600 | Focus and checked borders |
+| `text_select` | 0.520 / 0.820 | Behind selected text in a field: clearly off the field, the text still readable on it |
 
 Fixed colors, the same in both modes:
 
@@ -221,6 +222,8 @@ The wheel glides rather than jumps, like a batten easing into place.
 
 - Both range from 0 (off: the wheel jumps) to 1000 and are saved; Default
   restores them. They are read at each step, never once at construction.
+- Over a number field the wheel steps its value, one step per notch, as the
+  arrows do (focused or not), and the panel behind it does not scroll.
 - Nothing else animates: data, fits and theme changes appear at once.
 
 ---

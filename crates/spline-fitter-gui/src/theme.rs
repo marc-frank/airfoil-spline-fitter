@@ -43,7 +43,7 @@ impl ThemeMode {
 }
 
 /// OKLab lightness of every grey token: (dark, light).
-const GREY_LIGHTNESS: [(&str, f64, f64); 13] = [
+const GREY_LIGHTNESS: [(&str, f64, f64); 14] = [
     ("CANVAS", 0.213, 0.995),
     ("WINDOW", 0.236, 0.970),
     ("PANEL", 0.268, 0.950),
@@ -56,6 +56,7 @@ const GREY_LIGHTNESS: [(&str, f64, f64); 13] = [
     ("TEXT_3", 0.686, 0.580),
     ("SELECT", 0.405, 0.895),
     ("SELECT_LINE", 0.609, 0.600),
+    ("TEXT_SELECT", 0.520, 0.820),
     ("CONSTRUCTION", 0.639, 0.620),
 ];
 
@@ -107,6 +108,8 @@ pub struct Palette {
     pub text_3: Color32,
     pub select: Color32,
     pub select_line: Color32,
+    /// Behind selected text: clearly off the field, text still readable on it.
+    pub text_select: Color32,
     /// Plot: control polygon, tolerance band, camber line.
     pub construction: Color32,
     pub ok: Color32,
@@ -142,6 +145,7 @@ impl Palette {
             text_3: g("TEXT_3"),
             select: g("SELECT"),
             select_line: g("SELECT_LINE"),
+            text_select: g("TEXT_SELECT"),
             construction: g("CONSTRUCTION"),
             ok: pick(0x4FBF85, 0x1A7A4A),
             warn: pick(0xF2B84B, 0x8F5E00),
@@ -301,7 +305,7 @@ pub fn apply(ctx: &egui::Context, p: &Palette) {
     visuals.widgets.hovered = widget(p.field_hover, p.rule_strong, p.text);
     visuals.widgets.active = widget(p.select, p.select_line, p.text);
     visuals.widgets.open = widget(p.field_hover, p.rule_strong, p.text);
-    visuals.selection.bg_fill = p.select;
+    visuals.selection.bg_fill = p.text_select;
     visuals.selection.stroke = Stroke::new(1.0, p.text);
     visuals.hyperlink_color = p.text_2;
     visuals.faint_bg_color = p.panel;
@@ -449,6 +453,7 @@ mod tests {
             (dark.text_3, light.text_3, "#9A9A9A", "#7A7A7A"),
             (dark.select, light.select, "#494949", "#DCDCDC"),
             (dark.select_line, light.select_line, "#838383", "#808080"),
+            (dark.text_select, light.text_select, "#696969", "#C4C4C4"),
             (dark.construction, light.construction, "#8C8C8C", "#868686"),
         ];
         for (d, l, dh, lh) in pairs {

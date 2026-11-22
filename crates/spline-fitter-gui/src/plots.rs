@@ -10,7 +10,7 @@
 
 use std::time::Instant;
 
-use eframe::egui::{self, Color32, Event, MouseWheelUnit, Pos2, Rect, Response, Shape, Stroke, Ui, Vec2 as EVec2};
+use eframe::egui::{self, Color32, Pos2, Rect, Response, Shape, Stroke, Ui, Vec2 as EVec2};
 use egui_plot::{Plot, PlotBounds, PlotPoint, PlotTransform};
 use spline_fitter::analysis::{foot_points, FootPoints};
 use spline_fitter::bspline_varpro::basis::{distinct, linspace};
@@ -303,17 +303,7 @@ pub fn show_plot(
                 }
                 // Wheel: glide the zoom about the cursor.
                 if response.hovered() {
-                    let notches: f64 = plot_ui.ctx().input(|i| {
-                        i.events
-                            .iter()
-                            .map(|e| match e {
-                                Event::MouseWheel { unit: MouseWheelUnit::Line, delta, .. } => delta.y as f64,
-                                Event::MouseWheel { unit: MouseWheelUnit::Point, delta, .. } => delta.y as f64 / 50.0,
-                                Event::MouseWheel { unit: MouseWheelUnit::Page, delta, .. } => delta.y as f64 * 3.0,
-                                _ => 0.0,
-                            })
-                            .sum()
-                    });
+                    let notches = crate::widgets::wheel_notches(plot_ui.ctx());
                     if notches != 0.0 {
                         let log = 1.02f64.ln() * 15.0 * notches;
                         let remaining = glide.as_ref().map_or(0.0, |g| g.total * (1.0 - g.done));

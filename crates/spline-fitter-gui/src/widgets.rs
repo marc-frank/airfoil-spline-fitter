@@ -548,6 +548,22 @@ pub fn edge_double_clicked(ctx: &egui::Context, rect: egui::Rect, x: f32) -> boo
     })
 }
 
+/// Wheel notches turned this frame, upward positive (a touchpad's pixels
+/// counted as a 50-point notch, a page as three).
+pub fn wheel_notches(ctx: &egui::Context) -> f64 {
+    ctx.input(|i| {
+        i.events
+            .iter()
+            .map(|e| match e {
+                egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Line, delta, .. } => delta.y as f64,
+                egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta, .. } => delta.y as f64 / 50.0,
+                egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Page, delta, .. } => delta.y as f64 * 3.0,
+                _ => 0.0,
+            })
+            .sum()
+    })
+}
+
 /// The text being typed into a numeric field, until it is committed.
 #[derive(Clone, Default)]
 struct EditBuffer(String);
@@ -661,6 +677,28 @@ fn number_body(
                 *value = v;
                 ui.data_mut(|d| d.remove::<EditBuffer>(buffer_id));
             }
+        }
+    }
+    // The wheel over the field steps it as the arrows do, focused or not,
+    // one step per notch (a touchpad's fractions add up), and the panel
+    // behind it does not scroll.
+    if enabled && hovered {
+        let notches = wheel_notches(ui.ctx());
+        if notches != 0.0 {
+            let wheel_id = id.with("wheel");
+            let total = ui.data(|d| d.get_temp::<f64>(wheel_id)).unwrap_or(0.0) + notches;
+            let steps = total.trunc();
+            ui.data_mut(|d| d.insert_temp(wheel_id, total - steps));
+            if steps != 0.0 {
+                let v = (fmt.step)(*value, steps as i32).clamp(range.0, range.1);
+                changed |= v != *value;
+                *value = v;
+                ui.data_mut(|d| d.remove::<EditBuffer>(buffer_id));
+            }
+            ui.ctx().input_mut(|i| {
+                i.smooth_scroll_delta = Vec2::ZERO;
+                i.events.retain(|e| !matches!(e, egui::Event::MouseWheel { .. }));
+            });
         }
     }
     let border = if !enabled {

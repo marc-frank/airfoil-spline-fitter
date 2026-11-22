@@ -843,6 +843,39 @@ fn ctrl_enter_fits_with_the_typed_value_and_esc_cancels() {
     assert!(h.state().status.starts_with("Cancelled: "), "{}", h.state().status);
 }
 
+/// The wheel over a number field steps its value as the arrows do, without
+/// focusing it first, one step per notch.
+#[test]
+fn the_wheel_steps_a_number_field() {
+    let mut h = harness();
+    h.state_mut().new_naca_airfoil("2412", 41, true);
+    h.run_steps(2);
+    {
+        let app = h.state_mut();
+        app.settings.tolerance_goal = true;
+        app.settings.auto_tolerance = false;
+        app.settings.tolerance = 1e-4;
+    }
+    h.run_steps(2);
+    let wheel = |h: &mut Harness<'static, App>, notches: f32| {
+        // Over the Max deviation field (below Target), not clicked.
+        h.input_mut().events.push(egui::Event::PointerMoved(egui::pos2(220.0, 240.0)));
+        h.run_steps(1);
+        h.input_mut().events.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: egui::vec2(0.0, notches),
+            modifiers: Default::default(),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Wheel,
+        });
+        h.run_steps(2);
+    };
+    wheel(&mut h, 1.0);
+    assert_eq!(h.state().settings.tolerance, 2e-4, "one notch up: one step of the 1-2-5 ladder");
+    wheel(&mut h, -2.0);
+    assert_eq!(h.state().settings.tolerance, 5e-5, "two notches down: two steps");
+}
+
 /// The sidebar hides to a rail and comes back, as the explorer does.
 #[test]
 fn the_sidebar_hides_to_a_rail() {
