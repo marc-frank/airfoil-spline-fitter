@@ -107,18 +107,26 @@ const DIALOG_MARGIN: f32 = size::PAD_LARGE;
 const INPUT_DIALOG_MARGIN: f32 = 11.0;
 
 /// A dialog in a window of its own, `width` wide; its height follows the
-/// content. Where the platform has a single window (as under test) it is
-/// a window inside the main one. The content returns the answer; closing
-/// the window or Escape rejects.
+/// content. It opens centred on the main window and stays in front of it:
+/// the main window takes no input behind it, so a click there brings the
+/// dialog back to the front. Where the platform has a single window (as
+/// under test) it is a window inside the main one. The content returns the
+/// answer; closing the window or Escape rejects.
 fn open_dialog(ctx: &egui::Context, title: &str, width: f32, margin: f32, content: impl FnOnce(&mut Ui) -> Answer) -> Answer {
     let height_id = egui::Id::unique(("dialog_height", title));
     let height: f32 = ctx.data(|d| d.get_temp(height_id)).unwrap_or(120.0);
-    let builder = egui::ViewportBuilder::default()
+    let (main_inner, main_outer, main_focused) =
+        ctx.input(|i| (i.viewport().inner_rect, i.viewport().outer_rect, i.viewport().focused == Some(true)));
+    let centred = |height: f32| centred_on(main_inner, main_outer, egui::vec2(width, height));
+    let mut builder = egui::ViewportBuilder::default()
         .with_title(title)
         .with_inner_size([width, height])
         .with_resizable(false)
         .with_minimize_button(false)
         .with_maximize_button(false);
+    if let Some(position) = centred(height) {
+        builder = builder.with_position(position);
+    }
     let mut content = Some(content);
     ctx.show_viewport_immediate(egui::ViewportId::from_hash_of(("dialog", title)), builder, |ui, class| {
         let mut answer = Answer::Open;
@@ -142,6 +150,12 @@ fn open_dialog(ctx: &egui::Context, title: &str, width: f32, margin: f32, conten
             if (wanted - height).abs() > 0.5 {
                 ui.ctx().data_mut(|d| d.insert_temp(height_id, wanted));
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(width, wanted)));
+                if let Some(position) = centred(wanted) {
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::OuterPosition(position));
+                }
+            }
+            if main_focused {
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Focus);
             }
             if ui.input(|i| i.viewport().close_requested()) {
                 answer = Answer::Reject;
@@ -156,6 +170,15 @@ fn open_dialog(ctx: &egui::Context, title: &str, width: f32, margin: f32, conten
         }
         answer
     })
+}
+
+/// The outer position that centres a window of `inner` size on the main
+/// window, whose inner and outer rectangles are given (screen points). The
+/// dialog's frame is taken to be as wide as the main window's.
+fn centred_on(main_inner: Option<egui::Rect>, main_outer: Option<egui::Rect>, inner: egui::Vec2) -> Option<egui::Pos2> {
+    let (main_inner, main_outer) = (main_inner?, main_outer?);
+    let border = main_inner.min - main_outer.min;
+    Some((main_inner.center() - inner / 2.0 - border).round())
 }
 
 /// Where a dialog keeps how many frames it has been open (up to three).
@@ -256,6 +279,7 @@ impl App {
     pub fn show_dialogs(&mut self, ctx: &egui::Context) {
         let Some(mut dialog) = self.dialog.take() else { return };
         let p = self.palette.clone();
+        let parent = self.parent.as_ref();
         let form = |width: f32| width - 2.0 * DIALOG_MARGIN - size::LABEL_WIDTH - size::GROUP;
         let keep = match &mut dialog {
             Dialog::Naca { code, per_side, closed } => {
@@ -342,7 +366,7 @@ impl App {
                                 if dialog_button(ui, &p, "Choose...", false, true) {
                                     let home = dirs::home_dir().unwrap_or_default();
                                     if let Some(dir) =
-                                        rfd::FileDialog::new().set_title(format!("{label} folder")).set_directory(home).pick_folder()
+                                        crate::parent::file_dialog(parent).set_title(format!("{label} folder")).set_directory(home).pick_folder()
                                     {
                                         *folder = dir.to_string_lossy().into_owned();
                                     }

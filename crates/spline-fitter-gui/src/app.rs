@@ -81,6 +81,8 @@ pub struct App {
     pub bottom_view: usize,
     pub batch_source: String,
     pub batch_target: String,
+    /// The main window, which owns the native file pickers (none under test).
+    pub parent: Option<crate::parent::ParentWindow>,
 }
 
 impl App {
@@ -144,6 +146,7 @@ impl App {
             bottom_view,
             batch_source: String::new(),
             batch_target: String::new(),
+            parent: crate::parent::ParentWindow::of(cc),
         };
         app.load_display();
         app.refresh_comparison();

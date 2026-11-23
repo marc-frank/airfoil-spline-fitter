@@ -2,7 +2,6 @@
 
 use std::path::{Path, PathBuf};
 
-use rfd::FileDialog;
 use spline_fitter::analysis::default_tolerance;
 use spline_fitter::bspline_varpro::airfoil::{resample, trailing_edge_segment, Naca4};
 use spline_fitter::bspline_varpro::export::{self, merge_curves, Units};
@@ -41,7 +40,7 @@ impl App {
             return;
         }
         if let Some(path) =
-            FileDialog::new().set_title("Open airfoil").set_directory(home()).add_filter("Airfoil data", &["dat"]).pick_file()
+            self.file_dialog().set_title("Open airfoil").set_directory(home()).add_filter("Airfoil data", &["dat"]).pick_file()
         {
             self.load_airfoil(&path);
         }
@@ -193,7 +192,7 @@ impl App {
         let (Some(fit), Some(airfoil)) = (self.fit.clone(), self.airfoil.clone()) else { return };
         let name = if airfoil.name.is_empty() { &airfoil.filename } else { &airfoil.name };
         let default = format!("{}_fitted.dat", file_stem(airfoil.file_base(), "airfoil"));
-        let Some(path) = FileDialog::new()
+        let Some(path) = self.file_dialog()
             .set_title("Save fitted airfoil")
             .set_directory(home())
             .set_file_name(&default)
@@ -216,7 +215,7 @@ impl App {
             return self.set_status("No fitted spline to save.");
         };
         let default = format!("{}.deg{}.spline.dat", file_stem(airfoil.file_base(), "airfoil"), fit.degree);
-        let Some(path) = FileDialog::new()
+        let Some(path) = self.file_dialog()
             .set_title("Save spline control points")
             .set_directory(home())
             .set_file_name(&default)
@@ -259,7 +258,7 @@ impl App {
         self.store.set_bool("cad_merge", choice.merge);
         self.store.set_bool("cad_close_te", choice.close_te);
         let (label, suffix) = crate::dialogs::CAD_FORMATS[choice.format];
-        let Some(path) = FileDialog::new()
+        let Some(path) = self.file_dialog()
             .set_title("Export CAD")
             .set_directory(home())
             .set_file_name(format!("{}{suffix}", file_stem(airfoil.file_base(), "airfoil")))
@@ -352,7 +351,7 @@ impl App {
         if self.fitting() {
             return;
         }
-        if let Some(path) = FileDialog::new()
+        if let Some(path) = self.file_dialog()
             .set_title("Open project")
             .set_directory(home())
             .add_filter("Spline project", &["asfproj"])
@@ -449,7 +448,7 @@ impl App {
         if self.projects.file.is_none() {
             self.projects.file = Some(ProjectFile::new(airfoil.clone()));
         }
-        let Some(mut path) = FileDialog::new()
+        let Some(mut path) = self.file_dialog()
             .set_title("Save project as")
             .set_directory(home())
             .set_file_name(format!("{}.asfproj", file_stem(airfoil.file_base(), "project")))

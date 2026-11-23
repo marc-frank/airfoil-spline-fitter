@@ -3568,6 +3568,7 @@ dependencies = [
  "egui_kittest",
  "egui_plot",
  "image",
+ "raw-window-handle",
  "rfd",
  "rodio",
  "serde_json",

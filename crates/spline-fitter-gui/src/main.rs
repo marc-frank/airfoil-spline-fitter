@@ -14,6 +14,7 @@ mod history;
 mod job;
 mod locale;
 mod overlays;
+mod parent;
 mod plots;
 mod runs;
 mod settings;

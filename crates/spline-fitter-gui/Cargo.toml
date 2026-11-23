@@ -16,6 +16,7 @@ eframe = { version = "0.37", default-features = false, features = ["default_font
 egui_plot = "0.38"
 egui_extras = "0.37"
 rfd = "0.18"
+raw-window-handle = "0.6"
 arboard = { version = "3.7", default-features = false }
 rodio = { version = "0.23", default-features = false, features = ["playback"] }
 sys-locale = "0.3"
