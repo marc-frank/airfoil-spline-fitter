@@ -157,8 +157,11 @@ Python results), and differs on purpose where the behaviour was a defect:
 - The deviation overlay draws every whisker outward, its length the size of
   the deviation, in sky blue for a point inside the curve and rose for one
   outside; Python drew signed whiskers on both sides in the section colors.
-  The tolerance is one dashed line outside the curve, always at the height
-  setting, not one on each side.
+  The tolerance is one dashed line outside the data points, not one on each
+  side, shown from the sidebar's tolerance as soon as the goal is one.
+  Python's Height (a share of the chord the tolerance was stretched to) is
+  a Scale: whiskers and the tolerance line are that many times the real
+  distance, 100 by default, so the line shows how far the tolerance really is.
 - The live deviation searches the foot points on each step's curve instead
   of refining the previous step's: the solver's steps move a point's
   parameter anywhere on the curve, and the refined feet then joined points to

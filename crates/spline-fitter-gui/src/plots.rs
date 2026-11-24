@@ -17,7 +17,7 @@ use spline_fitter::bspline_varpro::basis::{distinct, linspace};
 use spline_fitter::{BSpline, Vec2};
 
 use crate::axes;
-use crate::overlays::{comb, deviation, Deviation, ParityStrokes, Strokes, OUTSIDE};
+use crate::overlays::{comb, deviation, tolerance_line, Deviation, ParityStrokes, Strokes, OUTSIDE};
 use crate::theme::{alpha, size, typeface, Glyph, Palette, INK, TEETH_ALPHA};
 
 /// A running zoom glide.
@@ -618,7 +618,9 @@ pub struct MainPlot {
     /// inflections.
     pub show_extrema: bool,
     pub deviation_on: bool,
-    pub deviation_height: f64,
+    /// Deviation whiskers and the tolerance line are this many times the
+    /// real distance.
+    pub deviation_scale: f64,
     data: Vec<Vec2>,
     curves: Vec<BSpline>,
     sampled: Vec<Vec<Vec2>>,
@@ -629,7 +631,10 @@ pub struct MainPlot {
     pub(crate) inflections: Vec<(usize, Vec2)>,
     comb_strokes: Option<ParityStrokes>,
     deviation: Option<Deviation>,
+    /// The sidebar's tolerance while it is the fit's goal.
     tolerance: Option<f64>,
+    /// The data moved out by the tolerance times the scale.
+    pub(crate) tolerance_line: Vec<Vec2>,
     /// Foot points of the data on the shown curves, measured when the
     /// deviation is first drawn.
     feet: Option<FootPoints>,
@@ -644,7 +649,7 @@ impl Default for MainPlot {
             comb: CombSettings::default(),
             show_extrema: false,
             deviation_on: false,
-            deviation_height: 0.05,
+            deviation_scale: 100.0,
             data: vec![],
             curves: vec![],
             sampled: vec![],
@@ -654,6 +659,7 @@ impl Default for MainPlot {
             comb_strokes: None,
             deviation: None,
             tolerance: None,
+            tolerance_line: vec![],
             feet: None,
         }
     }
@@ -664,6 +670,7 @@ impl MainPlot {
     pub fn set_data(&mut self, coords: &[Vec2]) {
         self.clear_items();
         self.data = coords.to_vec();
+        self.refresh_tolerance_line();
         self.view.fit(bounds_of(coords.iter().map(xy)));
         self.view.follow = true;
     }
@@ -681,11 +688,10 @@ impl MainPlot {
     }
 
     /// Shows a finished fit or a step of a running one.
-    pub fn show_curves(&mut self, curves: Vec<BSpline>, tolerance: Option<f64>) {
+    pub fn show_curves(&mut self, curves: Vec<BSpline>) {
         self.feet = None;
         self.sampled = curves.iter().map(|c| c.points(&linspace(0.0, 1.0, 1000))).collect();
         self.curves = curves;
-        self.tolerance = tolerance;
         self.refresh_knots();
         self.refresh_extrema();
         self.refresh_comb();
@@ -714,13 +720,27 @@ impl MainPlot {
             (self.comb_on && !self.curves.is_empty()).then(|| comb(&self.curves, self.comb.quantity, self.comb.height, self.comb.density));
     }
 
+    /// The tolerance to draw from the data, `None` without a tolerance
+    /// goal; the line is redrawn only when it changes.
+    pub fn set_tolerance(&mut self, tolerance: Option<f64>) {
+        if tolerance != self.tolerance {
+            self.tolerance = tolerance;
+            self.refresh_tolerance_line();
+        }
+    }
+
+    /// The tolerance line of the data at the deviation scale.
+    pub fn refresh_tolerance_line(&mut self) {
+        self.tolerance_line = self.tolerance.map(|t| tolerance_line(&self.data, t * self.deviation_scale)).unwrap_or_default();
+    }
+
     pub fn refresh_deviation(&mut self) {
         self.deviation = None;
         if !self.deviation_on || self.curves.is_empty() || self.data.len() < 2 {
             return;
         }
         let feet = self.feet.get_or_insert_with(|| foot_points(&self.data, &self.curves));
-        self.deviation = deviation(&self.data, &self.curves, feet, self.deviation_height, self.tolerance);
+        self.deviation = deviation(&self.data, feet, self.deviation_scale);
     }
 
     pub fn show(&mut self, ui: &mut Ui, p: &Palette, motion_ms: u64) {
@@ -754,10 +774,8 @@ impl MainPlot {
             }
             if let Some(d) = &self.deviation {
                 draw_strokes(&d.strokes, Some(&d.dots), &|side| p.deviation(side == OUTSIDE));
-                for line in &d.band {
-                    c.polyline(line.iter().map(xy), Stroke::new(1.0, alpha(p.construction, 110)), true);
-                }
             }
+            c.polyline(self.tolerance_line.iter().map(xy), Stroke::new(1.0, alpha(p.construction, 110)), true);
             // Construction: the control polygon.
             for curve in &self.curves {
                 c.polyline(curve.control_points.iter().map(xy), Stroke::new(1.0, alpha(p.construction, 170)), true);

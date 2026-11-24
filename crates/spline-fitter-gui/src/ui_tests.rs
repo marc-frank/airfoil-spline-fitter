@@ -1006,7 +1006,7 @@ fn display_choices_are_kept() {
         let app = h.state_mut();
         app.main_plot.show_knots = true;
         app.main_plot.deviation_on = true;
-        app.main_plot.deviation_height = 0.2;
+        app.main_plot.deviation_scale = 20.0;
         app.live_mode = crate::job::LiveMode::Detailed;
         app.loss.log_mode = 3;
         app.explorer.y_column = crate::runs::COLUMNS.iter().position(|c| c.name == "Max deviation").unwrap();
@@ -1014,7 +1014,7 @@ fn display_choices_are_kept() {
     h.run_steps(2);
     let store = &h.state().store;
     assert!(store.bool("display/knots", false) && store.bool("display/deviation", false));
-    assert_eq!(store.float("display/deviation_height", 0.0), 0.2);
+    assert_eq!(store.float("display/deviation_scale", 0.0), 20.0);
     assert_eq!((store.int("display/live", 0), store.int("display/loss_log", 0)), (2, 3));
     assert_eq!(store.string("display/runs_y", ""), "Max deviation");
     // The next start reads them.
@@ -1071,4 +1071,35 @@ fn failures_show_in_the_status_bar_in_the_error_colour() {
     h.state_mut().new_naca_airfoil("2412", 41, true);
     h.run_steps(2);
     assert!(!h.state().status_failed, "the next message is plain again");
+}
+
+/// The tolerance line comes from the data and the sidebar: it shows as soon
+/// as the goal is a tolerance, before any fit, stays put while fitting, and
+/// is the tolerance times the deviation scale out from every data point.
+#[test]
+fn the_tolerance_line_is_drawn_from_the_data() {
+    let mut h = harness();
+    h.state_mut().new_naca_airfoil("2412", 41, true);
+    h.run_steps(2);
+    assert!(h.state().main_plot.tolerance_line.is_empty(), "no tolerance goal yet");
+    {
+        let app = h.state_mut();
+        app.settings.tolerance_goal = true;
+        app.settings.auto_tolerance = false;
+        app.settings.tolerance = 1e-4;
+    }
+    h.run_steps(2);
+    let before = h.state().main_plot.tolerance_line.clone();
+    let data = h.state().airfoil.as_ref().unwrap().coordinates.clone();
+    assert_eq!(before.len(), data.len());
+    let scale = h.state().main_plot.deviation_scale;
+    for (q, on_line) in data.iter().zip(&before) {
+        assert!(((on_line - q).norm() - scale * 1e-4).abs() < 1e-12);
+    }
+    h.state_mut().on_fit();
+    finish(&mut h);
+    assert_eq!(h.state().main_plot.tolerance_line, before, "the fit does not move it");
+    h.state_mut().settings.tolerance_goal = false;
+    h.run_steps(2);
+    assert!(h.state().main_plot.tolerance_line.is_empty());
 }

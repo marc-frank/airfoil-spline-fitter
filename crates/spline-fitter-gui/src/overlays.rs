@@ -201,8 +201,6 @@ pub struct Deviation {
     pub strokes: [Strokes; 2],
     /// Tips of the whiskers, one dot per data point, by side.
     pub dots: [Vec<Vec2>; 2],
-    /// Dashed line at the tolerance outside every section.
-    pub band: Vec<Vec<Vec2>>,
 }
 
 /// +1 when the points run counterclockwise (the right-hand normal points
@@ -219,24 +217,13 @@ fn orientation(coords: &[Vec2]) -> f64 {
 
 /// Every data point's distance from the curve, drawn outward whatever its
 /// sign: a whisker of length `scale · |distance|` along the outward normal,
-/// in the color of its side (inside or outside the curve). The tolerance is
-/// one dashed line `height` chords outside the curve, and the whiskers use
-/// the same magnification, so a point beyond the line is beyond the
-/// tolerance. Without a tolerance the largest deviation is drawn at
-/// `height`.
-pub fn deviation(coords: &[Vec2], curves: &[BSpline], feet: &FootPoints, height: f64, tolerance: Option<f64>) -> Option<Deviation> {
-    if coords.len() < 2 {
-        return None;
-    }
-    let largest = feet.distance.iter().fold(0.0, |m: f64, d| m.max(d.abs()));
-    let reference = tolerance.unwrap_or(largest);
-    let (lo, hi) = coords.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), p| (l.min(p.x), h.max(p.x)));
-    let chord = hi - lo;
+/// in the color of its side (inside or outside the curve); at scale 1 every
+/// length is the real distance.
+pub fn deviation(coords: &[Vec2], feet: &FootPoints, scale: f64) -> Option<Deviation> {
     let positive = |v: f64| v.is_finite() && v > 0.0;
-    if !positive(reference) || !positive(chord) {
+    if coords.len() < 2 || !positive(scale) {
         return None;
     }
-    let scale = height * chord / reference;
     let out_sign = orientation(coords);
     // Signed toward the outside, so the side is the sign.
     let outward: Vec<f64> = feet.distance.iter().map(|d| d * out_sign).collect();
@@ -262,23 +249,27 @@ pub fn deviation(coords: &[Vec2], curves: &[BSpline], feet: &FootPoints, height:
             run.push(tips[next]);
         }
     }
-    if tolerance.is_some() {
-        let reach = height * chord;
-        for curve in curves {
-            let (a, b) = curve.domain();
-            out.band.push(
-                linspace(a, b, 400)
-                    .into_iter()
-                    .map(|u| {
-                        let d = curve.derivatives(u, 1);
-                        let normal = Vec2::new(d[1].y, -d[1].x) / d[1].norm().max(1e-300);
-                        d[0] + normal * (out_sign * reach)
-                    })
-                    .collect(),
-            );
-        }
-    }
     Some(out)
+}
+
+/// The tolerance line of the data alone (no fit needed): every data point
+/// moved `reach` out along the outward normal of the data polygon there
+/// (the direction from its neighbour before to the one after, turned).
+pub fn tolerance_line(coords: &[Vec2], reach: f64) -> Vec<Vec2> {
+    let n = coords.len();
+    if n < 2 || !(reach.is_finite() && reach > 0.0) {
+        return vec![];
+    }
+    let out_sign = orientation(coords);
+    (0..n)
+        .map(|i| {
+            let (a, b) = (coords[i.saturating_sub(1)], coords[(i + 1).min(n - 1)]);
+            // Repeated neighbours: the direction of the whole polygon.
+            let t = if (b - a).norm() > 0.0 { b - a } else { coords[n - 1] - coords[0] };
+            let normal = Vec2::new(t.y, -t.x) / t.norm().max(1e-300) * out_sign;
+            coords[i] + normal * reach
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -336,30 +327,36 @@ mod tests {
         d.strokes.iter().flat_map(|s| &s.teeth).map(|[a, b]| (b - a).norm()).fold(0.0, f64::max)
     }
 
-    fn chord(coords: &[Vec2]) -> f64 {
-        coords.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max) - coords.iter().map(|p| p.x).fold(f64::INFINITY, f64::min)
-    }
-
     #[test]
-    fn tolerance_line_stays_at_the_height_and_sets_the_magnification() {
+    fn whiskers_are_the_real_distances_times_the_scale() {
         let c = arc();
         let (coords, feet) = off_arc(&c, 1e-3);
-        let chord = chord(&coords);
-        for tolerance in [1e-2, 1e-5] {
-            let d = deviation(&coords, std::slice::from_ref(&c), &feet, 0.05, Some(tolerance)).unwrap();
-            // One line, outside the curve, `height` chords away.
-            assert_eq!(d.band.len(), 1);
-            let on_curve = c.point(linspace(0.0, 1.0, 400)[200]);
-            let line = d.band[0][200];
-            assert!(((line - on_curve).norm() - 0.05 * chord).abs() < 1e-9);
-            assert!(line.norm() > on_curve.norm());
-            // A deviation of `tolerance` would reach the line.
-            assert!((longest_whisker(&d) - 0.05 * chord * 1e-3 / tolerance).abs() < 1e-9);
+        for scale in [1.0, 2.0, 10.0] {
+            let d = deviation(&coords, &feet, scale).unwrap();
+            assert!((longest_whisker(&d) - scale * 1e-3).abs() < 1e-12);
         }
-        // Without a tolerance the largest deviation is at the height.
-        let d = deviation(&coords, std::slice::from_ref(&c), &feet, 0.05, None).unwrap();
-        assert!(d.band.is_empty());
-        assert!((longest_whisker(&d) - 0.05 * chord).abs() < 1e-9);
+    }
+
+    /// The tolerance line needs the data only: each point moved out by the
+    /// reach, in either direction of travel.
+    #[test]
+    fn tolerance_line_is_the_data_moved_out() {
+        // A counterclockwise circle of radius 1.
+        let circle: Vec<Vec2> = (0..36)
+            .map(|i| {
+                let a = i as f64 * std::f64::consts::TAU / 36.0;
+                Vec2::new(a.cos(), a.sin())
+            })
+            .collect();
+        for coords in [circle.clone(), circle.iter().rev().copied().collect()] {
+            let line = tolerance_line(&coords, 0.01);
+            assert_eq!(line.len(), coords.len());
+            for (q, on_line) in coords.iter().zip(&line) {
+                assert!(((on_line - q).norm() - 0.01).abs() < 1e-12);
+                assert!(on_line.norm() > 1.0 + 0.009, "{q} -> {on_line}");
+            }
+        }
+        assert!(tolerance_line(&circle, 0.0).is_empty());
     }
 
     #[test]
@@ -367,7 +364,7 @@ mod tests {
         let c = arc();
         for (offset, side) in [(1e-3, OUTSIDE), (-1e-3, INSIDE)] {
             let (coords, feet) = off_arc(&c, offset);
-            let d = deviation(&coords, std::slice::from_ref(&c), &feet, 0.05, None).unwrap();
+            let d = deviation(&coords, &feet, 50.0).unwrap();
             assert_eq!(d.strokes[side].teeth.len(), coords.len());
             assert!(d.strokes[1 - side].teeth.is_empty() && d.dots[1 - side].is_empty());
             for [foot, tip] in &d.strokes[side].teeth {
@@ -380,7 +377,7 @@ mod tests {
         feet.foot.reverse();
         feet.normal = feet.normal.iter().rev().map(|n| -n).collect();
         feet.distance = feet.distance.iter().map(|d| -d).collect();
-        let d = deviation(&coords, std::slice::from_ref(&c), &feet, 0.05, None).unwrap();
+        let d = deviation(&coords, &feet, 50.0).unwrap();
         assert_eq!(d.dots[INSIDE].len(), coords.len());
         for [foot, tip] in &d.strokes[INSIDE].teeth {
             assert!(tip.norm() > foot.norm() + 1e-3);
@@ -396,7 +393,7 @@ mod tests {
             *d = if i < 4 { 1e-3 } else { -3e-3 };
         }
         let coords: Vec<Vec2> = (0..feet.foot.len()).map(|i| feet.foot[i] + feet.normal[i] * feet.distance[i]).collect();
-        let d = deviation(&coords, std::slice::from_ref(&c), &feet, 0.05, None).unwrap();
+        let d = deviation(&coords, &feet, 50.0).unwrap();
         let (outside, inside) = (&d.strokes[OUTSIDE].envelopes, &d.strokes[INSIDE].envelopes);
         assert_eq!((outside.len(), inside.len()), (1, 1));
         let zero = *outside[0].last().unwrap();

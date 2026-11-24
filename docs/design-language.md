@@ -126,7 +126,7 @@ Named by what they draw, never by hue.
 | `comb_even` / `comb_odd` rings | canvas-filled rings `size::EXTREMUM_SIZE` in the section's comb color | Inflections (derived: where the comb crosses the curve, the curvature changing sign) |
 | `comb_even` | sky blue | Comb on the first, third, ... spline section (a single section is all sky blue) |
 | `comb_odd` | rose | Comb on the second, fourth, ... spline section |
-| `deviation(outside)` | the comb's colors by side: rose outside the curve, sky blue inside; faint whiskers drawn outward from the curve, an envelope through their tips with a dot at each tip | Size of each data point's deviation from the curve, magnified along the outward normal; the tolerance is one faint dashed `construction` line outside the curve, at the height setting |
+| `deviation(outside)` | the comb's colors by side: rose outside the curve, sky blue inside; faint whiskers drawn outward from the curve, an envelope through their tips with a dot at each tip | Size of each data point's deviation from the curve, drawn along the outward normal at the Scale setting (default 100) times its real length (1: true to size); the tolerance is one faint dashed `construction` line through the data points, each moved out along the data's normal by the scale times the tolerance; it follows the sidebar's tolerance goal, not the fit |
 | `trace()` | light grey dots or line | Convergence and comparison traces |
 | `INK` marker | ink dot with a canvas ring | The current run in a trace |
 

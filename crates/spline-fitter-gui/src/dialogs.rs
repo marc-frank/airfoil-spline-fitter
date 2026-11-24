@@ -912,41 +912,83 @@ pub fn comb_toggle(app: &mut App, ui: &mut Ui) {
     }
 }
 
-/// The Deviation toggle and its height.
+/// The deviation scales the Scale field takes.
+pub const DEVIATION_SCALES: (f64, f64) = (0.001, 1e9);
+
+/// `k` steps along 1, 2, 5, 10, 20, ... from `v` (from the step below or
+/// above `v` when it is between two).
+pub fn step_1_2_5(v: f64, k: i32) -> f64 {
+    if !(v.is_finite() && v > 0.0) || k == 0 {
+        return v;
+    }
+    // Index on the 1-2-5 ladder: 3 per decade.
+    let ladder = |i: i32| [1.0, 2.0, 5.0][i.rem_euclid(3) as usize] * 10f64.powi(i.div_euclid(3));
+    let mut i = 3 * v.log10().floor() as i32;
+    while ladder(i + 1) <= v * (1.0 + 1e-9) {
+        i += 1;
+    }
+    // `i` is the rung at or below `v`; from between two rungs one step
+    // either way takes the nearer rung on that side.
+    let on_rung = (ladder(i) - v).abs() <= 1e-9 * v;
+    ladder(if k < 0 && !on_rung { i + k + 1 } else { i + k })
+}
+
+/// The Deviation toggle and its scale.
 pub fn deviation_toggle(app: &mut App, ui: &mut Ui) {
     let p = app.palette.clone();
     let plot = &mut app.main_plot;
-    let mut height = plot.deviation_height;
+    let mut scale = plot.deviation_scale;
     let toggle = SplitToggle {
         text: "Deviation",
-        tooltip: "Display the distance of every data point from the curve, magnified\nand drawn outward: rose for a point outside the curve, sky blue for\none inside. The dashed line is the tolerance. Use the arrow for\nthe height.",
+        tooltip: "Display the distance of every data point from the curve, drawn
+outward: rose for a point outside the curve, sky blue for one inside.
+The dashed line is the tolerance. Use the arrow for the scale.",
         arrow_tooltip: "Deviation settings",
         id: "deviation_settings",
     };
     let (toggled, changed) = split_toggle(ui, &p, toggle, &mut plot.deviation_on, |ui| {
         let mut changed = false;
-        form_row(ui, &p, "Height", true, "", |ui| {
-            let fmt = |v: f64| spline_fitter::formatting::number(v, ".3f");
+        form_row(ui, &p, "Scale", true, "", |ui| {
+            let fmt = |v: f64| spline_fitter::formatting::number(v, "g");
             let parse = |t: &str| widgets::parse_scientific(t);
-            let step = |v: f64, k: i32| v + 0.01 * k as f64;
+            let step = |v: f64, k: i32| step_1_2_5(v, k);
             let f = widgets::NumberFormat { format: &fmt, parse: &parse, step: &step };
             changed |= widgets::number_field(
                 ui,
                 &p,
-                "deviation_height",
-                &mut height,
-                (0.001, 1.0),
+                "deviation_scale",
+                &mut scale,
+                DEVIATION_SCALES,
                 Field::new(
-                    widgets::spin_width(ui, &[&fmt(0.001), &fmt(1.0)]),
-                    "How far outside the curve the tolerance is drawn, as a share of the chord\n(the largest deviation when there is no tolerance).",
+                    widgets::spin_width(ui, &[&fmt(0.001), &fmt(1e9)]),
+                    "How many times the real distance the deviations and the
+tolerance line are drawn: 1 is true to size.",
                 ),
                 &f,
             );
         });
         changed
     });
-    plot.deviation_height = height;
+    plot.deviation_scale = scale;
+    if changed {
+        plot.refresh_tolerance_line();
+    }
     if toggled || changed {
         plot.refresh_deviation();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::step_1_2_5;
+
+    /// The wheel walks the deviation scale along 1, 2, 5, 10, ...; from
+    /// between two rungs it lands on the nearer one in that direction.
+    #[test]
+    fn the_scale_steps_along_1_2_5() {
+        let close = |a: f64, b: f64| (a - b).abs() <= 1e-9 * b;
+        for (v, k, want) in [(1.0, 1, 2.0), (2.0, 1, 5.0), (5.0, 1, 10.0), (10.0, -1, 5.0), (1.0, -1, 0.5), (1.0, 3, 10.0), (3.0, 1, 5.0), (3.0, -1, 2.0), (1000.0, 2, 5000.0), (0.002, -1, 0.001)] {
+            assert!(close(step_1_2_5(v, k), want), "{v} {k}: {}", step_1_2_5(v, k));
+        }
     }
 }

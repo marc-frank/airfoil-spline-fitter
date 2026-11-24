@@ -164,7 +164,7 @@ impl App {
             comb_height: m.comb.height,
             comb_density: m.comb.density,
             deviation: m.deviation_on,
-            deviation_height: m.deviation_height,
+            deviation_scale: m.deviation_scale,
             live: self.live_mode as usize,
             loss_x: self.loss.x_axis,
             loss_log: self.loss.log_mode,
@@ -185,7 +185,10 @@ impl App {
         m.comb.height = s.float("display/comb_height", d.comb_height).max(0.0);
         m.comb.density = s.int("display/comb_density", d.comb_density as i64).clamp(10, 100_000) as usize;
         m.deviation_on = s.bool("display/deviation", d.deviation);
-        m.deviation_height = s.float("display/deviation_height", d.deviation_height).max(0.0);
+        m.deviation_scale = s.float("display/deviation_scale", d.deviation_scale);
+        if !(m.deviation_scale.is_finite() && m.deviation_scale > 0.0) {
+            m.deviation_scale = d.deviation_scale;
+        }
         self.live_mode = LiveMode::ALL[s.int("display/live", d.live as i64).clamp(0, 2) as usize];
         self.loss.x_axis = s.int("display/loss_x", d.loss_x as i64).clamp(0, 1) as usize;
         self.loss.log_mode = s.int("display/loss_log", d.loss_log as i64).clamp(0, 3) as usize;
@@ -221,7 +224,7 @@ impl App {
         s.set_float("display/comb_height", d.comb_height);
         s.set_int("display/comb_density", d.comb_density as i64);
         s.set_bool("display/deviation", d.deviation);
-        s.set_float("display/deviation_height", d.deviation_height);
+        s.set_float("display/deviation_scale", d.deviation_scale);
         s.set_int("display/live", d.live as i64);
         s.set_int("display/loss_x", d.loss_x as i64);
         s.set_int("display/loss_log", d.loss_log as i64);
@@ -661,6 +664,11 @@ impl App {
             self.plot_toolbar(ui);
             let total = ui.available_height();
             let main_height = (total - size::GAP) * 0.6;
+            // The tolerance line follows the sidebar: shown as soon as the
+            // goal is a largest deviation, drawn from the data, not the fit.
+            let s = &self.settings;
+            let goal = s.tolerance_mode() && s.tolerance_metric == spline_fitter::models::ToleranceMetric::MaxDeviation;
+            self.main_plot.set_tolerance(Some(s.tolerance).filter(|t| goal && t.is_finite() && *t > 0.0));
             ui.allocate_ui(egui::vec2(ui.available_width(), main_height), |ui| self.main_plot.show(ui, &p, self.zoom_ms));
             let rest = ui.available_height();
             let wide = ui.available_width() >= 2.0 * 440.0 + size::GROUP;
@@ -746,7 +754,7 @@ struct Display {
     comb_height: f64,
     comb_density: usize,
     deviation: bool,
-    deviation_height: f64,
+    deviation_scale: f64,
     live: usize,
     loss_x: usize,
     loss_log: usize,

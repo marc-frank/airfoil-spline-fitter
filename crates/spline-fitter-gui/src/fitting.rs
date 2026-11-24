@@ -9,7 +9,7 @@ use spline_fitter::batch::{airfoil_files, prepare, write_result, BatchItem};
 use spline_fitter::bspline_varpro::KnotPlacement;
 use spline_fitter::formatting::{format_count, format_duration, format_error, number};
 use spline_fitter::geometry::AirfoilData;
-use spline_fitter::models::{FitResult, IterationRecord, OptimizationConfig, SplineConfig, ToleranceMetric};
+use spline_fitter::models::{FitResult, IterationRecord, OptimizationConfig, SplineConfig};
 use spline_fitter::project::{number_runs, OptimizationRun, ProjectFile, ToleranceSearch};
 use spline_fitter::BSpline;
 
@@ -74,12 +74,6 @@ impl Running {
 
 fn plural_noun(k: usize, noun: &str) -> String {
     format!("{k} {noun}{}", if k == 1 { "" } else { "s" })
-}
-
-/// The tolerance line of the deviation overlay: a bound for every point,
-/// so only a tolerance of the largest deviation.
-fn deviation_line(tolerance: Option<f64>, metric: ToleranceMetric) -> Option<f64> {
-    tolerance.filter(|_| metric == ToleranceMetric::MaxDeviation)
 }
 
 /// Curves of a live preview.
@@ -181,7 +175,7 @@ impl App {
         let (preview, status) = job.tick(mode);
         let history = job.live.history();
         if let Some(p) = preview {
-            self.main_plot.show_curves(preview_curves(&p), deviation_line(tolerance, metric));
+            self.main_plot.show_curves(preview_curves(&p));
             self.loss.set_data(history);
         }
         if let Some(s) = status {
@@ -375,10 +369,7 @@ impl App {
     /// Draws the current fit (or nothing) on the airfoil.
     pub fn show_current_fit(&mut self) {
         match &self.fit {
-            Some(fit) => {
-                let line = fit.report.as_ref().and_then(|r| deviation_line(r.tolerance, r.tolerance_metric));
-                self.main_plot.show_curves(fit.curves(), line);
-            }
+            Some(fit) => self.main_plot.show_curves(fit.curves()),
             None => self.main_plot.clear_items(),
         }
     }
@@ -744,7 +735,7 @@ impl App {
             if !outcome.raw.success {
                 return Err(spline_fitter::Error::new(format!("Optimizer did not converge: {}", outcome.raw.message)));
             }
-            self.main_plot.show_curves(outcome.fit.curves(), deviation_line(job.options.tolerance, job.options.tolerance_metric));
+            self.main_plot.show_curves(outcome.fit.curves());
             write_result(&item, &batch.config, &outcome.raw)?;
             Ok(Some(outcome))
         });
