@@ -614,7 +614,8 @@ pub struct MainPlot {
     pub show_knots: bool,
     pub comb_on: bool,
     pub comb: CombSettings,
-    /// Mark the curvature extrema the report counts.
+    /// Mark the curvature points: the extrema the report counts and the
+    /// inflections.
     pub show_extrema: bool,
     pub deviation_on: bool,
     pub deviation_height: f64,
@@ -624,6 +625,8 @@ pub struct MainPlot {
     knots: Vec<Vec2>,
     /// The curvature extrema with their section.
     pub(crate) extrema: Vec<(usize, Vec2)>,
+    /// The inflections (curvature changes sign) with their section.
+    pub(crate) inflections: Vec<(usize, Vec2)>,
     comb_strokes: Option<ParityStrokes>,
     deviation: Option<Deviation>,
     tolerance: Option<f64>,
@@ -647,6 +650,7 @@ impl Default for MainPlot {
             sampled: vec![],
             knots: vec![],
             extrema: vec![],
+            inflections: vec![],
             comb_strokes: None,
             deviation: None,
             tolerance: None,
@@ -671,6 +675,7 @@ impl MainPlot {
         self.knots.clear();
         self.comb_strokes = None;
         self.extrema.clear();
+        self.inflections.clear();
         self.deviation = None;
         self.feet = None;
     }
@@ -687,15 +692,13 @@ impl MainPlot {
         self.refresh_deviation();
     }
 
+    /// The curvature points: extrema and inflections, when shown.
     pub fn refresh_extrema(&mut self) {
-        self.extrema = if self.show_extrema && !self.curves.is_empty() {
-            spline_fitter::bspline_varpro::diagnostics::curvature_extrema(&self.curves)
-                .into_iter()
-                .map(|(s, u)| (s, self.curves[s].point(u)))
-                .collect()
-        } else {
-            vec![]
-        };
+        use spline_fitter::bspline_varpro::diagnostics::{curvature_extrema, curvature_inflections};
+        let on = self.show_extrema && !self.curves.is_empty();
+        let place = |found: Vec<(usize, f64)>| found.into_iter().map(|(s, u)| (s, self.curves[s].point(u))).collect();
+        self.extrema = if on { place(curvature_extrema(&self.curves)) } else { vec![] };
+        self.inflections = if on { place(curvature_inflections(&self.curves)) } else { vec![] };
     }
 
     pub fn refresh_knots(&mut self) {
@@ -773,10 +776,12 @@ impl MainPlot {
                 c.polyline(section.iter().map(xy), Stroke::new(size::CURVE_WIDTH, INK), false);
             }
             c.markers(self.knots.iter().map(xy), Marker::Diamond, size::KNOT_SIZE, p.knots, Stroke::new(1.0, p.canvas));
-            // Derived: the curvature extrema, in their section's comb colour.
+            // Derived, in their section's comb colour: the curvature extrema
+            // as dots, the inflections (where the comb crosses the curve) as rings.
             for parity in 0..2 {
-                let points = self.extrema.iter().filter(|(s, _)| s % 2 == parity).map(|(_, q)| xy(q));
-                c.markers(points, Marker::Circle, size::EXTREMUM_SIZE, p.comb(parity), Stroke::new(2.0, p.canvas));
+                let of = |found: &[(usize, Vec2)]| found.iter().filter(|(s, _)| s % 2 == parity).map(|(_, q)| xy(q)).collect::<Vec<_>>();
+                c.markers(of(&self.extrema), Marker::Circle, size::EXTREMUM_SIZE, p.comb(parity), Stroke::new(2.0, p.canvas));
+                c.markers(of(&self.inflections), Marker::Circle, size::EXTREMUM_SIZE, p.canvas, Stroke::new(2.0, p.comb(parity)));
             }
             // Nothing loaded yet: the ways to start.
             if self.data.is_empty() {

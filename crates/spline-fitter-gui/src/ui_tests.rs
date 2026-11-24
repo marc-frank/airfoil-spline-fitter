@@ -717,25 +717,41 @@ fn a_missed_tolerance_is_not_a_solver_failure() {
     shot(&mut h, "m_missed_tolerance");
 }
 
-/// The Curvature extrema toggle marks on the curve the extrema the fit
-/// report counts, and is kept with the other display choices.
+/// The Curvature points toggle marks on the curve the extrema the fit
+/// report counts and the inflections, and is kept with the other display
+/// choices. A symmetric airfoil bends one way only; a strongly cambered
+/// one inflects where its lower surface turns concave.
 #[test]
-fn the_curvature_extrema_are_marked() {
+fn the_curvature_points_are_marked() {
     use egui_kittest::kittest::Queryable;
     let mut h = harness();
-    h.state_mut().new_naca_airfoil("2412", 41, true);
+    h.state_mut().new_naca_airfoil("0012", 41, true);
     h.run_steps(2);
     h.state_mut().on_fit();
     finish(&mut h);
     assert!(h.state().main_plot.extrema.is_empty(), "off by default");
-    h.get_by_label("Curvature extrema").click();
+    h.get_by_label("Curvature points").click();
     h.run_steps(3);
     let app = h.state();
     let count = app.fit.as_ref().unwrap().report.as_ref().unwrap().fairness.as_ref().unwrap().curvature_extrema;
     assert!(count > 0);
     assert_eq!(app.main_plot.extrema.len(), count);
+    assert!(app.main_plot.inflections.is_empty(), "{:?}", app.main_plot.inflections);
     assert!(app.store.bool("display/extrema", false));
-    shot(&mut h, "x_curvature_extrema");
+
+    // A fresh window: replacing the fitted airfoil would ask first.
+    let mut h = harness();
+    h.state_mut().main_plot.show_extrema = true;
+    h.state_mut().new_naca_airfoil("6412", 41, true);
+    h.run_steps(2);
+    h.state_mut().on_fit();
+    finish(&mut h);
+    // NACA 6412's lower surface turns concave near 20 % chord and stays so.
+    let inflections = &h.state().main_plot.inflections;
+    assert_eq!(inflections.len(), 1, "{inflections:?}");
+    let (_, q) = inflections[0];
+    assert!((q.x - 0.2).abs() < 0.03 && q.y < 0.0, "{q:?}");
+    shot(&mut h, "x_curvature_points");
 }
 
 /// Zoomed with the wheel, a plot stops following its data; the autoscale

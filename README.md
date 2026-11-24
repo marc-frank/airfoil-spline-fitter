@@ -234,9 +234,11 @@ Python results), and differs on purpose where the behaviour was a defect:
   RMS deviation. The runs plot plots the RMS deviation by default, a number
   in the filter (">1e-5") compares it, and the solver's error is called
   RMS error wherever it shows (status bar, convergence plot, run details).
-- A Curvature extrema toggle beside Curvature comb marks on the curve the
+- A Curvature points toggle beside Curvature comb marks on the curve the
   curvature extrema the fit report counts, each a dot in its section's comb
-  colour (kept between sessions); Python only gave their number.
+  colour, and the inflections (where the curvature changes sign, as on a
+  reflexed or concave surface), each a ring in that colour (kept between
+  sessions); Python only gave the number of extrema.
 - Every plot autoscales as pyqtgraph's do: it follows its data until you
   zoom or pan; then a button in its lower left corner (the corners of a
   frame, where pyqtgraph shows "A") or a double-click shows all the data

@@ -697,8 +697,8 @@ impl App {
                 self.main_plot.refresh_knots();
             }
             crate::dialogs::comb_toggle(self, ui);
-            let tip = "Mark where the curvature has a maximum or a minimum,\nthe curvature extrema the fit report counts.";
-            if widgets::toggle_button(ui, &p, "Curvature extrema", self.main_plot.show_extrema, tip).clicked() {
+            let tip = "Mark the curvature extrema the fit report counts (dots)\nand the inflections, where the curvature changes sign (rings).";
+            if widgets::toggle_button(ui, &p, "Curvature points", self.main_plot.show_extrema, tip).clicked() {
                 self.main_plot.show_extrema = !self.main_plot.show_extrema;
                 self.main_plot.refresh_extrema();
             }

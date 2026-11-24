@@ -155,6 +155,53 @@ pub fn curvature_extrema(curves: &[BSpline]) -> Vec<(usize, f64)> {
     kappas.iter().zip(&grids).enumerate().flat_map(|(s, (k, g))| turns(k, threshold).into_iter().map(move |i| (s, g[i]))).collect()
 }
 
+/// Where the signed curvature changes sign along the chain (inflections):
+/// `(curve, parameter)` of each. A sign counts once `|κ|` exceeds the
+/// threshold of [`fairness`], so rounding noise around a straight stretch
+/// is no inflection. The zero is found by bisection between the samples
+/// where the sign flips; a flip across a junction (curvature jumping
+/// through zero there) is placed at the start of the next curve.
+pub fn curvature_inflections(curves: &[BSpline]) -> Vec<(usize, f64)> {
+    let (grids, kappas, threshold, _) = curvature_samples(curves);
+    // The chain's samples in order: (curve, parameter, κ).
+    let samples: Vec<(usize, f64, f64)> =
+        grids.iter().zip(&kappas).enumerate().flat_map(|(s, (g, k))| g.iter().zip(k).map(move |(&u, &k)| (s, u, k))).collect();
+    let mut found = Vec::new();
+    // The last sample whose sign counted, and that sign.
+    let mut last: Option<(usize, f64)> = None;
+    for (i, &(_, _, k)) in samples.iter().enumerate() {
+        if k.abs() <= threshold {
+            continue;
+        }
+        let sign = k.signum();
+        if let Some((from, was)) = last {
+            if sign != was {
+                // The first raw sign change between the two signed samples.
+                let j = (from..i).find(|&j| samples[j + 1].2.signum() != was).unwrap_or(i - 1);
+                let (sa, ua, _) = samples[j];
+                let (sb, ub, _) = samples[j + 1];
+                found.push(if sa == sb { (sa, bisect_zero(&curves[sa], ua, ub, was)) } else { (sb, ub) });
+            }
+        }
+        last = Some((i, sign));
+    }
+    found
+}
+
+/// The parameter in `[a, b]` where the curvature of `curve` leaves the sign
+/// `sign` it has at `a`.
+fn bisect_zero(curve: &BSpline, mut a: f64, mut b: f64, sign: f64) -> f64 {
+    for _ in 0..60 {
+        let m = 0.5 * (a + b);
+        if curve.curvature(m) * sign > 0.0 {
+            a = m;
+        } else {
+            b = m;
+        }
+    }
+    0.5 * (a + b)
+}
+
 /// `κ` and `dκ/ds` (the third derivative is zero below degree 3).
 fn slope_at(curve: &BSpline, u: f64) -> (f64, f64) {
     curve.curvature_and_slope(u)
@@ -247,6 +294,41 @@ pub fn junctions(curves: &[BSpline]) -> Vec<JunctionMeasure> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A reflexed S-curve inflects once, where its curvature is zero, also
+    /// when the sign change falls on a junction; a curve that never changes
+    /// sign has none, in either direction of travel.
+    #[test]
+    fn curvature_inflections_are_the_sign_changes() {
+        // An S: bends left, then right (a reflex).
+        let s = |sign: f64| {
+            let points: Vec<Vec2> =
+                (0..9).map(|i| { let x = i as f64 / 8.0; Vec2::new(x, sign * 0.1 * (std::f64::consts::TAU * x).sin()) }).collect();
+            BSpline::uniform(5, points).unwrap()
+        };
+        for curve in [s(1.0), s(-1.0)] {
+            let found = curvature_inflections(&[curve.clone()]);
+            assert_eq!(found.len(), 1, "{found:?}");
+            let (_, u) = found[0];
+            assert!(curve.curvature(u).abs() < 1e-8 * curve.curvature(0.25).abs().max(1.0), "{}", curve.curvature(u));
+            assert!(curve.curvature(u - 0.05) * curve.curvature(u + 0.05) < 0.0);
+            // Reversed, the same point.
+            let reversed = BSpline { control_points: curve.control_points.iter().rev().copied().collect(), ..curve.clone() };
+            let back = curvature_inflections(&[reversed.clone()]);
+            assert_eq!(back.len(), 1);
+            assert!((reversed.point(back[0].1) - curve.point(u)).norm() < 1e-9);
+        }
+        // Two arcs meeting tangentially, bending right then left: the
+        // curvature jumps through zero at the junction.
+        let arc = |p: [[f64; 2]; 3]| BSpline::uniform(2, p.iter().map(|q| Vec2::new(q[0], q[1])).collect()).unwrap();
+        let a = arc([[0.0, 0.0], [1.0, 1.0], [2.0, 1.0]]);
+        let b = arc([[2.0, 1.0], [3.0, 1.0], [4.0, 2.0]]);
+        let found = curvature_inflections(&[a, b.clone()]);
+        assert_eq!(found, vec![(1, b.domain().0)]);
+        // A plain arc-like bump bends one way only.
+        let bump: Vec<Vec2> = (0..9).map(|i| { let x = i as f64 / 8.0; Vec2::new(x, 0.1 * (std::f64::consts::PI * x).sin()) }).collect();
+        assert!(curvature_inflections(&[BSpline::uniform(5, bump).unwrap()]).is_empty());
+    }
 
     /// The extrema found are the ones the fairness report counts, at the
     /// curvature's turns.
