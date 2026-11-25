@@ -62,9 +62,9 @@ mod native {
         dirs::home_dir().unwrap_or_default()
     }
 
-    /// A folder chosen in the native picker.
-    pub fn pick_folder(parent: Option<&ParentWindow>, title: &str) -> Option<PathBuf> {
-        file_dialog(parent).set_title(title).set_directory(home()).pick_folder()
+    /// A folder chosen in the native picker (`label`: Source or Target).
+    pub fn pick_folder(parent: Option<&ParentWindow>, label: &str) -> Option<PathBuf> {
+        file_dialog(parent).set_title(format!("{label} folder")).set_directory(home()).pick_folder()
     }
 
     /// Puts `text` on the clipboard.
@@ -93,8 +93,10 @@ mod web {
         }
     }
 
-    /// Folders are out of a web page's reach.
-    pub fn pick_folder(_parent: Option<&ParentWindow>, _title: &str) -> Option<PathBuf> {
+    /// Asks the browser for a folder (Chrome, Edge); it arrives later
+    /// (crate::web::Incoming::Folder).
+    pub fn pick_folder(_parent: Option<&ParentWindow>, label: &str) -> Option<PathBuf> {
+        crate::web::pick_folder(label == "Target");
         None
     }
 

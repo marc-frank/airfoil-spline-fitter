@@ -20,11 +20,14 @@ const MIN_PASTED_POINTS: usize = 5;
 /// Where a project comes from: a file, or the text of one the browser read.
 #[derive(Clone)]
 enum ProjectSource {
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     Path(PathBuf),
+    /// Read by the browser; `path` when it can be written back.
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     Text {
         name: String,
         text: String,
+        path: Option<String>,
     },
 }
 
@@ -65,18 +68,18 @@ impl App {
 
     /// Opens a file the browser read: an airfoil or a project.
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-    pub fn open_bytes(&mut self, name: &str, bytes: &[u8]) {
+    pub fn open_bytes(&mut self, name: &str, bytes: &[u8], path: Option<&str>) {
         if self.fitting() {
             self.set_status("Cancel the running fit to open a file");
             return;
         }
         let ext = extension(Path::new(name));
         if ext == ".asfproj" {
-            self.open_project_from(ProjectSource::Text { name: name.to_string(), text: decode(bytes) });
+            self.open_project_from(ProjectSource::Text { name: name.to_string(), text: decode(bytes), path: path.map(String::from) });
         } else if ext == ".dat" {
             let stem = Path::new(name).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
             let parsed = parse_airfoil_text(&decode(bytes), Some(&stem));
-            self.set_parsed_airfoil(Ok(parsed), &stem, "");
+            self.set_parsed_airfoil(Ok(parsed), &stem, path.unwrap_or(""));
         } else {
             self.set_status(format!("Unsupported file type: {ext}"));
         }
@@ -88,18 +91,25 @@ impl App {
             self.set_status("Cancel the running fit to open a file");
             return;
         }
-        if !path.is_file() {
-            self.store.remove_recent(&path.to_string_lossy());
-            self.fail(format!("File not found: {}", path.display()));
-            return;
-        }
-        if extension(path) == ".asfproj" {
-            self.open_project(path);
-        } else {
-            self.load_airfoil(path);
+        // The browser reopens a file it was allowed to keep; it answers later.
+        #[cfg(target_arch = "wasm32")]
+        crate::web::reopen(&path.to_string_lossy());
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if !path.is_file() {
+                self.store.remove_recent(&path.to_string_lossy());
+                self.fail(format!("File not found: {}", path.display()));
+                return;
+            }
+            if extension(path) == ".asfproj" {
+                self.open_project(path);
+            } else {
+                self.load_airfoil(path);
+            }
         }
     }
 
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     fn load_airfoil(&mut self, path: &Path) {
         let ext = extension(path);
         if ext != ".dat" {
@@ -241,7 +251,7 @@ impl App {
         default: &str,
         filter: (&str, &[&str]),
         make: impl FnOnce(&Path) -> Result<String>,
-    ) -> Option<Result<PathBuf>> {
+    ) -> Option<Result<Option<PathBuf>>> {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let path = self
@@ -253,16 +263,19 @@ impl App {
                 .save_file()?;
             Some(make(&path).and_then(|text| {
                 std::fs::write(&path, text).map_err(|e| spline_fitter::Error::new(e.to_string()))?;
-                Ok(path)
+                Ok(Some(path))
             }))
         }
         #[cfg(target_arch = "wasm32")]
         {
-            let _ = (title, filter);
+            // Chrome and Edge ask where (the answer arrives later); others download.
+            let _ = title;
             let path = PathBuf::from(default);
             Some(make(&path).and_then(|text| {
-                crate::web::download(default, &text).map_err(spline_fitter::Error::new)?;
-                Ok(path)
+                match crate::web::save_as(default, filter.0, filter.1, &text, false).map_err(spline_fitter::Error::new)? {
+                    crate::web::Saving::Downloaded => Ok(Some(path)),
+                    crate::web::Saving::Asked => Ok(None),
+                }
             }))
         }
     }
@@ -285,7 +298,8 @@ impl App {
         };
         match self.save_text_as("Save fitted airfoil", &default, ("Airfoil data", &["dat"]), make) {
             None => self.set_status("Save cancelled."),
-            Some(Ok(path)) => self.set_status(format!("{SAVED}: {}", path.display())),
+            Some(Ok(Some(path))) => self.set_status(format!("{SAVED}: {}", path.display())),
+            Some(Ok(None)) => {}
             Some(Err(e)) => self.fail(format!("Save failed: {e}")),
         }
     }
@@ -311,7 +325,8 @@ impl App {
         let make = |_: &Path| spline_data_text(&spline, Some(12));
         match self.save_text_as("Save spline control points", &default, ("Spline data", &["spline.dat", "dat"]), make) {
             None => self.set_status("Save cancelled."),
-            Some(Ok(path)) => self.set_status(format!("{SAVED}: {}", path.display())),
+            Some(Ok(Some(path))) => self.set_status(format!("{SAVED}: {}", path.display())),
+            Some(Ok(None)) => {}
             Some(Err(e)) => self.fail(format!("Save failed: {e}")),
         }
     }
@@ -348,7 +363,8 @@ impl App {
         };
         match self.save_text_as("Export CAD", &default, (label, &[suffix.trim_start_matches('.')]), make) {
             None => self.set_status("Export cancelled."),
-            Some(Ok(path)) => self.set_status(format!("Exported: {}", path.display())),
+            Some(Ok(Some(path))) => self.set_status(format!("Exported: {}", path.display())),
+            Some(Ok(None)) => {}
             Some(Err(e)) => self.fail(format!("Export failed: {e}")),
         }
     }
@@ -433,6 +449,7 @@ impl App {
         crate::web::pick_file("Open project", "Spline project", &["asfproj"]);
     }
 
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn open_project(&mut self, path: &Path) -> bool {
         self.open_project_from(ProjectSource::Path(path.to_path_buf()))
     }
@@ -444,7 +461,7 @@ impl App {
         }
         let (read, path) = match &source {
             ProjectSource::Path(path) => (load_project(path), path.clone()),
-            ProjectSource::Text { name, text } => (parse_project(text), PathBuf::from(name)),
+            ProjectSource::Text { name, text, path } => (parse_project(text), PathBuf::from(path.as_deref().unwrap_or(name))),
         };
         let path = path.as_path();
         let loaded = match read.and_then(|l| {
@@ -501,7 +518,7 @@ impl App {
         }
         self.explorer.forget_points();
         self.refresh_comparison();
-        if matches!(source, ProjectSource::Path(_)) {
+        if matches!(source, ProjectSource::Path(_) | ProjectSource::Text { path: Some(_), .. }) {
             self.store.add_recent(path);
         }
         true
@@ -513,10 +530,12 @@ impl App {
             return self.on_save_project_as();
         };
         match write_project(self.projects.file.as_mut().unwrap(), &path) {
-            Ok(()) => {
+            Ok(true) => {
                 self.projects.modified = false;
                 self.set_status(format!("{SAVED}: {}", path.display()));
             }
+            // The browser saves it and says so later (crate::web::Incoming::Saved).
+            Ok(false) => {}
             Err(e) => self.fail(format!("Save failed: {e}")),
         }
     }
@@ -573,7 +592,8 @@ impl App {
     /// Saves the project to `path`, which becomes its file.
     fn save_project_to(&mut self, path: PathBuf) {
         match write_project(self.projects.file.as_mut().unwrap(), &path) {
-            Ok(()) => {
+            Ok(false) => {}
+            Ok(true) => {
                 self.projects.path = Some(path.clone());
                 self.projects.modified = false;
                 self.store.add_recent(&path);
@@ -602,14 +622,24 @@ impl App {
     }
 }
 
-/// Saves a project to `path` (the browser downloads it under that name).
-fn write_project(project: &mut ProjectFile, path: &Path) -> Result<()> {
+/// Saves a project to `path`; false when the browser finishes it later.
+/// The browser writes over a file it was given (Chrome, Edge), asks where
+/// to save a new one there, and elsewhere downloads it under its name.
+fn write_project(project: &mut ProjectFile, path: &Path) -> Result<bool> {
     #[cfg(not(target_arch = "wasm32"))]
-    return spline_fitter::project::save_project(project, path);
+    return spline_fitter::project::save_project(project, path).map(|()| true);
     #[cfg(target_arch = "wasm32")]
     {
         let text = spline_fitter::project::project_text_to_save(project);
-        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        crate::web::download(&name, &text).map_err(spline_fitter::Error::new)
+        let path = path.to_string_lossy();
+        if crate::web::fsa_id(&path).is_some() {
+            crate::web::save_in_place(&path, &text, true);
+            return Ok(false);
+        }
+        let name = crate::web::name_of(&path);
+        match crate::web::save_as(&name, "Spline project", &["asfproj"], &text, true).map_err(spline_fitter::Error::new)? {
+            crate::web::Saving::Downloaded => Ok(true),
+            crate::web::Saving::Asked => Ok(false),
+        }
     }
 }

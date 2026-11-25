@@ -1,0 +1,13 @@
+{
+  "name": "Airfoil Spline Fitter",
+  "short_name": "Spline Fitter",
+  "description": "B-spline fitting of airfoil coordinates for CAD",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#282828",
+  "theme_color": "#282828",
+  "icons": [
+    { "src": "app_icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

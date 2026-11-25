@@ -17,8 +17,17 @@ use crate::store::Store;
 use crate::theme::{self, size, typeface, Palette, ThemeMode};
 use crate::widgets;
 
-/// The browser version (packaging/web): no recent files, folders or Exit.
+/// The browser version (packaging/web): no Exit.
 const WEB: bool = cfg!(target_arch = "wasm32");
+
+/// Whether files and folders can be kept and written back: always on the
+/// desktop, in Chrome and Edge in the browser (recent files, batch).
+fn keeps_files() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    return crate::web::files_supported();
+    #[cfg(not(target_arch = "wasm32"))]
+    true
+}
 
 pub const DEFAULT_SCROLL_MS: u64 = 350;
 pub const DEFAULT_ZOOM_MS: u64 = 650;
@@ -447,6 +456,34 @@ impl App {
         }
     }
 
+    /// What the browser brought since the last frame (crate::web).
+    #[cfg(target_arch = "wasm32")]
+    fn incoming(&mut self, item: crate::web::Incoming) {
+        use crate::web::Incoming;
+        match item {
+            Incoming::File { name, bytes, path } => self.open_bytes(&name, &bytes, path.as_deref()),
+            Incoming::Text(text) => self.paste_text(&text),
+            Incoming::Saved { path, project } => {
+                if project {
+                    self.projects.path = Some(std::path::PathBuf::from(&path));
+                    self.projects.modified = false;
+                    self.store.add_recent(std::path::Path::new(&path));
+                }
+                self.set_status(format!("Saved: {}", crate::web::name_of(&path)));
+            }
+            Incoming::Status(text) => self.set_status(text),
+            Incoming::Failed(text) => self.fail(text),
+            Incoming::Folder { target, path } => {
+                if target {
+                    self.batch_target = path;
+                } else {
+                    self.batch_source = path;
+                }
+            }
+            Incoming::Batch { sources, existing } => self.start_batch_with(sources, existing),
+        }
+    }
+
     fn dropped_files(&mut self, ctx: &egui::Context) {
         let files: Vec<_> = ctx.input(|i| i.raw.dropped_files.clone());
         if self.fitting() {
@@ -512,7 +549,7 @@ impl App {
                 if m.item(ui, &p, entries[1], !fitting, None) {
                     self.on_open_airfoil();
                 }
-                ui.add_enabled_ui(!fitting && !WEB, |ui| {
+                ui.add_enabled_ui(!fitting && keeps_files(), |ui| {
                     ui.spacing_mut().button_padding.x = m.text_x;
                     let id = ui.next_auto_id();
                     if self.open_submenu == Some(id) {
@@ -560,7 +597,7 @@ impl App {
                     self.on_save_project_as();
                 }
                 menu_separator(ui);
-                if m.item(ui, &p, entries[9], !fitting && !WEB, None) {
+                if m.item(ui, &p, entries[9], !fitting && keeps_files(), None) {
                     self.dialog = Some(Dialog::batch());
                 }
                 menu_separator(ui);
@@ -641,7 +678,7 @@ impl App {
             // The first nine are numbered, the number their access key.
             let name = name.replace('&', "&&");
             let text = if i < 9 { format!("&{} {name}", i + 1) } else { name };
-            let button = ui.button(access_key(&text).0).on_hover_text(file);
+            let button = ui.button(access_key(&text).0).on_hover_text(crate::store::shown_path(file));
             underline_button(ui, &button, &text, false);
             if button.clicked() || access_key_pressed(ui, &text) {
                 ui.close();
@@ -956,10 +993,7 @@ impl eframe::App for App {
         self.dropped_files(&ctx);
         #[cfg(target_arch = "wasm32")]
         for item in crate::web::take() {
-            match item {
-                crate::web::Incoming::File { name, bytes } => self.open_bytes(&name, &bytes),
-                crate::web::Incoming::Text(text) => self.paste_text(&text),
-            }
+            self.incoming(item);
         }
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(self.title()));
 
@@ -999,6 +1033,8 @@ impl eframe::App for App {
         if self.fitting() {
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
+        #[cfg(target_arch = "wasm32")]
+        crate::web::set_unsaved((self.projects.file.is_some() && self.projects.modified) || self.fitting());
         if std::mem::take(&mut self.close_now) {
             if let Some(r) = &self.running {
                 r.cancel();

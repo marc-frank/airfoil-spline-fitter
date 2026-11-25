@@ -1002,6 +1002,211 @@ pub fn parse_project(text: &str) -> Result<LoadedProject> {
     Ok(LoadedProject { project: ProjectFile { metadata, airfoil, runs, searches }, warnings })
 }
 
+/// Messages between the browser version's window and its fitting worker
+/// (a web worker running the fit on a thread of its own): the fit to run,
+/// its updates and its result, as JSON in the project file's encoding, so
+/// every setting and number arrives exactly.
+pub mod wire {
+    use super::*;
+    use crate::optimize::{RawResult, SearchOutcome, Update, UpdateKind};
+
+    /// The fit for the worker to run.
+    pub fn request(config: &SplineConfig, options: &OptimizationConfig, airfoil: &AirfoilData) -> String {
+        obj(vec![
+            ("spline_config", encode_spline_config(config)),
+            ("optimization_config", encode_optimization_config(options)),
+            ("airfoil", encode_airfoil(airfoil)),
+        ])
+        .to_text()
+    }
+
+    pub fn parse_request(text: &str) -> Result<(SplineConfig, OptimizationConfig, AirfoilData)> {
+        let json = Json::parse(text).map_err(Error::new)?;
+        let part = Part { json: &json, place: "Fit request" };
+        let config = decode_spline_config(part.field("spline_config")?, "Fit request")?;
+        let (options, _) = decode_optimization_config(part.field("optimization_config")?, "Fit request")?;
+        let airfoil = decode_airfoil(part.field("airfoil")?)?;
+        Ok((config, options, airfoil))
+    }
+
+    /// An [`Update`] that owns its data, as it arrives from the worker.
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct OwnedUpdate {
+        pub kind: UpdateKind,
+        pub control_points: Vec<Vec<Vec2>>,
+        pub knots: Vec<Vec<f64>>,
+        pub degree: usize,
+        pub error: f64,
+        pub evaluations: usize,
+    }
+
+    impl OwnedUpdate {
+        pub fn as_update(&self) -> Update<'_> {
+            Update {
+                kind: self.kind,
+                control_points: &self.control_points,
+                knots: &self.knots,
+                degree: self.degree,
+                error: self.error,
+                evaluations: self.evaluations,
+            }
+        }
+    }
+
+    /// What the worker reports.
+    #[derive(Debug, Clone, PartialEq)]
+    pub enum Message {
+        Update(OwnedUpdate),
+        /// The finished fit, or why it failed.
+        Done(std::result::Result<RawResult, String>),
+    }
+
+    pub fn update(u: &Update) -> String {
+        obj(vec![
+            ("type", string("update")),
+            ("refit", Json::Bool(u.kind == UpdateKind::Refit)),
+            ("control_points", Json::Array(u.control_points.iter().map(|s| points(s)).collect())),
+            ("knots", Json::Array(u.knots.iter().map(|k| floats(k)).collect())),
+            ("degree", int(u.degree)),
+            ("error", float(u.error)),
+            ("evaluations", int(u.evaluations)),
+        ])
+        .to_text()
+    }
+
+    pub fn done(result: &Result<RawResult>) -> String {
+        match result {
+            Ok(r) => obj(vec![("type", string("result")), ("result", encode_raw(r))]),
+            Err(e) => obj(vec![("type", string("error")), ("message", string(&e.0))]),
+        }
+        .to_text()
+    }
+
+    pub fn parse(text: &str) -> Result<Message> {
+        let json = Json::parse(text).map_err(Error::new)?;
+        let part = Part { json: &json, place: "Worker message" };
+        Ok(match part.text("type")? {
+            "update" => Message::Update(OwnedUpdate {
+                kind: if part.bool_or("refit", false)? { UpdateKind::Refit } else { UpdateKind::Evaluation },
+                control_points: part.sections("control_points")?,
+                knots: knot_lists(&part, "knots")?,
+                degree: part.count("degree")?,
+                error: part.float("error")?,
+                evaluations: part.count("evaluations")?,
+            }),
+            "result" => Message::Done(Ok(decode_raw(part.field("result")?)?)),
+            "error" => Message::Done(Err(part.text("message")?.to_string())),
+            other => bail!("Worker message: unknown type '{other}'."),
+        })
+    }
+
+    fn knot_lists(part: &Part, key: &str) -> Result<Vec<Vec<f64>>> {
+        part.list(key)?.iter().map(|k| part.floats_of(key, k)).collect()
+    }
+
+    fn encode_raw(r: &RawResult) -> Json {
+        let search = r.search.as_ref().map_or(Json::Null, |s| {
+            obj(vec![
+                ("count", int(s.count)),
+                ("deviation", float(s.deviation)),
+                ("max_deviation", float(s.max_deviation)),
+                ("met", Json::Bool(s.met)),
+                ("message", string(&s.message)),
+                ("fits", int(s.fits)),
+                ("evaluations", int(s.evaluations)),
+                ("seconds", float(s.seconds)),
+            ])
+        });
+        obj(vec![
+            ("control_points", Json::Array(r.section_control_points.iter().map(|s| points(s)).collect())),
+            ("knots", r.section_knots.as_ref().map_or(Json::Null, |k| Json::Array(k.iter().map(|k| floats(k)).collect()))),
+            ("error", float(r.error)),
+            ("rms_error", float(r.rms_error)),
+            ("iterations", int(r.iterations)),
+            ("evaluations", int(r.evaluations)),
+            ("success", Json::Bool(r.success)),
+            ("message", string(&r.message)),
+            ("seconds", opt_float(r.seconds)),
+            ("earlier", Json::Array(r.earlier.iter().map(encode_raw).collect())),
+            ("search", search),
+        ])
+    }
+
+    fn decode_raw(json: &Json) -> Result<RawResult> {
+        let part = Part { json, place: "Fit result" };
+        let search = match part.optional("search") {
+            None => None,
+            Some(s) => {
+                let s = Part { json: s, place: "Fit result" };
+                Some(SearchOutcome {
+                    count: s.count("count")?,
+                    deviation: s.float("deviation")?,
+                    max_deviation: s.float("max_deviation")?,
+                    met: s.bool_or("met", false)?,
+                    message: s.text("message")?.to_string(),
+                    fits: s.count("fits")?,
+                    evaluations: s.count("evaluations")?,
+                    seconds: s.float("seconds")?,
+                })
+            }
+        };
+        Ok(RawResult {
+            section_control_points: part.sections("control_points")?,
+            section_knots: match part.optional("knots") {
+                None => None,
+                Some(_) => Some(knot_lists(&part, "knots")?),
+            },
+            error: part.float("error")?,
+            rms_error: part.float("rms_error")?,
+            iterations: part.count("iterations")?,
+            evaluations: part.count("evaluations")?,
+            success: part.bool_or("success", false)?,
+            message: part.text("message")?.to_string(),
+            seconds: part.opt_float("seconds")?,
+            earlier: part.list("earlier")?.iter().map(decode_raw).collect::<Result<_>>()?,
+            search,
+        })
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::optimize::{run_optimization, Monitor};
+
+        /// Records the updates as the worker would send them.
+        struct Sent(Vec<String>);
+
+        impl Monitor for Sent {
+            fn update(&mut self, u: &Update) -> bool {
+                self.0.push(update(u));
+                false
+            }
+        }
+
+        #[test]
+        fn a_fit_crosses_to_the_worker_and_back_exactly() {
+            let coords = bspline_varpro::airfoil::Naca4::new("2412", true).unwrap().points(40);
+            let airfoil = AirfoilData::new(coords, 2, "naca2412", "NACA 2412", 6).unwrap();
+            let config = SplineConfig { junction_continuity: vec!["G2".into()], ..SplineConfig::default() };
+            let options = OptimizationConfig { tolerance: Some(1e-4), smoothing_weight: 0.1 + 0.2, ..Default::default() };
+            let (c, o, a) = parse_request(&request(&config, &options, &airfoil)).unwrap();
+            assert_eq!((&c, &o, &a.coordinates, &a.junction_indices), (&config, &options, &airfoil.coordinates, &airfoil.junction_indices));
+
+            let mut sent = Sent(vec![]);
+            let result = run_optimization(&c, &o, &a, &mut sent);
+            assert!(!sent.0.is_empty());
+            for text in &sent.0 {
+                assert!(matches!(parse(text).unwrap(), Message::Update(_)));
+            }
+            let raw = result.clone().unwrap();
+            assert!(!raw.earlier.is_empty() && raw.search.is_some(), "a tolerance search, with earlier fits");
+            assert_eq!(parse(&done(&result)).unwrap(), Message::Done(Ok(raw)));
+            let failed: Result<RawResult> = Err(Error::new("no"));
+            assert_eq!(parse(&done(&failed)).unwrap(), Message::Done(Err("no".into())));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

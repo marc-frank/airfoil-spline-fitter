@@ -7,8 +7,10 @@ step when the library's or the app's fitting API changes).
 The GUI also builds for the browser (`wasm32-unknown-unknown`, Trunk, GitHub
 Pages): keep desktop-only code (files by path, threads, clipboard, sound)
 behind `cfg(target_arch = "wasm32")`, with the browser side in `parent.rs`
-and `web.rs`, use `web_time::Instant`, and check
-`cargo check -p spline-fitter-gui --target wasm32-unknown-unknown`.
+and `web.rs` (with `web/fs.js`), use `web_time::Instant`, and check
+`cargo check -p spline-fitter-gui --target wasm32-unknown-unknown`. In the
+browser fits run in `crates/spline-fitter-worker` (a web worker); its
+messages are `spline_fitter::project::wire`.
 Release packaging: `packaging/` and `.github/workflows/`.
 [docs/spec.md](docs/spec.md) specifies the behaviour; README.md lists where the
 Rust version deliberately differs from it.

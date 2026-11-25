@@ -16,9 +16,12 @@ pub fn semibold_id(size: f32) -> FontId {
 }
 
 /// Candidate font files, first found wins.
+#[cfg(not(target_arch = "wasm32"))]
 const PROPORTIONAL: &[&str] =
     &["C:/Windows/Fonts/segoeui.ttf", "/System/Library/Fonts/SFNS.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"];
+#[cfg(not(target_arch = "wasm32"))]
 const SEMIBOLD: &[&str] = &["C:/Windows/Fonts/seguisb.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"];
+#[cfg(not(target_arch = "wasm32"))]
 const MONOSPACE: &[&str] = &[
     "C:/Windows/Fonts/CascadiaMono.ttf",
     "C:/Windows/Fonts/consola.ttf",
@@ -26,6 +29,27 @@ const MONOSPACE: &[&str] = &[
     "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
 ];
 
+/// The browser reads no system fonts: it carries Selawik (Microsoft's
+/// open stand-in for Segoe UI, with the same advances) and Cascadia Mono,
+/// both under the SIL Open Font License (assets/fonts).
+#[cfg(target_arch = "wasm32")]
+pub fn install(ctx: &egui::Context) {
+    let mut fonts = FontDefinitions::default();
+    let mut add = |name: &str, bytes: &'static [u8], family: FontFamily| {
+        fonts.font_data.insert(name.into(), Arc::new(FontData::from_static(bytes)));
+        fonts.families.entry(family).or_default().insert(0, name.into());
+    };
+    add("Selawik", include_bytes!("../assets/fonts/Selawik-Regular.ttf"), FontFamily::Proportional);
+    add("Cascadia Mono", include_bytes!("../assets/fonts/CascadiaMono.ttf"), FontFamily::Monospace);
+    let mut bold = fonts.families[&FontFamily::Proportional].clone();
+    fonts.font_data.insert("Selawik Semibold".into(), Arc::new(FontData::from_static(include_bytes!("../assets/fonts/Selawik-Semibold.ttf"))));
+    bold.insert(0, "Selawik Semibold".into());
+    fonts.families.insert(semibold(), bold);
+    SEGOE.store(true, std::sync::atomic::Ordering::Relaxed);
+    ctx.set_fonts(fonts);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub fn install(ctx: &egui::Context) {
     let mut fonts = FontDefinitions::default();
     for (family, candidates) in [(FontFamily::Proportional, PROPORTIONAL), (FontFamily::Monospace, MONOSPACE)] {

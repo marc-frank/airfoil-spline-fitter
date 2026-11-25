@@ -82,10 +82,21 @@ The same app runs in the browser: [Trunk](https://trunkrs.dev) builds it to
 WebAssembly (`cd crates/spline-fitter-gui && trunk serve` for a local copy),
 and the Pages workflow ([`.github/workflows/pages.yml`](.github/workflows/pages.yml))
 publishes it on GitHub Pages on every push to `main` (once Settings > Pages >
-Source is set to GitHub Actions). In the browser, files are opened with the
-browser's file picker or by dropping them on the page and saved as downloads;
-there are no recent files, batch conversion or sounds, and a fit runs on the
-page's only thread, so the page does not respond until it is done.
+Source is set to GitHub Actions). In the browser:
+
+- Fits run in a web worker ([`crates/spline-fitter-worker`](crates/spline-fitter-worker)),
+  so the page stays responsive with the live preview; Cancel ends the worker
+  and keeps its last step. Fits use one thread there, so free-knot fits are
+  slower than on the desktop, and the Detailed live mode draws as often as it
+  can instead of after every step.
+- In Chrome and Edge, files are opened and saved through the File System
+  Access API: Save writes over the opened project, recent files reopen, and
+  batch conversion works on folders. Other browsers open with the file picker
+  or by dropping a file on the page and save as downloads.
+- The page asks before it is closed with unsaved runs, works offline after
+  one visit, and can be installed as an app. It carries Selawik (Microsoft's
+  open stand-in for Segoe UI) and Cascadia Mono, both under the SIL Open Font
+  License, so it looks as on Windows.
 
 ## Python
 

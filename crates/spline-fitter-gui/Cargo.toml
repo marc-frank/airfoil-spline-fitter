@@ -35,7 +35,9 @@ wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
 web-sys = { version = "0.3", features = [
     "Blob", "BlobPropertyBag", "Clipboard", "Document", "Element", "HtmlAnchorElement", "HtmlCanvasElement",
-    "Navigator", "Storage", "Url", "Window",
+    "Navigator", "Storage", "Url", "Window", "Worker", "MessageEvent",
+    "AudioContext", "BaseAudioContext", "AudioNode", "AudioDestinationNode", "AudioParam", "GainNode",
+    "OscillatorNode", "OscillatorType", "AudioScheduledSourceNode",
 ] }
 
 [build-dependencies]

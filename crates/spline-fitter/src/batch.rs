@@ -7,7 +7,7 @@ use bspline_varpro::KnotPlacement;
 
 use crate::analysis::default_tolerance;
 use crate::geometry::AirfoilData;
-use crate::io::{export_spline_data, parse_airfoil_file, SplineFile};
+use crate::io::{decode, parse_airfoil_file, parse_airfoil_text, spline_data_text, ParsedAirfoil, SplineFile};
 use crate::models::{OptimizationConfig, OptimizerType, Parameterization, SplineConfig};
 use crate::optimize::{run_optimization, Monitor, RawResult};
 use crate::{bail, Error, Result};
@@ -90,13 +90,16 @@ pub fn airfoil_files(folder: &Path) -> Result<Vec<String>> {
     let mut names: Vec<String> = entries
         .filter_map(|e| e.ok())
         .map(|e| e.file_name().to_string_lossy().into_owned())
-        .filter(|n| {
-            let lower = n.to_lowercase();
-            lower.ends_with(".dat") && !lower.contains(".spline.")
-        })
+        .filter(|n| is_airfoil_file(n))
         .collect();
     names.sort();
     Ok(names)
+}
+
+/// Whether a file name is a batch's airfoil: `.dat`, not a spline file.
+pub fn is_airfoil_file(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    lower.ends_with(".dat") && !lower.contains(".spline.")
 }
 
 /// What happened to one file of a batch.
@@ -118,8 +121,34 @@ pub struct BatchItem {
 
 /// Reads one source file and names its output in `target`.
 pub fn prepare(source: &Path, target: &Path, config: &SplineConfig, opt: &OptimizationConfig, auto_tolerance: bool) -> Result<BatchItem> {
-    let Some(parsed) = parse_airfoil_file(source)? else { bail!("Failed to parse") };
     let file_name = source.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    prepare_parsed(parse_airfoil_file(source)?, &file_name, target, config, opt, auto_tolerance)
+}
+
+/// [`prepare`] for a file already read (the browser reads a batch's files
+/// first): its name and contents.
+pub fn prepare_bytes(
+    name: &str,
+    bytes: &[u8],
+    target: &Path,
+    config: &SplineConfig,
+    opt: &OptimizationConfig,
+    auto_tolerance: bool,
+) -> Result<BatchItem> {
+    let file_name = Path::new(name).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    prepare_parsed(parse_airfoil_text(&decode(bytes), Some(&file_name)), &file_name, target, config, opt, auto_tolerance)
+}
+
+fn prepare_parsed(
+    parsed: Option<ParsedAirfoil>,
+    file_name: &str,
+    target: &Path,
+    config: &SplineConfig,
+    opt: &OptimizationConfig,
+    auto_tolerance: bool,
+) -> Result<BatchItem> {
+    let Some(parsed) = parsed else { bail!("Failed to parse") };
+    let file_name = file_name.to_string();
     let name = parsed.name.unwrap_or_else(|| file_name.clone());
     let airfoil = AirfoilData::new(parsed.coords, config.num_sections, &file_name, &name, parsed.precision)?;
     let stem = if file_name.is_empty() { &name } else { &file_name };
@@ -156,6 +185,12 @@ pub fn convert(
 
 /// Writes the fitted spline of a batch item (with 12 decimals).
 pub fn write_result(item: &BatchItem, config: &SplineConfig, result: &RawResult) -> Result<()> {
+    let text = result_text(item, config, result)?;
+    std::fs::write(&item.output, text).map_err(|e| Error::new(e.to_string()))
+}
+
+/// The text [`write_result`] writes.
+pub fn result_text(item: &BatchItem, config: &SplineConfig, result: &RawResult) -> Result<String> {
     let a = &item.airfoil;
     let spline = SplineFile {
         name: if a.name.is_empty() { a.filename.clone() } else { a.name.clone() },
@@ -164,7 +199,7 @@ pub fn write_result(item: &BatchItem, config: &SplineConfig, result: &RawResult)
         knots: result.section_knots.clone(),
         continuity: Some(config.junction_specs()),
     };
-    export_spline_data(&item.output, &spline, Some(12))
+    spline_data_text(&spline, Some(12))
 }
 
 #[cfg(test)]

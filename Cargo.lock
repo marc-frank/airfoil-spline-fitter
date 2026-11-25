@@ -3588,6 +3588,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "spline-fitter-worker"
+version = "0.1.0"
+dependencies = [
+ "js-sys",
+ "spline-fitter",
+ "wasm-bindgen",
+ "web-sys",
+ "web-time",
+]
+
+[[package]]
 name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

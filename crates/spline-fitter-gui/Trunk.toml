@@ -6,7 +6,8 @@ target = "index.html"
 dist = "../../dist/web"
 # Relative URLs, so the site works under any path (https://<user>.github.io/<repo>/).
 public_url = "./"
-filehash = true
+# Fixed names: the fitting worker and the offline cache (web/sw.js) load files by name.
+filehash = false
 
 [serve]
 addresses = ["127.0.0.1"]

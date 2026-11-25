@@ -365,12 +365,13 @@ impl App {
                         form_row(ui, &p, label, true, "", |ui| {
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                 if dialog_button(ui, &p, "Choose...", false, true) {
-                                    if let Some(dir) = crate::parent::pick_folder(parent, &format!("{label} folder")) {
+                                    if let Some(dir) = crate::parent::pick_folder(parent, label) {
                                         *folder = dir.to_string_lossy().into_owned();
                                     }
                                 }
                                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                                    let text = if folder.is_empty() { "Not chosen" } else { folder.as_str() };
+                                    // A folder the browser picked shows by its name.
+                                    let text = if folder.is_empty() { "Not chosen" } else { crate::store::shown_path(folder) };
                                     ui.add(egui::Label::new(RichText::new(text).color(p.text_3)).truncate());
                                 });
                             });

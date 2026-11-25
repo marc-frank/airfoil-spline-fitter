@@ -5,7 +5,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use web_time::Instant;
 
-use spline_fitter::batch::{airfoil_files, prepare, write_result, BatchItem};
+#[cfg(not(target_arch = "wasm32"))]
+use spline_fitter::batch::airfoil_files;
+use spline_fitter::batch::{prepare, prepare_bytes, result_text, write_result, BatchItem};
 use spline_fitter::bspline_varpro::KnotPlacement;
 use spline_fitter::formatting::{format_count, format_duration, format_error, number};
 use spline_fitter::geometry::AirfoilData;
@@ -45,6 +47,14 @@ pub struct Batch {
     failed: usize,
     skipped: usize,
     started: Instant,
+    /// The browser's batch: the source files read first and the names in
+    /// the target folder, which it writes into as each fit finishes.
+    read: Option<ReadFolders>,
+}
+
+struct ReadFolders {
+    sources: std::collections::HashMap<String, Vec<u8>>,
+    existing: std::collections::HashSet<String>,
 }
 
 /// What runs in the background.
@@ -649,6 +659,37 @@ impl App {
     // -----------------------------------------------------------------
     // Batch conversion
 
+    /// The browser: reads the folders first (Chrome, Edge); the batch starts
+    /// when they arrive (`start_batch_with`).
+    #[cfg(target_arch = "wasm32")]
+    pub fn start_batch(&mut self) {
+        if crate::web::fsa_id(&self.batch_source).is_none() {
+            return self.set_status("Choose a source folder first.");
+        }
+        if crate::web::fsa_id(&self.batch_target).is_none() {
+            return self.set_status("Choose a target folder first.");
+        }
+        self.set_status("Reading the folders...");
+        crate::web::read_batch(&self.batch_source, &self.batch_target);
+    }
+
+    /// The browser's batch, from the files of its folders.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    pub fn start_batch_with(&mut self, sources: Vec<(String, Vec<u8>)>, existing: Vec<String>) {
+        if self.fitting() {
+            return;
+        }
+        let mut files: Vec<String> =
+            sources.iter().map(|(name, _)| name.clone()).filter(|n| spline_fitter::batch::is_airfoil_file(n)).collect();
+        files.sort();
+        if files.is_empty() {
+            return self.set_status("No .dat files in the source folder.");
+        }
+        let read = ReadFolders { sources: sources.into_iter().collect(), existing: existing.into_iter().collect() };
+        self.begin_batch(files, PathBuf::from(&self.batch_source), PathBuf::from(&self.batch_target), Some(read));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn start_batch(&mut self) {
         let (source, target) = (PathBuf::from(&self.batch_source), PathBuf::from(&self.batch_target));
         if self.batch_source.is_empty() || !source.is_dir() {
@@ -661,6 +702,10 @@ impl App {
             Ok(f) if !f.is_empty() => f,
             _ => return self.set_status("No .dat files in the source folder."),
         };
+        self.begin_batch(files, source, target, None);
+    }
+
+    fn begin_batch(&mut self, files: Vec<String>, source: PathBuf, target: PathBuf, read: Option<ReadFolders>) {
         let (config, opt) = match (self.settings.spline_config(), self.settings.optimization_config()) {
             (Ok(c), Ok(o)) => (c, o),
             (Err(e), _) | (_, Err(e)) => return self.set_status(e.0),
@@ -679,6 +724,7 @@ impl App {
             failed: 0,
             skipped: 0,
             started: Instant::now(),
+            read,
         };
         self.next_batch_file(Box::new(batch));
     }
@@ -693,14 +739,25 @@ impl App {
             let file = batch.files[batch.index].clone();
             batch.index += 1;
             let mut opt = batch.opt.clone();
-            match prepare(&batch.source.join(&file), &batch.target, &batch.config, &batch.opt, batch.auto) {
+            let prepared = match &batch.read {
+                Some(read) => {
+                    let bytes = read.sources.get(&file).map_or(&[][..], Vec::as_slice);
+                    prepare_bytes(&file, bytes, &batch.target, &batch.config, &batch.opt, batch.auto)
+                }
+                None => prepare(&batch.source.join(&file), &batch.target, &batch.config, &batch.opt, batch.auto),
+            };
+            let exists = |item: &BatchItem| match &batch.read {
+                Some(read) => item.output.file_name().is_some_and(|n| read.existing.contains(&*n.to_string_lossy())),
+                None => item.output.exists(),
+            };
+            match prepared {
                 Err(e) => {
                     batch.failed += 1;
                     self.fail(format!("[{idx}/{total}] Failed: {file} - {e}"));
                 }
-                Ok(item) if item.output.exists() => {
+                Ok(item) if exists(&item) => {
                     batch.skipped += 1;
-                    self.set_status(format!("[{idx}/{total}] Skip: {}", item.output.display()));
+                    self.set_status(format!("[{idx}/{total}] Skip: {}", crate::store::shown_path(&item.output.to_string_lossy())));
                 }
                 Ok(item) => {
                     if opt.tolerance.is_some() && batch.auto {
@@ -736,7 +793,16 @@ impl App {
                 return Err(spline_fitter::Error::new(format!("Optimizer did not converge: {}", outcome.raw.message)));
             }
             self.main_plot.show_curves(outcome.fit.curves());
-            write_result(&item, &batch.config, &outcome.raw)?;
+            match &mut batch.read {
+                // The browser writes into the target folder it was given.
+                Some(read) => {
+                    let text = result_text(&item, &batch.config, &outcome.raw)?;
+                    let name = item.output.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    write_in_folder(&batch.target, &name, &text);
+                    read.existing.insert(name);
+                }
+                None => write_result(&item, &batch.config, &outcome.raw)?,
+            }
             Ok(Some(outcome))
         });
         match result {
@@ -779,4 +845,15 @@ impl App {
             self.show_current_fit();
         }
     }
+}
+
+/// Writes a batch result into the browser's target folder.
+#[cfg(target_arch = "wasm32")]
+fn write_in_folder(folder: &std::path::Path, name: &str, text: &str) {
+    crate::web::write_in_folder(&folder.to_string_lossy(), name, text);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn write_in_folder(folder: &std::path::Path, name: &str, text: &str) {
+    let _ = std::fs::write(folder.join(name), text);
 }

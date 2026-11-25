@@ -17,6 +17,15 @@ pub struct Store {
     values: Map<String, Value>,
 }
 
+/// A path as the user knows it: a file the browser keeps
+/// (`fsa/<id>/<name>`, crate::web) by its name.
+pub fn shown_path(path: &str) -> &str {
+    match path.strip_prefix("fsa/") {
+        Some(rest) => rest.split_once('/').map_or(rest, |(_, name)| name),
+        None => path,
+    }
+}
+
 impl Store {
     pub fn open() -> Self {
         if cfg!(test) {
@@ -109,7 +118,8 @@ impl Store {
 
     /// Puts a path at the top of the recent files (at most ten).
     pub fn add_recent(&mut self, path: &std::path::Path) {
-        if cfg!(target_arch = "wasm32") {
+        // The browser can reopen only files it was allowed to keep.
+        if cfg!(target_arch = "wasm32") && !path.starts_with("fsa/") {
             return;
         }
         let full = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf()).to_string_lossy().into_owned();
@@ -120,6 +130,7 @@ impl Store {
         self.set_recent_files(&files);
     }
 
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn remove_recent(&mut self, path: &str) {
         let key = path.to_lowercase();
         let files: Vec<String> = self.recent_files().into_iter().filter(|f| f.to_lowercase() != key).collect();

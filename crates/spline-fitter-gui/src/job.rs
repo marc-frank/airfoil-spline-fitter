@@ -4,10 +4,12 @@
 //! publishes the latest curves and status text, and, in the Detailed live
 //! mode, waits until the window has drawn each step.
 //!
-//! The browser has no threads (GitHub Pages cannot send the headers shared
-//! memory needs): there the fit runs on the window's own thread, one frame
-//! after it starts so the window shows that it is fitting, and the window
-//! waits for it.
+//! In the browser the worker is a web worker (crates/spline-fitter-worker):
+//! the fit goes to it as a message and its updates and result come back as
+//! messages, which the window feeds through the same monitor each frame.
+//! A web worker cannot be asked to stop, so Cancel ends it and keeps the
+//! last step it reported. The Detailed mode cannot hold the worker at each
+//! step there and draws as often as it can.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -20,7 +22,9 @@ use spline_fitter::analysis::fit_report_for;
 use spline_fitter::formatting::{format_duration, format_error};
 use spline_fitter::geometry::AirfoilData;
 use spline_fitter::models::{FitResult, OptimizationConfig, SplineConfig};
-use spline_fitter::optimize::{run_optimization, Monitor, RawResult, Update, UpdateKind};
+#[cfg(not(target_arch = "wasm32"))]
+use spline_fitter::optimize::run_optimization;
+use spline_fitter::optimize::{Monitor, RawResult, Update, UpdateKind};
 use spline_fitter::run_log::ErrorLog;
 use spline_fitter::{Result, Vec2};
 
@@ -200,7 +204,7 @@ pub struct FitJob {
     #[cfg(not(target_arch = "wasm32"))]
     handle: Option<JoinHandle<Result<Outcome>>>,
     #[cfg(target_arch = "wasm32")]
-    handle: Option<std::cell::RefCell<InPlace>>,
+    handle: Option<browser::WorkerFit>,
     last_draw: Option<Instant>,
     last_status: Option<Instant>,
     /// Refits of a tolerance search already in the runs plot.
@@ -226,7 +230,7 @@ impl FitJob {
             .spawn(move || work(c, o, a, monitor))
             .expect("the worker thread starts");
         #[cfg(target_arch = "wasm32")]
-        let handle = std::cell::RefCell::new(InPlace::Waiting(Some(Box::new(move || work(c, o, a, monitor)))));
+        let handle = browser::WorkerFit::start(c, o, a, monitor);
         FitJob { live, config, options, handle: Some(handle), last_draw: None, last_status: None, shown_refits: 0 }
     }
 
@@ -235,36 +239,18 @@ impl FitJob {
         self.handle.as_ref().is_none_or(|h| h.is_finished())
     }
 
-    /// The browser: the first poll lets a frame through, the second runs
-    /// the fit.
+    /// The browser: takes what the worker sent; true once it has finished
+    /// (or was ended by Cancel).
     #[cfg(target_arch = "wasm32")]
     pub fn finished(&self) -> bool {
-        let Some(cell) = &self.handle else { return true };
-        let mut state = cell.borrow_mut();
-        match &mut *state {
-            InPlace::Waiting(work) => {
-                let work = work.take().expect("waits once");
-                *state = InPlace::Ready(work);
-                false
-            }
-            InPlace::Ready(_) => {
-                let InPlace::Ready(work) = std::mem::replace(&mut *state, InPlace::Done(None)) else { unreachable!() };
-                *state = InPlace::Done(Some(work()));
-                true
-            }
-            InPlace::Done(_) => true,
-        }
+        self.handle.as_ref().is_none_or(|h| h.poll())
     }
 
-    /// Waits for the worker and returns its result.
     #[cfg(target_arch = "wasm32")]
     pub fn join(&mut self) -> Result<Outcome> {
-        let cell = self.handle.take().expect("joined once");
-        match cell.into_inner() {
-            InPlace::Done(Some(result)) => result,
-            InPlace::Waiting(Some(work)) | InPlace::Ready(work) => work(),
-            _ => Err(spline_fitter::Error::new("the fit stopped unexpectedly")),
-        }
+        let handle = self.handle.take().expect("joined once");
+        handle.poll();
+        handle.take().unwrap_or_else(|| Err(spline_fitter::Error::new("the fit stopped unexpectedly")))
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -303,21 +289,16 @@ impl FitJob {
     }
 }
 
-/// A fit that runs on the window's thread (the browser).
-#[cfg(target_arch = "wasm32")]
-enum InPlace {
-    /// Started this frame.
-    Waiting(Option<Box<dyn FnOnce() -> Result<Outcome>>>),
-    /// Runs at the next poll.
-    Ready(Box<dyn FnOnce() -> Result<Outcome>>),
-    Done(Option<Result<Outcome>>),
-}
-
+#[cfg(not(target_arch = "wasm32"))]
 fn work(config: SplineConfig, options: OptimizationConfig, airfoil: AirfoilData, mut monitor: Progress) -> Result<Outcome> {
     let start = Instant::now();
     let raw = run_optimization(&config, &options, &airfoil, &mut monitor)?;
     let cancelled = monitor.live.cancelled();
-    let elapsed = start.elapsed().as_secs_f64();
+    Ok(outcome(&config, &options, &airfoil, raw, start.elapsed().as_secs_f64(), cancelled))
+}
+
+/// A finished fit with its report (and its earlier fits' reports).
+fn outcome(config: &SplineConfig, options: &OptimizationConfig, airfoil: &AirfoilData, raw: RawResult, elapsed: f64, cancelled: bool) -> Outcome {
     let fit_of = |r: &RawResult, elapsed: f64, cancelled: bool| {
         let mut fit = FitResult {
             section_control_points: r.section_control_points.clone(),
@@ -337,7 +318,149 @@ fn work(config: SplineConfig, options: OptimizationConfig, airfoil: AirfoilData,
     };
     let fit = fit_of(&raw, elapsed, cancelled);
     let earlier = raw.earlier.iter().map(|r| fit_of(r, r.seconds.unwrap_or(0.0), false)).collect();
-    Ok(Outcome { raw, fit, earlier, cancelled, elapsed })
+    Outcome { raw, fit, earlier, cancelled, elapsed }
+}
+
+/// The browser's fit: a web worker and what it sent so far.
+#[cfg(target_arch = "wasm32")]
+mod browser {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use spline_fitter::project::wire::{self, Message, OwnedUpdate};
+    use wasm_bindgen::prelude::*;
+
+    use super::*;
+
+    pub struct WorkerFit {
+        worker: Option<web_sys::Worker>,
+        inbox: Rc<RefCell<Vec<String>>>,
+        _listeners: [Closure<dyn FnMut(web_sys::MessageEvent)>; 2],
+        state: RefCell<State>,
+    }
+
+    struct State {
+        monitor: Progress,
+        config: SplineConfig,
+        options: OptimizationConfig,
+        airfoil: AirfoilData,
+        last: Option<OwnedUpdate>,
+        done: Option<Result<Outcome>>,
+    }
+
+    impl WorkerFit {
+        /// Starts a worker (crates/spline-fitter-worker, built by Trunk next
+        /// to the page) and gives it the fit once it listens.
+        pub fn start(config: SplineConfig, options: OptimizationConfig, airfoil: AirfoilData, monitor: Progress) -> Self {
+            let inbox: Rc<RefCell<Vec<String>>> = Rc::default();
+            let request = wire::request(&config, &options, &airfoil);
+            let worker = web_sys::Worker::new("./fit-worker_loader.js");
+            let (box_, sender) = (inbox.clone(), worker.clone().ok());
+            let onmessage = Closure::<dyn FnMut(web_sys::MessageEvent)>::new(move |event: web_sys::MessageEvent| {
+                let text = event.data().as_string().unwrap_or_default();
+                if text == "ready" {
+                    if let Some(sender) = &sender {
+                        let _ = sender.post_message(&JsValue::from_str(&request));
+                    }
+                } else {
+                    box_.borrow_mut().push(text);
+                    crate::web::repaint();
+                }
+            });
+            let box_ = inbox.clone();
+            let onerror = Closure::<dyn FnMut(web_sys::MessageEvent)>::new(move |_| {
+                let error: Result<RawResult> = Err(spline_fitter::Error::new("the fit stopped unexpectedly"));
+                box_.borrow_mut().push(wire::done(&error));
+                crate::web::repaint();
+            });
+            let worker = match worker {
+                Ok(worker) => {
+                    worker.set_onmessage(Some(onmessage.as_ref().unchecked_ref()));
+                    worker.set_onerror(Some(onerror.as_ref().unchecked_ref()));
+                    Some(worker)
+                }
+                Err(e) => {
+                    let error: Result<RawResult> = Err(spline_fitter::Error::new(format!("the fitting worker did not start: {e:?}")));
+                    inbox.borrow_mut().push(wire::done(&error));
+                    None
+                }
+            };
+            let state = State { monitor, config, options, airfoil, last: None, done: None };
+            WorkerFit { worker, inbox, _listeners: [onmessage, onerror], state: RefCell::new(state) }
+        }
+
+        /// Feeds what arrived through the monitor; true once finished.
+        pub fn poll(&self) -> bool {
+            let mut s = self.state.borrow_mut();
+            let messages: Vec<String> = std::mem::take(&mut *self.inbox.borrow_mut());
+            for text in messages {
+                if s.done.is_some() {
+                    break;
+                }
+                match wire::parse(&text) {
+                    Ok(Message::Update(mut u)) => {
+                        // Updates between two drawings carry no curves: the last ones hold.
+                        if u.control_points.is_empty() {
+                            if let Some(last) = &s.last {
+                                u.control_points = last.control_points.clone();
+                                u.knots = last.knots.clone();
+                            }
+                        }
+                        s.monitor.update(&u.as_update());
+                        s.last = Some(u);
+                    }
+                    Ok(Message::Done(result)) => {
+                        let elapsed = s.monitor.start.elapsed().as_secs_f64();
+                        let done = result
+                            .map(|raw| outcome(&s.config, &s.options, &s.airfoil, raw, elapsed, false))
+                            .map_err(spline_fitter::Error::new);
+                        s.done = Some(done);
+                    }
+                    Err(e) => s.done = Some(Err(e)),
+                }
+            }
+            if s.done.is_none() && s.monitor.live.cancelled() {
+                // Cancel: end the worker and keep its last step.
+                if let Some(worker) = &self.worker {
+                    worker.terminate();
+                }
+                let elapsed = s.monitor.start.elapsed().as_secs_f64();
+                let done = match &s.last {
+                    None => Err(spline_fitter::Error::new("cancelled before the first step")),
+                    Some(u) => {
+                        let raw = RawResult {
+                            section_control_points: u.control_points.clone(),
+                            section_knots: Some(u.knots.clone()),
+                            error: u.error,
+                            rms_error: u.error,
+                            iterations: s.monitor.iteration,
+                            evaluations: u.evaluations,
+                            success: false,
+                            message: "Cancelled".into(),
+                            seconds: None,
+                            earlier: vec![],
+                            search: None,
+                        };
+                        Ok(outcome(&s.config, &s.options, &s.airfoil, raw, elapsed, true))
+                    }
+                };
+                s.done = Some(done);
+            }
+            s.done.is_some()
+        }
+
+        pub fn take(&self) -> Option<Result<Outcome>> {
+            self.state.borrow_mut().done.take()
+        }
+    }
+
+    impl Drop for WorkerFit {
+        fn drop(&mut self) {
+            if let Some(worker) = &self.worker {
+                worker.terminate();
+            }
+        }
+    }
 }
 
 #[cfg(test)]

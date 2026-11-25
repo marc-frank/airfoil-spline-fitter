@@ -127,7 +127,7 @@ impl App {
                     Some(a) => (a.display_name().to_string(), format!("{} points, {} decimals", a.coordinates.len(), a.precision)),
                     None => ("No airfoil loaded".to_string(), "Open a .dat file or a project".to_string()),
                 };
-                let tip = self.airfoil_path.clone();
+                let tip = crate::store::shown_path(&self.airfoil_path).to_string();
                 ui.vertical(|ui| {
                     ui.set_width(ui.available_width() - 80.0);
                     ui.spacing_mut().item_spacing.y = 0.0;
