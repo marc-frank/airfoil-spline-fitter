@@ -174,6 +174,110 @@ pub fn filter_coordinate_outliers(coords: Vec<Vec2>) -> Vec<Vec2> {
     }
 }
 
+/// What [`clean_outline`] removed from a point list.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Cleanup {
+    /// Points repeating the point before them.
+    pub repeated_points: usize,
+    /// Points of a second copy of the whole outline.
+    pub repeated_outline: usize,
+    /// Stray points after the outline came back to the trailing edge.
+    pub after_trailing_edge: usize,
+    /// Single points far off the line through their neighbours, bent against the outline.
+    pub spikes: usize,
+}
+
+impl Cleanup {
+    /// Whether anything was removed.
+    pub fn any(&self) -> bool {
+        *self != Cleanup::default()
+    }
+}
+
+/// At most this many points after the last trailing-edge point are taken
+/// for strays (after repeated points are merged); more are an outline part.
+const MAX_STRAY_TAIL: usize = 2;
+
+/// A spike stands off the line through its neighbours by more than this
+/// fraction of the outline's size.
+const SPIKE_OFFSET: f64 = 1e-3;
+
+/// Points without the mistakes airfoil files often hold, each of which makes
+/// a fitted curve loop: a point written twice in a row (the fit has to stop
+/// and turn back to pass it twice), the outline written twice, stray points
+/// after the closing trailing-edge point (`0 0` lines, padding rows), and a
+/// single mistyped point that sticks out against the outline's turn.
+pub fn clean_outline(coords: Vec<Vec2>) -> (Vec<Vec2>, Cleanup) {
+    let mut report = Cleanup::default();
+    if coords.len() < 4 {
+        return (coords, report);
+    }
+    let (lo, hi) = coords.iter().fold((Vec2::repeat(f64::INFINITY), Vec2::repeat(f64::NEG_INFINITY)), |(l, h), p| (l.inf(p), h.sup(p)));
+    let size = (hi - lo).max();
+    if !(size > 0.0) {
+        return (coords, report);
+    }
+    let same = |a: Vec2, b: Vec2| (a - b).norm() <= 1e-9 * size;
+    let dedup = |pts: &mut Vec<Vec2>| {
+        let before = pts.len();
+        pts.dedup_by(|b, a| same(*a, *b));
+        before - pts.len()
+    };
+    let mut pts = coords;
+    report.repeated_points += dedup(&mut pts);
+
+    // The outline twice: the points from the first return to the start on repeat the start.
+    let n = pts.len();
+    if let Some(p) = (2..n.saturating_sub(2)).find(|&p| same(pts[p], pts[0]) && (0..n - p).all(|i| same(pts[i + p], pts[i]))) {
+        report.repeated_outline = n - 1 - p;
+        pts.truncate(p + 1);
+    }
+
+    // Strays after the trailing edge: the last surface ends at its largest x,
+    // or comes back from there towards the first point (closing a blunt
+    // edge); a stray `0 0` is no leading edge, so the last points are not
+    // searched for it.
+    let n = pts.len();
+    let le = (0..n.saturating_sub(MAX_STRAY_TAIL).max(1)).fold(0, |b, i| if pts[i].x < pts[b].x { i } else { b });
+    let te = (le..n).fold(le, |b, i| if pts[i].x >= pts[b].x { i } else { b });
+    let tail = n - 1 - te;
+    let te_gap = (pts[te] - pts[0]).norm();
+    if n > MAX_STRAY_TAIL + 2 && tail > 0 && tail <= MAX_STRAY_TAIL && te > le && pts[te + 1..].iter().all(|p| (p - pts[0]).norm() > te_gap) {
+        report.after_trailing_edge = tail;
+        pts.truncate(te + 1);
+    }
+
+    // Spikes: an outline turns one way all round (the sign of its area);
+    // a point that turns sharply the other way, or leaves and comes back to
+    // the same place, is a mistyped one.
+    let area: f64 = pts.windows(2).map(|w| w[0].x * w[1].y - w[1].x * w[0].y).sum::<f64>() + {
+        let (a, b) = (pts[pts.len() - 1], pts[0]);
+        a.x * b.y - b.x * a.y
+    };
+    let orientation = area.signum();
+    let is_spike = |a: Vec2, p: Vec2, b: Vec2| {
+        let (ab, ap, pb) = (b - a, p - a, b - p);
+        let base = ab.norm();
+        let offset = if base > 0.0 { (ab.x * ap.y - ab.y * ap.x).abs() / base } else { ap.norm() };
+        if offset <= SPIKE_OFFSET * size {
+            return false;
+        }
+        let out_and_back = ap.norm().min(pb.norm()) > 10.0 * base;
+        let turn = (ap.x * pb.y - ap.y * pb.x).atan2(ap.dot(&pb));
+        out_and_back || turn * orientation < -std::f64::consts::FRAC_PI_3
+    };
+    // The points next to the ends shape a blunt trailing edge and are kept.
+    let spikes: Vec<usize> = (2..pts.len().saturating_sub(2)).filter(|&i| is_spike(pts[i - 1], pts[i], pts[i + 1])).collect();
+    // Only lone ones: two spikes side by side are a feature of the shape.
+    let lone: Vec<usize> = spikes.iter().copied().filter(|i| !spikes.contains(&(i + 1)) && !spikes.contains(&(i.wrapping_sub(1)))).collect();
+    if !lone.is_empty() {
+        report.spikes = lone.len();
+        pts = pts.iter().enumerate().filter(|(i, _)| !lone.contains(i)).map(|(_, p)| *p).collect();
+        report.repeated_points += dedup(&mut pts);
+    }
+    (pts, report)
+}
+
 /// Leading edge and trailing-edge midpoint this close to (0, 0) and (1, 0),
 /// in chords, mean the data are normalized already and kept as written.
 const UNIT_CHORD_TOLERANCE: f64 = 5e-3;
@@ -302,6 +406,8 @@ pub struct ParsedAirfoil {
     pub coords: Vec<Vec2>,
     /// Decimal places of the coordinates at unit chord.
     pub precision: i32,
+    /// Mistakes in the file that were removed.
+    pub cleanup: Cleanup,
 }
 
 /// Reads an airfoil file; `None` when it holds no coordinates.
@@ -352,8 +458,9 @@ pub fn parse_airfoil_text(text: &str, file_name: Option<&str>) -> Option<ParsedA
     }
     let texts: Vec<&str> = rows.iter().flat_map(|r| r.texts.iter().map(String::as_str)).collect();
     let precision = file_precision(&texts);
+    let (coords, cleanup) = clean_outline(coords);
     let (coords, scale) = normalize(filter_coordinate_outliers(coords));
-    Some(ParsedAirfoil { name, coords, precision: scaled_precision(precision, scale) })
+    Some(ParsedAirfoil { name, coords, precision: scaled_precision(precision, scale), cleanup })
 }
 
 /// Number of decimals written: 8 by default, at most 16.
@@ -588,6 +695,60 @@ mod tests {
         assert_eq!(f.coords, vec![p(1.0, 0.1), p(0.5, 0.05), p(0.0, 0.0), p(0.5, -0.05), p(1.0, -0.1)]);
         assert_eq!(f.precision, 1);
         assert!(parse_airfoil_text("# nothing\n\n", None).is_none());
+    }
+
+    /// A NACA 0012 outline in Selig order, the leading edge once.
+    fn naca0012() -> Vec<Vec2> {
+        let half = |x: f64| 0.6 * (0.2969 * x.sqrt() - 0.126 * x - 0.3516 * x * x + 0.2843 * x.powi(3) - 0.1036 * x.powi(4));
+        let xs: Vec<f64> = (0..=15).map(|i| 0.5 * (1.0 - (std::f64::consts::PI * i as f64 / 15.0).cos())).collect();
+        xs.iter().rev().map(|&x| p(x, half(x))).chain(xs[1..].iter().map(|&x| p(x, -half(x)))).collect()
+    }
+
+    #[test]
+    fn clean_outline_removes_file_mistakes() {
+        let good = naca0012();
+        let le = good.len() / 2;
+        assert_eq!(clean_outline(good.clone()), (good.clone(), Cleanup::default()));
+        let with = |edit: &dyn Fn(&mut Vec<Vec2>)| {
+            let mut pts = good.clone();
+            edit(&mut pts);
+            clean_outline(pts)
+        };
+        // The leading edge written twice (BigFoil files).
+        let (pts, c) = with(&|v| v.insert(le, v[le]));
+        assert_eq!((pts, c.repeated_points), (good.clone(), 1));
+        // A stray `0 0` after the closing trailing edge (hn374): only the
+        // stray goes, and a closing point back at the trailing edge stays.
+        let (pts, c) = with(&|v| v.push(p(0.0, 0.0)));
+        assert_eq!((pts, c.after_trailing_edge), (good.clone(), 1));
+        // Padding rows after it, left of the leading edge (rs001t).
+        let (pts, c) = with(&|v| v.extend([p(-0.1, 0.0); 30]));
+        assert_eq!((pts, c.after_trailing_edge, c.repeated_points), (good.clone(), 1, 29));
+        // A stray `0 0` and a point stepping back (nm26-3), the nose just off x = 0.
+        let shifted: Vec<Vec2> = good.iter().map(|q| q + p(1e-5, 0.0)).collect();
+        let mut v = shifted.clone();
+        v.extend([p(0.0, 0.0), p(0.9999, -1e-4)]);
+        assert_eq!(clean_outline(v).0, shifted);
+        // The whole outline twice (mh28).
+        let (pts, c) = with(&|v| v.extend(good.clone()));
+        assert_eq!((pts, c.repeated_outline), (good.clone(), good.len() - 1));
+        // A far point between two copies of the leading edge (e850).
+        let (pts, c) = with(&|v| v.splice(le + 1..le + 1, [p(1.006, -0.0015), v[le]]).for_each(drop));
+        assert_eq!((pts, c.spikes, c.repeated_points), (good.clone(), 1, 1));
+        // A mistyped upper point near the nose (goe451: y written as 0).
+        let (pts, c) = with(&|v| v[le - 2].y = 0.0);
+        let mut expected = good.clone();
+        expected.remove(le - 2);
+        assert_eq!((pts, c.spikes), (expected, 1));
+        // A blunt trailing edge closed back to its middle keeps its closing point.
+        let mut blunt = good.clone();
+        let (first, last) = (blunt.len() - 1, 0);
+        blunt[first].y = -0.005;
+        blunt[last].y = 0.005;
+        blunt.push(p(1.0, 0.0));
+        assert_eq!(clean_outline(blunt.clone()).0, blunt);
+        // The parser cleans what it reads.
+        assert_eq!(parse("t\n1 0\n0.5 0.06\n0 0\n0 0\n0.5 -0.06\n1 0\n0 0\n").coords.len(), 5);
     }
 
     #[test]

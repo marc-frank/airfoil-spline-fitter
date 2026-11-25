@@ -34,7 +34,9 @@ where sections meet, written exactly to STEP, IGES or DXF.
   conversion** of a folder of airfoils.
 - Reads Selig and Lednicer files in many number formats (decimal commas,
   Fortran exponents, fixed-width columns, 0-100 scaling), keeping the file's
-  chord line.
+  chord line, and drops common file mistakes that make a fit loop: a point
+  written twice, the outline written twice, stray points after the closing
+  trailing edge, and a single mistyped point sticking out of the outline.
 
 ## Building and running
 
@@ -185,6 +187,11 @@ Python results), and differs on purpose where the behaviour was a defect:
 
 - The application starts its own version numbering at 0.1.0 (the Python
   version was 2.0.0); project files record it as `app_version`.
+- The airfoil reader drops repeated points, a repeated outline, stray points
+  after the closing trailing edge and lone mistyped points
+  (`io::clean_outline`); Python kept them, and the fit had to loop or stop
+  and turn back to pass them (half of a 12,400-file library repeats its
+  leading-edge point).
 
 - Progress goes through typed observers, not process-global counters and
   callback signature inspection; a stopped fit is a flag, not a message

@@ -22,6 +22,7 @@ fn curve(v: &Value) -> BSpline {
 #[test]
 fn airfoil_reader_matches_python() {
     let cases: Vec<Value> = serde_json::from_str(include_str!("fixtures/airfoil_texts.json")).unwrap();
+    let mut cleaned = 0;
     for (i, case) in cases.iter().enumerate() {
         let text = case["text"].as_str().unwrap();
         let parsed = parse_airfoil_text(text, Some("file"));
@@ -30,16 +31,23 @@ fn airfoil_reader_matches_python() {
             (Value::Null, Some(p)) => panic!("case {i}: Python found no coordinates, Rust {} points\n{text}", p.coords.len()),
             (_, None) => panic!("case {i}: Rust found no coordinates\n{text}"),
             (expected, Some(p)) => {
+                assert_eq!(p.name.as_deref(), case["name"].as_str(), "case {i}\n{text}");
+                // Rust drops repeated and stray points, which Python keeps
+                // (and the chord, so the precision, may change with them).
+                if p.cleanup.any() {
+                    cleaned += 1;
+                    continue;
+                }
+                assert_eq!(p.precision as i64, case["precision"].as_i64().unwrap(), "case {i}\n{text}");
                 let expected = points(expected);
                 assert_eq!(p.coords.len(), expected.len(), "case {i}\n{text}");
                 for (a, b) in p.coords.iter().zip(&expected) {
                     assert!((a - b).norm() <= 1e-12 * (1.0 + b.norm()), "case {i}: {a:?} != {b:?}\n{text}");
                 }
-                assert_eq!(p.precision as i64, case["precision"].as_i64().unwrap(), "case {i}\n{text}");
-                assert_eq!(p.name.as_deref(), case["name"].as_str(), "case {i}\n{text}");
             }
         }
     }
+    assert!(cleaned * 2 < cases.len(), "{cleaned} of {} cases cleaned: too few compared point by point", cases.len());
 }
 
 fn exports() -> Value {
