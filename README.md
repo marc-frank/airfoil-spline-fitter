@@ -172,6 +172,9 @@ which this workspace replaces. The Rust version follows it, reproduces its
 reference fits and file outputs (the tests in `crates/*/tests` hold the
 Python results), and differs on purpose where the behaviour was a defect:
 
+- The application starts its own version numbering at 0.1.0 (the Python
+  version was 2.0.0); project files record it as `app_version`.
+
 - Progress goes through typed observers, not process-global counters and
   callback signature inspection; a stopped fit is a flag, not a message
   comparison.

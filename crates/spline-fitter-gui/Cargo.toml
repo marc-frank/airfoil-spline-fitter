@@ -1,6 +1,6 @@
 [package]
 name = "spline-fitter-gui"
-version = "2.0.0"
+version = "0.1.0"
 description = "Airfoil Spline Fitter desktop application"
 edition.workspace = true
 license.workspace = true

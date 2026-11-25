@@ -3548,7 +3548,7 @@ dependencies = [
 
 [[package]]
 name = "spline-fitter"
-version = "2.0.0"
+version = "0.1.0"
 dependencies = [
  "bspline-varpro",
  "chrono",
@@ -3563,7 +3563,7 @@ dependencies = [
 
 [[package]]
 name = "spline-fitter-gui"
-version = "2.0.0"
+version = "0.1.0"
 dependencies = [
  "arboard",
  "dirs",
