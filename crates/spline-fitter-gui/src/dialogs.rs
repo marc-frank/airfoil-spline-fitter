@@ -6,6 +6,9 @@ use web_time::Instant;
 use eframe::egui::{self, Align, Layout, RichText, Ui};
 use spline_fitter::analysis::{Note, Report, JUNCTION_COLUMNS};
 use spline_fitter::bspline_varpro::airfoil::Shape;
+use spline_fitter::formatting::number;
+use spline_fitter::io::Finding;
+use spline_fitter::Vec2;
 
 use crate::app::{App, DEFAULT_SCROLL_MS, DEFAULT_ZOOM_MS};
 use crate::overlays::QUANTITIES;
@@ -48,9 +51,29 @@ pub struct Confirm {
     pub then: Box<dyn FnOnce(&mut App)>,
 }
 
+/// The mistakes the reader found in an airfoil file, before the airfoil is
+/// loaded: Use corrected (the default, also on closing) loads it without
+/// them, Keep as read loads the points as the file has them.
+pub struct ReadReport {
+    /// The file (or "Pasted airfoil") the mistakes are in.
+    pub source: String,
+    pub findings: Vec<Finding>,
+    /// Points read, with the mistakes.
+    pub read_points: usize,
+    /// Coordinates and precision without and with the mistakes.
+    pub corrected: (Vec<Vec2>, i32),
+    pub uncorrected: (Vec<Vec2>, i32),
+    /// What `App::set_airfoil` takes besides.
+    pub filename: String,
+    pub name: String,
+    pub path: String,
+    pub verb: String,
+}
+
 /// An open dialog.
 pub enum Dialog {
     Confirm(Confirm),
+    ReadReport(ReadReport),
     Naca { code: String, per_side: usize, closed: bool },
     Cad(CadChoice),
     Batch,
@@ -521,6 +544,27 @@ impl App {
                     }
                 }
             }
+            Dialog::ReadReport(report) => {
+                const WIDTH: f32 = 520.0;
+                let mut keep_as_read = false;
+                let answer = open_dialog(ctx, "Mistakes in the airfoil file", WIDTH, DIALOG_MARGIN, |ui| {
+                    read_report_content(ui, &p, report);
+                    ui.add_space(size::GROUP - size::GAP);
+                    let (a, r, _) = buttons(ui, &p, Some(("Use corrected", true)), "Keep as read", None);
+                    keep_as_read = r;
+                    answer_of(a, r)
+                });
+                if matches!(answer, Answer::Open) {
+                    true
+                } else {
+                    // Closing the window takes the default: corrected.
+                    let Dialog::ReadReport(r) = dialog else { unreachable!() };
+                    let ((coords, precision), verb) =
+                        if keep_as_read { (r.uncorrected, format!("{} as read", r.verb)) } else { (r.corrected, format!("{} corrected", r.verb)) };
+                    self.set_airfoil(coords, &r.filename, &r.name, precision, &r.path, &verb);
+                    return;
+                }
+            }
             Dialog::PointsPerSide { value } => {
                 const WIDTH: f32 = 370.0;
                 let answer = open_dialog(ctx, "Save fitted airfoil", WIDTH, INPUT_DIALOG_MARGIN, |ui| {
@@ -798,6 +842,69 @@ fn report_document(ui: &mut Ui, p: &Palette, rect: egui::Rect, title: &str, repo
         });
     });
     ui.painter().rect_stroke(rect, radius, egui::Stroke::new(1.0, p.rule), egui::StrokeKind::Inside);
+}
+
+/// The explanation and the table of the mistakes in a read airfoil file.
+fn read_report_content(ui: &mut Ui, p: &Palette, report: &ReadReport) {
+    const ROW: f32 = 24.0;
+    const MAX_ROWS: usize = 10;
+    let mistakes = report.findings.len();
+    let removed: usize = report.findings.iter().map(Finding::removed).sum();
+    let message = format!(
+        "{} has {} {} that would make the fitted curve loop or turn back. The corrected airfoil leaves out {} of its {} points; keep it as read to fit the points as they were written.",
+        report.source,
+        mistakes,
+        if mistakes == 1 { "mistake" } else { "mistakes" },
+        removed,
+        report.read_points,
+    );
+    ui.add(egui::Label::new(RichText::new(message).color(p.text)).wrap());
+    ui.add_space(size::GROUP - size::GAP);
+    let body = egui::FontId::proportional(crate::theme::typeface::BASE);
+    let mono = egui::FontId::monospace(crate::theme::typeface::BASE);
+    let header = crate::fonts::semibold_id(crate::theme::typeface::BASE);
+    let g = |v: f64| number(v, "g");
+    let rows: Vec<[String; 4]> = report
+        .findings
+        .iter()
+        .map(|f| [f.line.map_or(String::new(), |l| l.to_string()), g(f.point.x), g(f.point.y), f.description()])
+        .collect();
+    let painter = ui.painter().clone();
+    let width = |text: &str, font: &egui::FontId| painter.layout_no_wrap(text.to_string(), font.clone(), p.text).size().x;
+    let heads = ["Line", "x", "y", "Mistake"];
+    // Line, x and y as wide as their widest text; the mistake takes the rest.
+    let widths: Vec<f32> = (0..3).map(|c| rows.iter().map(|r| width(&r[c], &mono)).fold(width(heads[c], &header), f32::max) + size::PAD).collect();
+    let line = |ui: &mut Ui, cells: [&str; 4], head: bool| {
+        let (r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW), egui::Sense::hover());
+        let mut x = r.left();
+        for (c, text) in cells.iter().enumerate() {
+            let (font, color) = match (head, c) {
+                (true, _) => (header.clone(), p.text_3),
+                (false, 3) => (body.clone(), p.text),
+                _ => (mono.clone(), p.text),
+            };
+            // Numbers right-aligned in their column, the words left.
+            if c < 3 {
+                let right = x + widths[c] - size::PAD;
+                ui.painter().text(egui::pos2(right, r.center().y), egui::Align2::RIGHT_CENTER, *text, font, color);
+                x += widths[c];
+            } else {
+                ui.painter().text(egui::pos2(x, r.center().y), egui::Align2::LEFT_CENTER, *text, font, color);
+            }
+        }
+        if head {
+            ui.painter().hline(r.left()..=r.right(), r.bottom() - 2.0, egui::Stroke::new(1.0, p.rule));
+        }
+    };
+    ui.spacing_mut().item_spacing.y = 0.0;
+    line(ui, heads, true);
+    egui::ScrollArea::vertical().id_salt("read_report").max_height(ROW * MAX_ROWS as f32).auto_shrink([false, true]).show(ui, |ui| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        for r in &rows {
+            line(ui, [&r[0], &r[1], &r[2], &r[3]], false);
+        }
+    });
+    ui.spacing_mut().item_spacing.y = size::GAP;
 }
 
 /// The texts of a toggle with settings.

@@ -46,6 +46,8 @@ pub struct Batch {
     done: usize,
     failed: usize,
     skipped: usize,
+    /// Files whose mistakes the reader removed.
+    corrected: usize,
     started: Instant,
     /// The browser's batch: the source files read first and the names in
     /// the target folder, which it writes into as each fit finishes.
@@ -723,6 +725,7 @@ impl App {
             done: 0,
             failed: 0,
             skipped: 0,
+            corrected: 0,
             started: Instant::now(),
             read,
         };
@@ -760,6 +763,7 @@ impl App {
                     self.set_status(format!("[{idx}/{total}] Skip: {}", crate::store::shown_path(&item.output.to_string_lossy())));
                 }
                 Ok(item) => {
+                    batch.corrected += usize::from(item.corrections > 0);
                     if opt.tolerance.is_some() && batch.auto {
                         opt.tolerance = Some(spline_fitter::analysis::default_tolerance(&item.airfoil.coordinates, item.airfoil.precision));
                     }
@@ -837,6 +841,9 @@ impl App {
         };
         if batch.skipped > 0 {
             status += &format!(" | Skipped {} already in the target folder with these settings", batch.skipped);
+        }
+        if batch.corrected > 0 {
+            status += &format!(" | Corrected mistakes in {} source files", batch.corrected);
         }
         self.set_status(status);
         let coords = self.airfoil.as_ref().map(|a| a.coordinates.clone()).unwrap_or_default();

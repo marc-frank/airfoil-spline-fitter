@@ -117,6 +117,9 @@ pub enum Outcome {
 pub struct BatchItem {
     pub airfoil: AirfoilData,
     pub output: PathBuf,
+    /// Mistakes the reader removed from the file (the corrected points are
+    /// fitted, as the window's default).
+    pub corrections: usize,
 }
 
 /// Reads one source file and names its output in `target`.
@@ -150,10 +153,11 @@ fn prepare_parsed(
     let Some(parsed) = parsed else { bail!("Failed to parse") };
     let file_name = file_name.to_string();
     let name = parsed.name.unwrap_or_else(|| file_name.clone());
+    let corrections = parsed.cleanup.findings.len();
     let airfoil = AirfoilData::new(parsed.coords, config.num_sections, &file_name, &name, parsed.precision)?;
     let stem = if file_name.is_empty() { &name } else { &file_name };
     let output = target.join(output_name(stem, config, opt, auto_tolerance));
-    Ok(BatchItem { airfoil, output })
+    Ok(BatchItem { airfoil, output, corrections })
 }
 
 /// Fits one prepared file and writes its spline.

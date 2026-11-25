@@ -12,7 +12,7 @@ use spline_fitter::project::{load_project, parse_project, ProjectFile};
 use spline_fitter::{Result, Vec2};
 
 use crate::app::App;
-use crate::dialogs::{CadChoice, Dialog};
+use crate::dialogs::{CadChoice, Dialog, ReadReport};
 
 /// Fewest pasted coordinates that make an airfoil.
 const MIN_PASTED_POINTS: usize = 5;
@@ -129,8 +129,42 @@ impl App {
             Ok(None) => return self.fail("No coordinates found in the file"),
             Ok(Some(p)) => p,
         };
-        let name = parsed.name.unwrap_or_else(|| filename.to_string());
-        self.set_airfoil(parsed.coords, filename, &name, parsed.precision, path, "Loaded");
+        let name = parsed.name.clone().unwrap_or_else(|| filename.to_string());
+        let source = Path::new(path).file_name().map_or_else(|| format!("{filename}.dat"), |f| f.to_string_lossy().into_owned());
+        self.offer_corrections(parsed, &source, filename, &name, path, "Loaded", |p| p);
+    }
+
+    /// Loads a read airfoil; when the reader removed mistakes, first shows
+    /// them and asks whether to use the corrected points (the default) or
+    /// the points as read. `precision` adjusts the read precision.
+    fn offer_corrections(
+        &mut self,
+        parsed: ParsedAirfoil,
+        source: &str,
+        filename: &str,
+        name: &str,
+        path: &str,
+        verb: &str,
+        precision: impl Fn(i32) -> i32,
+    ) {
+        match parsed.uncorrected {
+            Some(read) if parsed.cleanup.any() => {
+                self.dialog = Some(Dialog::ReadReport(ReadReport {
+                    source: source.to_string(),
+                    read_points: read.coords.len(),
+                    findings: parsed.cleanup.findings,
+                    corrected: (parsed.coords, precision(parsed.precision)),
+                    uncorrected: (read.coords, precision(read.precision)),
+                    filename: filename.to_string(),
+                    name: name.to_string(),
+                    path: path.to_string(),
+                    verb: verb.to_string(),
+                }));
+            }
+            _ => {
+                self.set_airfoil(parsed.coords, filename, name, precision(parsed.precision), path, verb);
+            }
+        }
     }
 
     /// Makes `coords` the airfoil (a file's `path` goes to the recent
@@ -218,8 +252,8 @@ impl App {
         }
         match parse_airfoil_text(text, None) {
             Some(parsed) if parsed.coords.len() >= MIN_PASTED_POINTS => {
-                let name = parsed.name.unwrap_or_else(|| "Pasted airfoil".into());
-                self.set_airfoil(parsed.coords, "", &name, if parsed.precision > 0 { parsed.precision } else { 6 }, "", "Pasted");
+                let name = parsed.name.clone().unwrap_or_else(|| "Pasted airfoil".into());
+                self.offer_corrections(parsed, "The pasted airfoil", "", &name, "", "Pasted", |p| if p > 0 { p } else { 6 });
             }
             _ => self.fail("No airfoil coordinates on the clipboard: copy x y pairs, one point per line"),
         }

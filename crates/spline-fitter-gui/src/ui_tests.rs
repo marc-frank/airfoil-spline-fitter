@@ -1103,3 +1103,50 @@ fn the_tolerance_line_is_drawn_from_the_data() {
     h.run_steps(2);
     assert!(h.state().main_plot.tolerance_line.is_empty());
 }
+
+/// Mistakes the reader finds in a file are shown before the airfoil loads:
+/// Use corrected (Enter, or closing the window) loads it without them,
+/// Keep as read with them.
+#[test]
+fn file_mistakes_are_reported_before_loading() {
+    use egui_kittest::kittest::Queryable;
+    // The leading edge written twice (line 8) and a stray `0 0` after the
+    // closing trailing edge (line 14).
+    let text = "t\n1 0\n0.75 0.03\n0.5 0.05\n0.25 0.055\n0.1 0.04\n0 0\n0 0\n0.1 -0.04\n0.25 -0.055\n0.5 -0.05\n0.75 -0.03\n1 0\n0 0\n";
+    let report = |h: &Harness<'static, App>| match &h.state().dialog {
+        Some(crate::dialogs::Dialog::ReadReport(r)) => Some(r.findings.iter().map(|f| f.line).collect::<Vec<_>>()),
+        _ => None,
+    };
+    let mut h = harness();
+    h.state_mut().paste_text(text);
+    h.run_steps(4);
+    assert_eq!(report(&h), Some(vec![Some(8), Some(14)]));
+    assert!(h.state().airfoil.is_none(), "nothing is loaded before the answer");
+    shot(&mut h, "r_file_mistakes");
+    // Enter: corrected.
+    key(&mut h, egui::Key::Enter, egui::Modifiers::NONE);
+    h.run_steps(3);
+    assert!(h.state().dialog.is_none());
+    assert_eq!(h.state().airfoil.as_ref().unwrap().coordinates.len(), 11);
+    assert!(h.state().status.starts_with("Pasted corrected: t (11 points"), "{}", h.state().status);
+    // Keep as read: the points as the text has them.
+    h.state_mut().paste_text(text);
+    h.run_steps(4);
+    h.get_by_label("Keep as read").click();
+    h.run_steps(3);
+    assert!(h.state().dialog.is_none());
+    assert_eq!(h.state().airfoil.as_ref().unwrap().coordinates.len(), 13);
+    assert!(h.state().status.starts_with("Pasted as read: t (13 points"), "{}", h.state().status);
+    // Closing the window takes the default.
+    h.state_mut().paste_text(text);
+    h.run_steps(4);
+    key(&mut h, egui::Key::Escape, egui::Modifiers::NONE);
+    h.run_steps(3);
+    assert!(h.state().dialog.is_none());
+    assert_eq!(h.state().airfoil.as_ref().unwrap().coordinates.len(), 11);
+    // A file without mistakes loads at once.
+    h.state_mut().paste_text("t\n1 0\n0.5 0.05\n0 0\n0.5 -0.05\n1 0\n");
+    h.run_steps(3);
+    assert!(h.state().dialog.is_none());
+    assert_eq!(h.state().airfoil.as_ref().unwrap().coordinates.len(), 5);
+}

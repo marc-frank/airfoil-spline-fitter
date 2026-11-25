@@ -37,6 +37,9 @@ where sections meet, written exactly to STEP, IGES or DXF.
   chord line, and drops common file mistakes that make a fit loop: a point
   written twice, the outline written twice, stray points after the closing
   trailing edge, and a single mistyped point sticking out of the outline.
+  Opening or pasting such a file lists each mistake with its line and asks
+  whether to use the corrected points (the default) or keep them as read;
+  batch conversion uses the corrected points and counts the files.
 
 ## Building and running
 
