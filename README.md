@@ -60,6 +60,33 @@ cargo test --release -p bspline-varpro -- --ignored
 Building the workspace needs Python 3.9 or later installed, for the Python
 module's crate.
 
+## Packages and the browser version
+
+The release workflow ([`.github/workflows/release.yml`](.github/workflows/release.yml),
+after SolidCraft's) builds every package when the `release` branch is pushed
+and attaches them to a draft GitHub release:
+
+| Platform | Packages |
+| --- | --- |
+| Windows x64, x86, arm64 | `.msi` installer, portable `.zip`; x64 also the plain `.exe` |
+| macOS (universal) | `.dmg` (ad-hoc signed: first launch with right-click > Open) |
+| Linux x86_64, aarch64 | AppImage, `.deb`, `.rpm`, `.tar.gz` |
+| Web | `.zip` of the static site |
+
+Each package can also be built locally with its script in
+[`packaging/`](packaging), for example
+`powershell -File packaging/windows/package.ps1 -Arch x64` (needs WiX 5) or
+`packaging/linux/package.sh`; the files land in `dist/release/`.
+
+The same app runs in the browser: [Trunk](https://trunkrs.dev) builds it to
+WebAssembly (`cd crates/spline-fitter-gui && trunk serve` for a local copy),
+and the Pages workflow ([`.github/workflows/pages.yml`](.github/workflows/pages.yml))
+publishes it on GitHub Pages on every push to `main` (once Settings > Pages >
+Source is set to GitHub Actions). In the browser, files are opened with the
+browser's file picker or by dropping them on the page and saved as downloads;
+there are no recent files, batch conversion or sounds, and a fit runs on the
+page's only thread, so the page does not respond until it is done.
+
 ## Python
 
 The fitting library is also a Python module, `bspline_varpro`, built from

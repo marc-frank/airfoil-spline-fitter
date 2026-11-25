@@ -8,7 +8,7 @@
 //! order. Log axes plot `log10` of the values with decade labels. The
 //! wheel zooms about the cursor in a short glide.
 
-use std::time::Instant;
+use web_time::Instant;
 
 use eframe::egui::{self, Color32, Pos2, Rect, Response, Shape, Stroke, Ui, Vec2 as EVec2};
 use egui_plot::{Plot, PlotBounds, PlotPoint, PlotTransform};

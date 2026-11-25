@@ -5,7 +5,7 @@
 //! a single run with that count makes (fresh, from the same start), so any
 //! of them can be reproduced as a run of its own.
 
-use std::time::Instant;
+use web_time::Instant;
 
 use bspline_varpro::chain::{chain_data, chain_deviations};
 use bspline_varpro::{minimum_control_points, ChainOptions, Continuity, FitOptions, FitResult, Junction, Observer, Progress, STOPPED};

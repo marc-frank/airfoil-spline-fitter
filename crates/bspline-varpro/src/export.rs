@@ -65,14 +65,18 @@ impl Format {
 /// Writes curves in the format of the path's suffix; STEP and IGES name the
 /// product after the file stem.
 pub fn write(path: &Path, curves: &[BSpline], scale: f64, units: Units) -> Result<PathBuf> {
-    let name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-    let text = match Format::of(path)? {
-        Format::Step => to_step(curves, &name, scale, units)?,
-        Format::Iges => to_iges(curves, &name, scale, units)?,
-        Format::Dxf => to_dxf(curves, scale, "0", units)?,
-    };
-    std::fs::write(path, text).map_err(|e| Error::new(e.to_string()))?;
+    std::fs::write(path, text(path, curves, scale, units)?).map_err(|e| Error::new(e.to_string()))?;
     Ok(path.to_path_buf())
+}
+
+/// The text [`write`] writes to `path` (which is not touched).
+pub fn text(path: &Path, curves: &[BSpline], scale: f64, units: Units) -> Result<String> {
+    let name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    match Format::of(path)? {
+        Format::Step => to_step(curves, &name, scale, units),
+        Format::Iges => to_iges(curves, &name, scale, units),
+        Format::Dxf => to_dxf(curves, scale, "0", units),
+    }
 }
 
 /// Knots and scaled 3-D control points of a curve.

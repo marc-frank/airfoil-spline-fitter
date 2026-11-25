@@ -6,7 +6,12 @@ use std::path::PathBuf;
 
 use serde_json::{json, Map, Value};
 
-/// A small JSON file in the user's configuration folder.
+/// The local storage key of the browser version's settings.
+#[cfg(target_arch = "wasm32")]
+const WEB_KEY: &str = "AirfoilSplineFitter.settings";
+
+/// A small JSON file in the user's configuration folder (the page's local
+/// storage in the browser).
 pub struct Store {
     path: Option<PathBuf>,
     values: Map<String, Value>,
@@ -17,22 +22,30 @@ impl Store {
         if cfg!(test) {
             return Store { path: None, values: Map::new() };
         }
-        let path = dirs::config_dir().map(|d| d.join("AirfoilSplineFitter").join("settings.json"));
-        let values = path
-            .as_ref()
-            .and_then(|p| std::fs::read_to_string(p).ok())
-            .and_then(|t| serde_json::from_str::<Value>(&t).ok())
-            .and_then(|v| v.as_object().cloned())
-            .unwrap_or_default();
+        #[cfg(not(target_arch = "wasm32"))]
+        let (path, text) = {
+            let path = dirs::config_dir().map(|d| d.join("AirfoilSplineFitter").join("settings.json"));
+            let text = path.as_ref().and_then(|p| std::fs::read_to_string(p).ok());
+            (path, text)
+        };
+        #[cfg(target_arch = "wasm32")]
+        let (path, text) = (Some(PathBuf::from(WEB_KEY)), crate::web::load_settings(WEB_KEY));
+        let values = text.and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v.as_object().cloned()).unwrap_or_default();
         Store { path, values }
     }
 
     fn save(&self) {
         let Some(path) = &self.path else { return };
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
+        let text = Value::Object(self.values.clone()).to_string();
+        #[cfg(target_arch = "wasm32")]
+        crate::web::save_settings(&path.to_string_lossy(), &text);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            let _ = std::fs::write(path, text);
         }
-        let _ = std::fs::write(path, Value::Object(self.values.clone()).to_string());
     }
 
     fn set(&mut self, key: &str, value: Value) {
@@ -96,6 +109,9 @@ impl Store {
 
     /// Puts a path at the top of the recent files (at most ten).
     pub fn add_recent(&mut self, path: &std::path::Path) {
+        if cfg!(target_arch = "wasm32") {
+            return;
+        }
         let full = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf()).to_string_lossy().into_owned();
         let key = full.to_lowercase();
         let mut files: Vec<String> = self.recent_files().into_iter().filter(|f| f.to_lowercase() != key).collect();

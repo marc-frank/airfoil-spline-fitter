@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Airfoil Spline Fitter
+GenericName=B-spline fitting
+Comment=Fit B-spline curves to airfoil coordinates for CAD
+Exec=spline-fitter
+TryExec=spline-fitter
+Icon=AirfoilSplineFitter
+Terminal=false
+StartupNotify=true
+StartupWMClass=AirfoilSplineFitter
+Categories=Graphics;Engineering;Science;
+Keywords=airfoil;spline;bspline;nurbs;cad;step;iges;dxf;

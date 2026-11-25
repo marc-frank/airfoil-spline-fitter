@@ -1,0 +1,315 @@
+# Release pipeline, after SolidCraft's (tangency-labs/solidcraft; itself after PhotoCraft's,
+# storytold/photocraft, Apache-2.0).
+#
+# Push to `release` to build every package and create/update a DRAFT GitHub Release; check the
+# files and publish the draft by hand. The version comes from [package] version in
+# crates/spline-fitter-gui/Cargo.toml. A version with a suffix (2.1.0-rc.1) is a pre-release.
+# Nothing is signed: Windows SmartScreen and macOS Gatekeeper warn on first launch.
+#
+#   Linux x86_64, aarch64   AppImage (+ .zsync), .deb, .rpm, .tar.gz     packaging/linux
+#   macOS universal         .dmg (both archs built in parallel)          packaging/macos
+#   Windows x64, x86, arm64 .msi and a portable .zip; x64 also the .exe  packaging/windows
+#   Web                     a .zip of the static site                    packaging/web
+#                           (GitHub Pages publishes it: pages.yml)
+#
+# The main installers are also attached without the version in their names
+# (spline-fitter-windows-x64.msi, spline-fitter-linux-x86_64.AppImage, ...) so that
+# releases/latest/download/<name> links keep working across releases.
+#
+# A dry run: Actions > Release > Run workflow with draft off (the default) builds everything and
+# keeps the files as the run's `release-assets` artifact.
+name: Release
+
+on:
+  push:
+    branches: [release]
+  workflow_dispatch:
+    inputs:
+      draft:
+        description: "Create/update a draft release (release branch only; off: build artifacts only)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      date: ${{ steps.v.outputs.date }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        name: Resolve version
+        env:
+          REQUEST_DRAFT: ${{ inputs.draft || false }}
+        run: |
+          . packaging/env.sh
+          if ! printf '%s' "$VERSION" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::crates/spline-fitter-gui/Cargo.toml must hold a version like 1.2.3 or 1.2.3-rc.1"
+            exit 1
+          fi
+          if [ "$REQUEST_DRAFT" = true ] && [ "$GITHUB_REF" != refs/heads/release ]; then
+            echo "::error::Draft releases must be built from the release branch"
+            exit 1
+          fi
+          case "$VERSION" in *-*) pre=true ;; *) pre=false ;; esac
+          { echo "version=$VERSION"; echo "date=$(date -u +%Y-%m-%d)"; echo "prerelease=$pre"; } >>"$GITHUB_OUTPUT"
+          echo "### Airfoil Spline Fitter v$VERSION (\`${GITHUB_SHA::9}\`)" >>"$GITHUB_STEP_SUMMARY"
+
+  linux:
+    name: Linux ${{ matrix.arch }}
+    needs: version
+    # The oldest GitHub-hosted image, so the binary only needs glibc >= 2.35.
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, runner: ubuntu-22.04, deb: amd64 }
+          - { arch: aarch64, runner: ubuntu-22.04-arm, deb: arm64 }
+    env:
+      SPLINE_FITTER_VERSION: ${{ needs.version.outputs.version }}
+      BUILD_DATE: ${{ needs.version.outputs.date }}
+      NFPM_VERSION: 2.47.0
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build and packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev libxkbcommon-dev libwayland-dev \
+            desktop-file-utils zsync rpm imagemagick
+          curl -fsSL -o "$RUNNER_TEMP/nfpm.deb" \
+            "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_${{ matrix.deb }}.deb"
+          sudo dpkg -i "$RUNNER_TEMP/nfpm.deb"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-linux-${{ matrix.arch }}
+      - name: Build and package (AppImage, deb, rpm, tar.gz)
+        run: packaging/linux/package.sh
+      - name: Check the packages
+        run: |
+          dpkg-deb --info dist/release/*.deb
+          dpkg-deb --contents dist/release/*.deb | grep -E 'usr/bin/spline-fitter$|applications/AirfoilSplineFitter.desktop'
+          rpm -qip dist/release/*.rpm
+          rpm -qlp dist/release/*.rpm | grep -E '/usr/bin/spline-fitter$'
+          tar -tzf dist/release/*.tar.gz | grep -E '/bin/spline-fitter$'
+          ldd target/release/spline-fitter
+          for appimage in dist/release/*.AppImage; do
+            chmod +x "$appimage"
+            "$appimage" --appimage-updateinformation | grep -F 'gh-releases-zsync|'
+            test -s "$appimage.zsync"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux-${{ matrix.arch }}
+          path: dist/release/*
+          if-no-files-found: error
+
+  # The two halves of the universal binary build in parallel; `macos` joins and packages them.
+  macos-build:
+    name: macOS build ${{ matrix.arch }}
+    needs: version
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: aarch64, target: aarch64-apple-darwin }
+          - { arch: x86_64, target: x86_64-apple-darwin }
+    env:
+      SPLINE_FITTER_VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-macos-${{ matrix.arch }}
+      - name: Build
+        run: packaging/macos/package.sh --build-only ${{ matrix.target }}
+      # Not named release-*: the release job collects every release-* artifact as an asset.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-bin-${{ matrix.arch }}
+          path: target/${{ matrix.target }}/release/spline-fitter
+          if-no-files-found: error
+
+  macos:
+    name: macOS universal
+    needs: [version, macos-build]
+    runs-on: macos-15
+    env:
+      SPLINE_FITTER_VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-bin-aarch64
+          path: target/aarch64-apple-darwin/release
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-bin-x86_64
+          path: target/x86_64-apple-darwin/release
+      - name: Join, sign ad hoc, package and check (the dmg is mounted and checked)
+        run: |
+          # Artifacts don't keep the executable bit.
+          chmod +x target/*-apple-darwin/release/spline-fitter
+          packaging/macos/package.sh --arch universal --skip-build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-macos
+          path: dist/release/*
+          if-no-files-found: error
+
+  windows:
+    name: Windows ${{ matrix.arch }}
+    needs: version
+    runs-on: windows-2025
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x64, target: x86_64-pc-windows-msvc }
+          - { arch: x86, target: i686-pc-windows-msvc }
+          # Windows on ARM: cross-compiled on the x64 runner.
+          - { arch: arm64, target: aarch64-pc-windows-msvc }
+    env:
+      SPLINE_FITTER_VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-windows-${{ matrix.arch }}
+      - name: Install WiX
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          wix extension add -g WixToolset.UI.wixext/5.0.2 WixToolset.Util.wixext/5.0.2
+      - name: Build and package (msi, portable zip)
+        shell: pwsh
+        run: ./packaging/windows/package.ps1 -Arch ${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows-${{ matrix.arch }}
+          path: dist/release/*
+          if-no-files-found: error
+
+  web:
+    name: Web (wasm)
+    needs: version
+    runs-on: ubuntu-24.04
+    env:
+      SPLINE_FITTER_VERSION: ${{ needs.version.outputs.version }}
+      TRUNK_VERSION: 0.21.14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-web
+      - name: Install trunk
+        run: |
+          curl -fsSL "https://github.com/trunk-rs/trunk/releases/download/v${TRUNK_VERSION}/trunk-x86_64-unknown-linux-gnu.tar.gz" \
+            | tar -xz -C "$HOME/.cargo/bin" trunk
+      - name: Build and zip
+        run: packaging/web/package.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-web
+          path: dist/release/*
+          if-no-files-found: error
+
+  release:
+    name: GitHub Release or dry-run artifacts
+    needs: [version, linux, macos, windows, web]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      PRERELEASE: ${{ needs.version.outputs.prerelease }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: artifacts
+          merge-multiple: true
+      - name: Version-less copies for permanent download links
+        working-directory: artifacts
+        run: |
+          shopt -s nullglob
+          for f in "spline-fitter-$VERSION-"*; do
+            case "$f" in
+              *.msi | *-portable.zip | *.dmg | *.AppImage | *.deb | *.rpm)
+                cp -- "$f" "spline-fitter-${f#"spline-fitter-$VERSION-"}" ;;
+            esac
+          done
+          for f in spline-fitter-windows-x64.msi spline-fitter-macos-universal.dmg \
+            spline-fitter-linux-x86_64.AppImage spline-fitter-linux-x86_64.deb spline-fitter-linux-x86_64.rpm; do
+            test -s "$f" || { echo "::error::missing version-less copy $f"; exit 1; }
+          done
+          ls -l
+      - name: Checksums
+        run: (cd artifacts && sha256sum -- * | tee SHA256SUMS.txt)
+      - name: Create or update the draft release
+        if: github.ref == 'refs/heads/release' && (github.event_name == 'push' || inputs.draft)
+        working-directory: artifacts
+        run: |
+          tag="v$VERSION"
+          # Refuse existing tags: a draft must point at this build, never an older tag.
+          existing_refs="$(gh api "repos/$GH_REPO/git/matching-refs/tags/$tag" --jq '.[].ref')"
+          if printf '%s\n' "$existing_refs" | grep -Fxq "refs/tags/$tag"; then
+            echo "::error::Tag $tag already exists. Choose a new version; never move a release tag."
+            exit 1
+          fi
+          pre=()
+          if [ "$PRERELEASE" = true ]; then pre=(--prerelease); fi
+          if draft="$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null)"; then
+            if [ "$draft" != true ]; then
+              echo "::error::Release $tag is already published. Bump the version before releasing."
+              exit 1
+            fi
+            # Replace the complete draft asset set, including assets removed in this build.
+            assets="$(gh release view "$tag" --json assets --jq '.assets[].name')"
+            while IFS= read -r asset; do
+              if [ -n "$asset" ]; then gh release delete-asset "$tag" "$asset" --yes; fi
+            done <<<"$assets"
+            gh release edit "$tag" --draft --title "Airfoil Spline Fitter v$VERSION" \
+              --target "$GITHUB_SHA" --prerelease="$PRERELEASE"
+            gh release upload "$tag" --clobber -- *
+          else
+            gh release create "$tag" --draft --title "Airfoil Spline Fitter v$VERSION" \
+              --target "$GITHUB_SHA" --generate-notes "${pre[@]}" -- *
+          fi
+          {
+            echo "Draft **Airfoil Spline Fitter v$VERSION** at \`${GITHUB_SHA::9}\`:"
+            echo
+            sed 's/^/    /' SHA256SUMS.txt
+          } >>"$GITHUB_STEP_SUMMARY"
+      - if: github.event_name == 'workflow_dispatch' && !inputs.draft
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: artifacts/*

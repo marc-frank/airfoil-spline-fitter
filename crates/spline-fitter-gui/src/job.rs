@@ -3,11 +3,18 @@
 //! The worker never touches the window. It records the error history,
 //! publishes the latest curves and status text, and, in the Detailed live
 //! mode, waits until the window has drawn each step.
+//!
+//! The browser has no threads (GitHub Pages cannot send the headers shared
+//! memory needs): there the fit runs on the window's own thread, one frame
+//! after it starts so the window shows that it is fitting, and the window
+//! waits for it.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
+#[cfg(not(target_arch = "wasm32"))]
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use spline_fitter::analysis::fit_report_for;
 use spline_fitter::formatting::{format_duration, format_error};
@@ -162,7 +169,7 @@ impl Monitor for Progress {
         let preview = Preview { control_points: u.control_points.to_vec(), knots: u.knots.to_vec(), degree: u.degree };
         let mut p = self.live.published.lock().unwrap();
         *p = Published { preview: Some(preview), status, fresh: true, drawn: false };
-        if self.live.mode() == LiveMode::Detailed {
+        if self.live.mode() == LiveMode::Detailed && !cfg!(target_arch = "wasm32") {
             while !p.drawn {
                 let (guard, _) = self.live.drawn.wait_timeout(p, Duration::from_millis(50)).unwrap();
                 p = guard;
@@ -190,7 +197,10 @@ pub struct FitJob {
     pub live: Arc<Live>,
     pub config: SplineConfig,
     pub options: OptimizationConfig,
+    #[cfg(not(target_arch = "wasm32"))]
     handle: Option<JoinHandle<Result<Outcome>>>,
+    #[cfg(target_arch = "wasm32")]
+    handle: Option<std::cell::RefCell<InPlace>>,
     last_draw: Option<Instant>,
     last_status: Option<Instant>,
     /// Refits of a tolerance search already in the runs plot.
@@ -210,18 +220,54 @@ impl FitJob {
             last_refit: None,
         };
         let (c, o, a) = (config.clone(), options.clone(), airfoil);
+        #[cfg(not(target_arch = "wasm32"))]
         let handle = std::thread::Builder::new()
             .name("spline-fitter-work".into())
             .spawn(move || work(c, o, a, monitor))
             .expect("the worker thread starts");
+        #[cfg(target_arch = "wasm32")]
+        let handle = std::cell::RefCell::new(InPlace::Waiting(Some(Box::new(move || work(c, o, a, monitor)))));
         FitJob { live, config, options, handle: Some(handle), last_draw: None, last_status: None, shown_refits: 0 }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn finished(&self) -> bool {
         self.handle.as_ref().is_none_or(|h| h.is_finished())
     }
 
+    /// The browser: the first poll lets a frame through, the second runs
+    /// the fit.
+    #[cfg(target_arch = "wasm32")]
+    pub fn finished(&self) -> bool {
+        let Some(cell) = &self.handle else { return true };
+        let mut state = cell.borrow_mut();
+        match &mut *state {
+            InPlace::Waiting(work) => {
+                let work = work.take().expect("waits once");
+                *state = InPlace::Ready(work);
+                false
+            }
+            InPlace::Ready(_) => {
+                let InPlace::Ready(work) = std::mem::replace(&mut *state, InPlace::Done(None)) else { unreachable!() };
+                *state = InPlace::Done(Some(work()));
+                true
+            }
+            InPlace::Done(_) => true,
+        }
+    }
+
     /// Waits for the worker and returns its result.
+    #[cfg(target_arch = "wasm32")]
+    pub fn join(&mut self) -> Result<Outcome> {
+        let cell = self.handle.take().expect("joined once");
+        match cell.into_inner() {
+            InPlace::Done(Some(result)) => result,
+            InPlace::Waiting(Some(work)) | InPlace::Ready(work) => work(),
+            _ => Err(spline_fitter::Error::new("the fit stopped unexpectedly")),
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn join(&mut self) -> Result<Outcome> {
         let handle = self.handle.take().expect("joined once");
         self.live.mark_drawn();
@@ -255,6 +301,16 @@ impl FitJob {
         }
         (None, None)
     }
+}
+
+/// A fit that runs on the window's thread (the browser).
+#[cfg(target_arch = "wasm32")]
+enum InPlace {
+    /// Started this frame.
+    Waiting(Option<Box<dyn FnOnce() -> Result<Outcome>>>),
+    /// Runs at the next poll.
+    Ready(Box<dyn FnOnce() -> Result<Outcome>>),
+    Done(Option<Result<Outcome>>),
 }
 
 fn work(config: SplineConfig, options: OptimizationConfig, airfoil: AirfoilData, mut monitor: Progress) -> Result<Outcome> {

@@ -8,7 +8,10 @@ const COMMA_LANGUAGES: &[&str] = &[
 
 /// `,` for locales that write a decimal comma, else `.`.
 pub fn decimal_point() -> char {
+    #[cfg(not(target_arch = "wasm32"))]
     let locale = sys_locale::get_locale().unwrap_or_default().to_lowercase();
+    #[cfg(target_arch = "wasm32")]
+    let locale = crate::web::language().to_lowercase();
     let language = locale.split(['-', '_']).next().unwrap_or("");
     let swiss = locale.ends_with("-ch") && language == "de";
     if COMMA_LANGUAGES.contains(&language) && !swiss {

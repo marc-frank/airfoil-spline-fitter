@@ -182,6 +182,7 @@ fn platform() -> String {
         "windows" => "Windows",
         "macos" => "Darwin",
         "linux" => "Linux",
+        _ if cfg!(target_arch = "wasm32") => "Web",
         other => other,
     }
     .to_string()
@@ -549,15 +550,22 @@ pub fn project_text(project: &ProjectFile) -> String {
     encode_project(project).to_text()
 }
 
-/// Writes a project atomically (a temporary file in the target directory
-/// replaces the target), with `modified` set to now. A failure leaves an
-/// existing file untouched.
-pub fn save_project(project: &mut ProjectFile, path: &Path) -> Result<()> {
-    let io = |e: std::io::Error| Error::new(e.to_string());
+/// The text of a project as it is saved now: `modified` set to now, in
+/// this format.
+pub fn project_text_to_save(project: &mut ProjectFile) -> String {
     project.metadata.modified = now_iso();
     // Loading brought older runs to this format.
     project.metadata.format_version = FORMAT_VERSION.into();
-    let text = project_text(project);
+    project_text(project)
+}
+
+/// Writes a project atomically (a temporary file in the target directory
+/// replaces the target), with `modified` set to now. A failure leaves an
+/// existing file untouched.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn save_project(project: &mut ProjectFile, path: &Path) -> Result<()> {
+    let io = |e: std::io::Error| Error::new(e.to_string());
+    let text = project_text_to_save(project);
     if let Ok(meta) = std::fs::metadata(path) {
         if meta.permissions().readonly() {
             bail!("{} is read-only.", path.display());

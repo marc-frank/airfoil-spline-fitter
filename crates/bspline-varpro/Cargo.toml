@@ -11,3 +11,8 @@ nalgebra.workspace = true
 thiserror.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 unicode-normalization = "0.1"
+web-time = "1"
+
+# The browser: the local time comes from JavaScript.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock", "wasmbind"] }

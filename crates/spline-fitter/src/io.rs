@@ -374,6 +374,11 @@ fn write_file(path: &Path, text: &str) -> Result<()> {
 
 /// Writes coordinates in Selig format with an optional name line.
 pub fn export_airfoil_data(path: &Path, coords: &[Vec2], name: Option<&str>, precision: Option<i32>) -> Result<()> {
+    write_file(path, &airfoil_data_text(coords, name, precision)?)
+}
+
+/// The text [`export_airfoil_data`] writes.
+pub fn airfoil_data_text(coords: &[Vec2], name: Option<&str>, precision: Option<i32>) -> Result<String> {
     if coords.is_empty() {
         bail!("No coordinates to export.");
     }
@@ -386,7 +391,7 @@ pub fn export_airfoil_data(path: &Path, coords: &[Vec2], name: Option<&str>, pre
     for &p in coords {
         text += &point_line(p, d);
     }
-    write_file(path, &text)
+    Ok(text)
 }
 
 /// First line of the comment header of a spline file.
@@ -408,6 +413,11 @@ pub struct SplineFile {
 /// with the degree, counts, knots and continuity in `#` comment lines, so
 /// the file still reads as a plain point list.
 pub fn export_spline_data(path: &Path, spline: &SplineFile, precision: Option<i32>) -> Result<()> {
+    write_file(path, &spline_data_text(spline, precision)?)
+}
+
+/// The text [`export_spline_data`] writes.
+pub fn spline_data_text(spline: &SplineFile, precision: Option<i32>) -> Result<String> {
     let sections = &spline.control_points;
     if sections.iter().all(Vec::is_empty) {
         bail!("No control points to export.");
@@ -441,7 +451,7 @@ pub fn export_spline_data(path: &Path, spline: &SplineFile, precision: Option<i3
             text += &point_line(p, d);
         }
     }
-    write_file(path, &text)
+    Ok(text)
 }
 
 /// Reads a file written by [`export_spline_data`]. Files from before the

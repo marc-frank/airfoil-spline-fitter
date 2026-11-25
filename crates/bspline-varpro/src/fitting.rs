@@ -405,7 +405,7 @@ mod tests {
         let r = problem.residual(&eta_to_t(&eta, 2.0), &theta).0;
         let knots = DMatrix::from_fn(r.len(), 40, |i, j| ((i * 7 + j * 3) % 11) as f64 * 1e-3);
         for (name, extra) in [("without knot columns", None), ("with 40 knot columns", Some(&knots))] {
-            let start = std::time::Instant::now();
+            let start = web_time::Instant::now();
             for _ in 0..100 {
                 std::hint::black_box(reduced_normal_equations(&problem, &eta, &theta, &r, extra));
             }
@@ -414,7 +414,7 @@ mod tests {
         let u = eta_to_t(&eta, 2.0);
         let x = DMatrix::from_column_slice(r.len(), 1, r.as_slice());
         let time = |name: &str, f: &dyn Fn()| {
-            let start = std::time::Instant::now();
+            let start = web_time::Instant::now();
             for _ in 0..100 {
                 f();
             }

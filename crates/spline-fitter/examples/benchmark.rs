@@ -5,7 +5,7 @@
 //!
 //! cargo run --release -p spline-fitter --example benchmark
 
-use std::time::Instant;
+use web_time::Instant;
 
 use spline_fitter::bspline_varpro::airfoil::Naca4;
 use spline_fitter::bspline_varpro::KnotPlacement;

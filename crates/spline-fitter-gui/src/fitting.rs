@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Instant;
+use web_time::Instant;
 
 use spline_fitter::batch::{airfoil_files, prepare, write_result, BatchItem};
 use spline_fitter::bspline_varpro::KnotPlacement;

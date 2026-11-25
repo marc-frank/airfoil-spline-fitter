@@ -3,7 +3,7 @@
 //!
 //! cargo run --release -p bspline-varpro --example profile_parts
 
-use std::time::Instant;
+use web_time::Instant;
 
 use bspline_varpro::airfoil::Naca4;
 use bspline_varpro::reparam::{apply_eta_jacobian, t_to_eta};

@@ -1,0 +1,69 @@
+#!/bin/sh
+# Airfoil Spline Fitter AppImage entry point (installed by package.sh).
+# After SolidCraft's packaging/linux/AppRun (Apache-2.0).
+#
+# On Wayland the compositor finds a window's icon through its app_id (AirfoilSplineFitter) and an
+# installed .desktop file of that name. An AppImage installs nothing, so best-effort desktop
+# integration: install the .desktop entry (Exec pointing at this AppImage) and the icons into
+# $XDG_DATA_HOME, then launch. Only an entry this script wrote (marked X-SplineFitter-Generated)
+# is ever replaced, so a user-edited entry survives. Every failure here leaves the launch
+# untouched. Opt out with SPLINE_FITTER_NO_DESKTOP_INTEGRATION=1. Nothing is installed when a
+# launcher that manages AppImages (Gear Lever, AppImageLauncher) set DESKTOPINTEGRATION.
+
+set -u
+
+APPDIR="$(dirname "$(readlink -f "$0")")"
+DESK_ID=AirfoilSplineFitter
+DESK_MARKER="X-SplineFitter-Generated=true"
+
+integrate() {
+  case "${SPLINE_FITTER_NO_DESKTOP_INTEGRATION:-}" in
+    1 | true | yes) return 0 ;;
+  esac
+  [ -n "${DESKTOPINTEGRATION:-}" ] && return 0
+  appimage="${APPIMAGE:-}"
+  [ -n "$appimage" ] && [ -f "$appimage" ] || return 0
+  appimage="$(readlink -f "$appimage")" || return 0
+  # Exec= is parsed by the desktop: skip paths that would need escaping.
+  case "$appimage" in
+    *[\"\`\$\\%]* | *'
+'*) return 0 ;;
+  esac
+  home="${HOME:-}"
+  [ -n "$home" ] || return 0
+  data="${XDG_DATA_HOME:-$home/.local/share}"
+  src_desktop="$APPDIR/usr/share/applications/$DESK_ID.desktop"
+  [ -f "$src_desktop" ] || return 0
+
+  src_icons="$APPDIR/usr/share/icons/hicolor"
+  icons="$data/icons/hicolor"
+  if [ -d "$src_icons" ]; then
+    (cd "$src_icons" && find . -type f) | while IFS= read -r rel; do
+      mkdir -p "$icons/$(dirname "$rel")" 2>/dev/null || continue
+      cmp -s "$src_icons/$rel" "$icons/$rel" || cp "$src_icons/$rel" "$icons/$rel" 2>/dev/null || true
+    done
+    command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -t -f "$icons" 2>/dev/null
+  fi
+
+  apps="$data/applications"
+  mkdir -p "$apps" 2>/dev/null || return 0
+  target="$apps/$DESK_ID.desktop"
+  if [ ! -f "$target" ] || grep -q "^$DESK_MARKER\$" "$target" 2>/dev/null; then
+    tmp="$apps/.$DESK_ID.tmp.$$"
+    esc="$(printf '%s' "$appimage" | sed 's/[\\&|]/\\&/g')"
+    if { sed -e "s|^Exec=.*|Exec=\"$esc\"|" -e '/^TryExec=/d' "$src_desktop" 2>/dev/null; printf '%s\n' "$DESK_MARKER"; } >"$tmp"; then
+      if cmp -s "$tmp" "$target"; then
+        rm -f "$tmp"
+      elif mv -f "$tmp" "$target" 2>/dev/null; then
+        command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$apps" >/dev/null 2>&1
+      else
+        rm -f "$tmp"
+      fi
+    else
+      rm -f "$tmp"
+    fi
+  fi
+}
+
+integrate
+exec "$APPDIR/usr/bin/spline-fitter" "$@"

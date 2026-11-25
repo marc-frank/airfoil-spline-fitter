@@ -587,17 +587,17 @@ mod tests {
         let r = problem.residual(&u, &[]).0;
         let x = DMatrix::from_column_slice(r.len(), 1, r.as_slice());
         let repeats = 200;
-        let start = std::time::Instant::now();
+        let start = web_time::Instant::now();
         for _ in 0..repeats {
             std::hint::black_box(problem.normal_equations(&u, &[], &x));
         }
         println!("normal equations {:.3} ms", start.elapsed().as_secs_f64() * 1e3 / repeats as f64);
-        let start = std::time::Instant::now();
+        let start = web_time::Instant::now();
         for _ in 0..repeats {
             std::hint::black_box(problem.point_jacobian(&u, &[]));
         }
         println!("point jacobian {:.3} ms", start.elapsed().as_secs_f64() * 1e3 / repeats as f64);
-        let start = std::time::Instant::now();
+        let start = web_time::Instant::now();
         for i in 0..repeats {
             let mut v = u.clone();
             v[1 + i % 200] += 1e-12;

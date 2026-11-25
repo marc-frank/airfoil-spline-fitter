@@ -1,0 +1,13 @@
+# The browser version: `trunk build --release` (from crates/spline-fitter-gui) writes the static
+# site to dist/web at the workspace root; packaging/web/package.sh zips it and the Pages workflow
+# publishes it. `trunk serve` runs it at http://127.0.0.1:8780.
+[build]
+target = "index.html"
+dist = "../../dist/web"
+# Relative URLs, so the site works under any path (https://<user>.github.io/<repo>/).
+public_url = "./"
+filehash = true
+
+[serve]
+addresses = ["127.0.0.1"]
+port = 8780

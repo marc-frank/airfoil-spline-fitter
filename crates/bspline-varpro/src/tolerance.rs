@@ -281,6 +281,11 @@ impl FreeKnots<'_> {
             let other = options.problem(sections, gaps.knots(&shifted), gaps.degree).expect("knots of the gap parameterization are valid");
             (other.residual(&u, &theta).0 - &base) / h
         };
+        // The browser has no threads: one column after the other.
+        if cfg!(target_arch = "wasm32") {
+            let computed: Vec<DVector<f64>> = (0..xi.len()).map(column).collect();
+            return DMatrix::from_columns(&computed);
+        }
         // At least four columns a thread, so few knots do not pay for threads.
         let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, xi.len().div_ceil(4).max(1));
         let per_thread = xi.len().div_ceil(threads).max(1);

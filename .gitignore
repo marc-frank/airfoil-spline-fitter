@@ -14,3 +14,6 @@ Thumbs.db
 # Large project files (over GitHub's 100 MB limit)
 *.asfproj
 !crates/spline-fitter/tests/fixtures/*.asfproj
+
+# Release packages and the web build (packaging/)
+/dist/

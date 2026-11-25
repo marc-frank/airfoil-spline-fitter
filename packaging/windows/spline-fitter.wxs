@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Airfoil Spline Fitter MSI (WiX Toolset v5, plus the UI and Util extensions). Built by package.ps1:
+
+    wix build spline-fitter.wxs -arch x64 -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext
+      -d Version=2.0.0 -d DisplayVersion=2.0.0-rc.1 -d BinDir=... -d IconPath=... -o out.msi
+
+  Per-machine install with a setup wizard: Welcome, install folder (Program Files\Airfoil Spline
+  Fitter by default; an update keeps the installed folder and skips this page), Ready, progress,
+  and a Finish page with a ticked "Launch" box. Installs a Start menu shortcut and the licence.
+  `msiexec /qn` installs silently.
+  After SolidCraft's assets/platforms/windows/solidcraft.wxs (Apache-2.0).
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <!-- Never change the UpgradeCode: it is what lets a new MSI replace every earlier install. -->
+  <Package
+      Name="Airfoil Spline Fitter"
+      Manufacturer="Airfoil Spline Fitter contributors"
+      Version="$(var.Version)"
+      UpgradeCode="0902E67E-B3E9-4947-80A8-6C3BC4D36886"
+      Scope="perMachine"
+      Compressed="yes"
+      Language="1033">
+    <SummaryInformation Description="Airfoil Spline Fitter" Manufacturer="Airfoil Spline Fitter contributors" />
+    <!-- Same-version upgrades let successive pre-releases of one X.Y.Z replace each other. The new
+         version is installed first and the old one removed afterwards (afterInstallExecute), so
+         the executable and the Start menu shortcut keep their path and Windows keeps a pin. -->
+    <MajorUpgrade AllowSameVersionUpgrades="yes" Schedule="afterInstallExecute"
+        DowngradeErrorMessage="A newer version of Airfoil Spline Fitter is already installed." />
+    <!-- Replace every file, also one of the same file version (pre-releases of one X.Y.Z). -->
+    <Property Id="REINSTALLMODE" Value="amus" />
+    <!-- Never restart the computer at the end of an install or update. -->
+    <Property Id="REBOOT" Value="ReallySuppress" />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <!-- Only for Programs and Features; the shortcut uses the executable's embedded icon. -->
+    <Icon Id="AppIcon.exe" SourceFile="$(var.IconPath)" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon.exe" />
+
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="Airfoil Spline Fitter" />
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+
+    <!-- An upgrade installs where the user put the previous version. -->
+    <Property Id="INSTALLFOLDER">
+      <RegistrySearch Id="PreviousInstallFolder" Root="HKLM" Key="Software\AirfoilSplineFitter" Name="InstallDir" Type="raw" />
+    </Property>
+
+    <Feature Id="Main" Title="Airfoil Spline Fitter" Level="1">
+      <ComponentGroupRef Id="AppFiles" />
+    </Feature>
+
+    <!-- WixUI_InstallDir without its licence page (MIT: nothing to accept). -->
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+    <UI>
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="InstallDirDlg" Order="2" Condition="NOT Installed" />
+      <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="2" />
+      <!-- An update keeps the folder of the installed version. -->
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Order="3" Condition="NOT Installed AND WIX_UPGRADE_DETECTED" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="3" Condition="NOT Installed AND WIX_UPGRADE_DETECTED" />
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchApp"
+          Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />
+    </UI>
+
+    <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT" Value="Airfoil Spline Fitter $(var.DisplayVersion) is installed. You can start it any time from the Start menu." />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Launch Airfoil Spline Fitter" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <Property Id="WixShellExecTarget" Value="[#AppExe]" />
+    <!-- Runs in the wizard's own (unelevated) process, so the app starts as the user. -->
+    <CustomAction Id="LaunchApp" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" DllEntry="WixShellExec" Impersonate="yes" Return="ignore" />
+  </Package>
+
+  <Fragment>
+    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+      <Component Id="App" Guid="C38AC922-B408-4BEB-890F-AEA8937A1124">
+        <File Id="AppExe" Source="$(var.BinDir)\spline-fitter.exe" KeyPath="yes">
+          <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="Airfoil Spline Fitter"
+              Description="B-spline fitting of airfoil coordinates" WorkingDirectory="INSTALLFOLDER" Advertise="no" />
+        </File>
+        <RegistryValue Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\App Paths\spline-fitter.exe" Value="[#AppExe]" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\AirfoilSplineFitter" Name="InstallDir" Value="[INSTALLFOLDER]" Type="string" />
+      </Component>
+      <Component Id="Licence" Guid="FC8EE04E-9431-4093-8B94-10AC4DCF7DD1">
+        <File Id="LicenseFile" Source="$(var.BinDir)\LICENSE" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+</Wix>

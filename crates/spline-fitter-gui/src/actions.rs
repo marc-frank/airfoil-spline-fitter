@@ -7,9 +7,9 @@ use spline_fitter::bspline_varpro::airfoil::{resample, trailing_edge_segment, Na
 use spline_fitter::bspline_varpro::export::{self, merge_curves, Units};
 use spline_fitter::formatting::file_stem;
 use spline_fitter::geometry::AirfoilData;
-use spline_fitter::io::{export_airfoil_data, export_spline_data, parse_airfoil_file, parse_airfoil_text, SplineFile};
-use spline_fitter::project::{load_project, save_project, ProjectFile};
-use spline_fitter::Vec2;
+use spline_fitter::io::{airfoil_data_text, decode, parse_airfoil_text, spline_data_text, ParsedAirfoil, SplineFile};
+use spline_fitter::project::{load_project, parse_project, ProjectFile};
+use spline_fitter::{Result, Vec2};
 
 use crate::app::App;
 use crate::dialogs::{CadChoice, Dialog};
@@ -17,9 +17,19 @@ use crate::dialogs::{CadChoice, Dialog};
 /// Fewest pasted coordinates that make an airfoil.
 const MIN_PASTED_POINTS: usize = 5;
 
-fn home() -> PathBuf {
-    dirs::home_dir().unwrap_or_default()
+/// Where a project comes from: a file, or the text of one the browser read.
+#[derive(Clone)]
+enum ProjectSource {
+    Path(PathBuf),
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    Text {
+        name: String,
+        text: String,
+    },
 }
+
+/// What a finished save says: the browser downloads the file.
+const SAVED: &str = if cfg!(target_arch = "wasm32") { "Downloaded" } else { "Saved" };
 
 fn extension(path: &Path) -> String {
     path.extension().map(|e| format!(".{}", e.to_string_lossy().to_lowercase())).unwrap_or_default()
@@ -39,10 +49,36 @@ impl App {
         if self.fitting() {
             return;
         }
-        if let Some(path) =
-            self.file_dialog().set_title("Open airfoil").set_directory(home()).add_filter("Airfoil data", &["dat"]).pick_file()
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(path) = self
+            .file_dialog()
+            .set_title("Open airfoil")
+            .set_directory(crate::parent::home())
+            .add_filter("Airfoil data", &["dat"])
+            .pick_file()
         {
             self.load_airfoil(&path);
+        }
+        #[cfg(target_arch = "wasm32")]
+        crate::web::pick_file("Open airfoil", "Airfoil data", &["dat"]);
+    }
+
+    /// Opens a file the browser read: an airfoil or a project.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    pub fn open_bytes(&mut self, name: &str, bytes: &[u8]) {
+        if self.fitting() {
+            self.set_status("Cancel the running fit to open a file");
+            return;
+        }
+        let ext = extension(Path::new(name));
+        if ext == ".asfproj" {
+            self.open_project_from(ProjectSource::Text { name: name.to_string(), text: decode(bytes) });
+        } else if ext == ".dat" {
+            let stem = Path::new(name).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+            let parsed = parse_airfoil_text(&decode(bytes), Some(&stem));
+            self.set_parsed_airfoil(Ok(parsed), &stem, "");
+        } else {
+            self.set_status(format!("Unsupported file type: {ext}"));
         }
     }
 
@@ -70,14 +106,21 @@ impl App {
             self.set_status(format!("Unsupported file type: {ext}"));
             return;
         }
-        let parsed = match parse_airfoil_file(path) {
+        let filename = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        let parsed = spline_fitter::io::read_text(path).map(|text| parse_airfoil_text(&text, Some(&filename)));
+        self.set_parsed_airfoil(parsed, &filename, &path.to_string_lossy());
+    }
+
+    /// Makes a read airfoil file the airfoil; `path` is empty for one the
+    /// browser read.
+    fn set_parsed_airfoil(&mut self, parsed: Result<Option<ParsedAirfoil>>, filename: &str, path: &str) {
+        let parsed = match parsed {
             Err(e) => return self.fail(format!("Failed to load: {e}")),
             Ok(None) => return self.fail("No coordinates found in the file"),
             Ok(Some(p)) => p,
         };
-        let filename = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-        let name = parsed.name.unwrap_or_else(|| filename.clone());
-        self.set_airfoil(parsed.coords, &filename, &name, parsed.precision, &path.to_string_lossy(), "Loaded");
+        let name = parsed.name.unwrap_or_else(|| filename.to_string());
+        self.set_airfoil(parsed.coords, filename, &name, parsed.precision, path, "Loaded");
     }
 
     /// Makes `coords` the airfoil (a file's `path` goes to the recent
@@ -128,7 +171,7 @@ impl App {
 
     /// Records this frame's program changes as quiet ones.
     pub fn accept_settings_quietly(&mut self) {
-        self.history.on_change(self.settings.values(), true, std::time::Instant::now());
+        self.history.on_change(self.settings.values(), true, web_time::Instant::now());
         self.history.commit(&self.settings.values());
         self.accept_settings();
         self.quiet = false;
@@ -146,13 +189,24 @@ impl App {
         if self.fitting() {
             return;
         }
-        let text = arboard::Clipboard::new().and_then(|mut c| c.get_text()).unwrap_or_default();
+        #[cfg(not(target_arch = "wasm32"))]
+        self.paste_text(&arboard::Clipboard::new().and_then(|mut c| c.get_text()).unwrap_or_default());
+        // The browser answers later (crate::web::Incoming::Text).
+        #[cfg(target_arch = "wasm32")]
+        crate::web::read_clipboard();
+    }
+
+    /// Pastes `text`: a file path, or coordinates.
+    pub fn paste_text(&mut self, text: &str) {
+        if self.fitting() {
+            return;
+        }
         let as_path = PathBuf::from(text.trim().trim_matches('"'));
         let ext = extension(&as_path);
         if (ext == ".dat" || ext == ".asfproj") && as_path.is_file() {
             return self.open_path(&as_path);
         }
-        match parse_airfoil_text(&text, None) {
+        match parse_airfoil_text(text, None) {
             Some(parsed) if parsed.coords.len() >= MIN_PASTED_POINTS => {
                 let name = parsed.name.unwrap_or_else(|| "Pasted airfoil".into());
                 self.set_airfoil(parsed.coords, "", &name, if parsed.precision > 0 { parsed.precision } else { 6 }, "", "Pasted");
@@ -179,6 +233,40 @@ impl App {
         self.set_airfoil(points, &format!("naca{code}"), &format!("NACA {code}"), 6, "", "Created");
     }
 
+    /// Asks where to save (the browser downloads `default` instead) and
+    /// writes the text `make` returns for that file; `None` when cancelled.
+    fn save_text_as(
+        &mut self,
+        title: &str,
+        default: &str,
+        filter: (&str, &[&str]),
+        make: impl FnOnce(&Path) -> Result<String>,
+    ) -> Option<Result<PathBuf>> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let path = self
+                .file_dialog()
+                .set_title(title)
+                .set_directory(crate::parent::home())
+                .set_file_name(default)
+                .add_filter(filter.0, filter.1)
+                .save_file()?;
+            Some(make(&path).and_then(|text| {
+                std::fs::write(&path, text).map_err(|e| spline_fitter::Error::new(e.to_string()))?;
+                Ok(path)
+            }))
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (title, filter);
+            let path = PathBuf::from(default);
+            Some(make(&path).and_then(|text| {
+                crate::web::download(default, &text).map_err(spline_fitter::Error::new)?;
+                Ok(path)
+            }))
+        }
+    }
+
     /// File > Save fitted airfoil: asks for the points per side first.
     pub fn on_save_airfoil(&mut self) {
         let (Some(_), Some(airfoil)) = (&self.fit, &self.airfoil) else {
@@ -192,20 +280,13 @@ impl App {
         let (Some(fit), Some(airfoil)) = (self.fit.clone(), self.airfoil.clone()) else { return };
         let name = if airfoil.name.is_empty() { &airfoil.filename } else { &airfoil.name };
         let default = format!("{}_fitted.dat", file_stem(airfoil.file_base(), "airfoil"));
-        let Some(path) = self.file_dialog()
-            .set_title("Save fitted airfoil")
-            .set_directory(home())
-            .set_file_name(&default)
-            .add_filter("Airfoil data", &["dat"])
-            .save_file()
-        else {
-            return self.set_status("Save cancelled.");
+        let make = |_: &Path| {
+            resample(&fit.curves(), per_side).and_then(|points| airfoil_data_text(&points, Some(name), Some(airfoil.precision.max(6))))
         };
-        let result = resample(&fit.curves(), per_side)
-            .and_then(|points| export_airfoil_data(&path, &points, Some(name), Some(airfoil.precision.max(6))));
-        match result {
-            Ok(()) => self.set_status(format!("Saved: {}", path.display())),
-            Err(e) => self.fail(format!("Save failed: {e}")),
+        match self.save_text_as("Save fitted airfoil", &default, ("Airfoil data", &["dat"]), make) {
+            None => self.set_status("Save cancelled."),
+            Some(Ok(path)) => self.set_status(format!("{SAVED}: {}", path.display())),
+            Some(Err(e)) => self.fail(format!("Save failed: {e}")),
         }
     }
 
@@ -215,15 +296,6 @@ impl App {
             return self.set_status("No fitted spline to save.");
         };
         let default = format!("{}.deg{}.spline.dat", file_stem(airfoil.file_base(), "airfoil"), fit.degree);
-        let Some(path) = self.file_dialog()
-            .set_title("Save spline control points")
-            .set_directory(home())
-            .set_file_name(&default)
-            .add_filter("Spline data", &["spline.dat", "dat"])
-            .save_file()
-        else {
-            return self.set_status("Save cancelled.");
-        };
         let continuity = self
             .projects
             .shown()
@@ -236,9 +308,11 @@ impl App {
             knots: Some(fit.all_knots()),
             continuity,
         };
-        match export_spline_data(&path, &spline, Some(12)) {
-            Ok(()) => self.set_status(format!("Saved: {}", path.display())),
-            Err(e) => self.fail(format!("Save failed: {e}")),
+        let make = |_: &Path| spline_data_text(&spline, Some(12));
+        match self.save_text_as("Save spline control points", &default, ("Spline data", &["spline.dat", "dat"]), make) {
+            None => self.set_status("Save cancelled."),
+            Some(Ok(path)) => self.set_status(format!("{SAVED}: {}", path.display())),
+            Some(Err(e)) => self.fail(format!("Save failed: {e}")),
         }
     }
 
@@ -258,16 +332,8 @@ impl App {
         self.store.set_bool("cad_merge", choice.merge);
         self.store.set_bool("cad_close_te", choice.close_te);
         let (label, suffix) = crate::dialogs::CAD_FORMATS[choice.format];
-        let Some(path) = self.file_dialog()
-            .set_title("Export CAD")
-            .set_directory(home())
-            .set_file_name(format!("{}{suffix}", file_stem(airfoil.file_base(), "airfoil")))
-            .add_filter(label, &[suffix.trim_start_matches('.')])
-            .save_file()
-        else {
-            return self.set_status("Export cancelled.");
-        };
-        let result = (|| {
+        let default = format!("{}{suffix}", file_stem(airfoil.file_base(), "airfoil"));
+        let make = |path: &Path| {
             let mut curves = fit.curves();
             if choice.merge {
                 curves = vec![merge_curves(&curves)?];
@@ -278,11 +344,12 @@ impl App {
                 }
             }
             let units: Units = choice.units.parse()?;
-            export::write(&path, &curves, choice.scale, units)
-        })();
-        match result {
-            Ok(_) => self.set_status(format!("Exported: {}", path.display())),
-            Err(e) => self.fail(format!("Export failed: {e}")),
+            Ok(export::text(path, &curves, choice.scale, units)?)
+        };
+        match self.save_text_as("Export CAD", &default, (label, &[suffix.trim_start_matches('.')]), make) {
+            None => self.set_status("Export cancelled."),
+            Some(Ok(path)) => self.set_status(format!("Exported: {}", path.display())),
+            Some(Err(e)) => self.fail(format!("Export failed: {e}")),
         }
     }
 
@@ -351,23 +418,36 @@ impl App {
         if self.fitting() {
             return;
         }
-        if let Some(path) = self.file_dialog()
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(path) = self
+            .file_dialog()
             .set_title("Open project")
-            .set_directory(home())
+            .set_directory(crate::parent::home())
             .add_filter("Spline project", &["asfproj"])
             .add_filter("All files", &["*"])
             .pick_file()
         {
             self.open_project(&path);
         }
+        #[cfg(target_arch = "wasm32")]
+        crate::web::pick_file("Open project", "Spline project", &["asfproj"]);
     }
 
     pub fn open_project(&mut self, path: &Path) -> bool {
+        self.open_project_from(ProjectSource::Path(path.to_path_buf()))
+    }
+
+    fn open_project_from(&mut self, source: ProjectSource) -> bool {
         if self.fitting() {
             self.set_status("Cancel the running fit to open a file");
             return false;
         }
-        let loaded = match load_project(path).and_then(|l| {
+        let (read, path) = match &source {
+            ProjectSource::Path(path) => (load_project(path), path.clone()),
+            ProjectSource::Text { name, text } => (parse_project(text), PathBuf::from(name)),
+        };
+        let path = path.as_path();
+        let loaded = match read.and_then(|l| {
             // Pre-check: the airfoil splits and the last run's curves build.
             l.project.airfoil.resplit(l.project.airfoil.num_sections())?;
             if let Some(last) = l.project.runs.last() {
@@ -384,9 +464,9 @@ impl App {
                 return false;
             }
         };
-        let again = path.to_path_buf();
+        let again = source.clone();
         if !self.confirm_discard("Open cancelled.", move |app| {
-            app.open_project(&again);
+            app.open_project_from(again);
         }) {
             return false;
         }
@@ -421,7 +501,9 @@ impl App {
         }
         self.explorer.forget_points();
         self.refresh_comparison();
-        self.store.add_recent(path);
+        if matches!(source, ProjectSource::Path(_)) {
+            self.store.add_recent(path);
+        }
         true
     }
 
@@ -430,11 +512,10 @@ impl App {
         let Some(path) = self.projects.path.clone().filter(|_| self.projects.file.is_some()) else {
             return self.on_save_project_as();
         };
-        let result = save_project(self.projects.file.as_mut().unwrap(), &path);
-        match result {
+        match write_project(self.projects.file.as_mut().unwrap(), &path) {
             Ok(()) => {
                 self.projects.modified = false;
-                self.set_status(format!("Saved: {}", path.display()));
+                self.set_status(format!("{SAVED}: {}", path.display()));
             }
             Err(e) => self.fail(format!("Save failed: {e}")),
         }
@@ -448,10 +529,22 @@ impl App {
         if self.projects.file.is_none() {
             self.projects.file = Some(ProjectFile::new(airfoil.clone()));
         }
-        let Some(mut path) = self.file_dialog()
+        let default = format!("{}.asfproj", file_stem(airfoil.file_base(), "project"));
+        // The browser downloads the file under its default name.
+        #[cfg(target_arch = "wasm32")]
+        self.save_project_to(PathBuf::from(default));
+        #[cfg(not(target_arch = "wasm32"))]
+        self.ask_project_path(default);
+    }
+
+    /// Asks where to save the project, then saves it there.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn ask_project_path(&mut self, default: String) {
+        let Some(mut path) = self
+            .file_dialog()
             .set_title("Save project as")
-            .set_directory(home())
-            .set_file_name(format!("{}.asfproj", file_stem(airfoil.file_base(), "project")))
+            .set_directory(crate::parent::home())
+            .set_file_name(default)
             .add_filter("Spline project", &["asfproj"])
             .save_file()
         else {
@@ -479,12 +572,12 @@ impl App {
 
     /// Saves the project to `path`, which becomes its file.
     fn save_project_to(&mut self, path: PathBuf) {
-        match save_project(self.projects.file.as_mut().unwrap(), &path) {
+        match write_project(self.projects.file.as_mut().unwrap(), &path) {
             Ok(()) => {
                 self.projects.path = Some(path.clone());
                 self.projects.modified = false;
                 self.store.add_recent(&path);
-                self.set_status(format!("Saved: {}", path.display()));
+                self.set_status(format!("{SAVED}: {}", path.display()));
             }
             Err(e) => self.fail(format!("Save failed: {e}")),
         }
@@ -506,5 +599,17 @@ impl App {
             cancelled: String::new(),
             then: Box::new(|app: &mut App| app.delete_selected_runs()),
         }));
+    }
+}
+
+/// Saves a project to `path` (the browser downloads it under that name).
+fn write_project(project: &mut ProjectFile, path: &Path) -> Result<()> {
+    #[cfg(not(target_arch = "wasm32"))]
+    return spline_fitter::project::save_project(project, path);
+    #[cfg(target_arch = "wasm32")]
+    {
+        let text = spline_fitter::project::project_text_to_save(project);
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        crate::web::download(&name, &text).map_err(spline_fitter::Error::new)
     }
 }

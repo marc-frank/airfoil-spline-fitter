@@ -4,6 +4,12 @@ A Rust workspace: `crates/bspline-varpro` (fitting library), `crates/spline-fitt
 (application core), `crates/spline-fitter-gui` (egui desktop application),
 `crates/bspline-varpro-py` (the Python module `bspline_varpro`, PyO3; keep it in
 step when the library's or the app's fitting API changes).
+The GUI also builds for the browser (`wasm32-unknown-unknown`, Trunk, GitHub
+Pages): keep desktop-only code (files by path, threads, clipboard, sound)
+behind `cfg(target_arch = "wasm32")`, with the browser side in `parent.rs`
+and `web.rs`, use `web_time::Instant`, and check
+`cargo check -p spline-fitter-gui --target wasm32-unknown-unknown`.
+Release packaging: `packaging/` and `.github/workflows/`.
 [docs/spec.md](docs/spec.md) specifies the behaviour; README.md lists where the
 Rust version deliberately differs from it.
 

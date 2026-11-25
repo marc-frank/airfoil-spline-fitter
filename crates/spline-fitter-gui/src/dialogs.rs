@@ -1,6 +1,7 @@
 //! Dialogs, the fit report window, and the plot toolbar's drop-downs.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use eframe::egui::{self, Align, Layout, RichText, Ui};
 use spline_fitter::analysis::{Note, Report, JUNCTION_COLUMNS};
@@ -364,10 +365,7 @@ impl App {
                         form_row(ui, &p, label, true, "", |ui| {
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                 if dialog_button(ui, &p, "Choose...", false, true) {
-                                    let home = dirs::home_dir().unwrap_or_default();
-                                    if let Some(dir) =
-                                        crate::parent::file_dialog(parent).set_title(format!("{label} folder")).set_directory(home).pick_folder()
-                                    {
+                                    if let Some(dir) = crate::parent::pick_folder(parent, &format!("{label} folder")) {
                                         *folder = dir.to_string_lossy().into_owned();
                                     }
                                 }
@@ -616,7 +614,7 @@ impl App {
                         let enabled = self.report_panel.is_some() && !self.fitting();
                         let tip = "Copy the report as text: a line per value, tab separated, so it\npastes into a spreadsheet as cells";
                         if widgets::push_button(ui, &p, enabled, "Copy").on_hover_text(tip).clicked() {
-                            self.copy_report();
+                            self.copy_report(ui.ctx());
                         }
                     });
                 }
@@ -664,10 +662,10 @@ impl App {
     }
 
     /// Copies the shown report to the clipboard as text.
-    pub fn copy_report(&mut self) {
+    pub fn copy_report(&mut self, ctx: &egui::Context) {
         let Some(panel) = &self.report_panel else { return };
         let text = panel.report.text(&panel.title);
-        match arboard::Clipboard::new().and_then(|mut c| c.set_text(text)) {
+        match crate::parent::copy_text(&ctx, text) {
             Ok(()) => self.set_status("Copied the fit report"),
             Err(e) => self.fail(format!("Copy failed: {e}")),
         }

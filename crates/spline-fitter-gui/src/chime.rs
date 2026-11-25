@@ -1,8 +1,4 @@
-//! Short sounds at the end of a fit or on an error.
-
-use std::time::Duration;
-
-use rodio::source::{SineWave, Source};
+//! Short sounds at the end of a fit or on an error (the desktop only).
 
 /// A finished fit: two rising notes.
 pub fn completion() {
@@ -15,7 +11,12 @@ pub fn error() {
 }
 
 /// Plays notes on a background thread; any audio failure is ignored.
+#[cfg(not(target_arch = "wasm32"))]
 fn play(notes: &'static [(f32, f32)]) {
+    use std::time::Duration;
+
+    use rodio::source::{SineWave, Source};
+
     let _ = std::thread::Builder::new().name("chime".into()).spawn(move || {
         let Ok(sink) = rodio::DeviceSinkBuilder::open_default_sink() else { return };
         let player = rodio::Player::connect_new(sink.mixer());
@@ -27,3 +28,7 @@ fn play(notes: &'static [(f32, f32)]) {
         player.sleep_until_end();
     });
 }
+
+/// The browser version stays silent.
+#[cfg(target_arch = "wasm32")]
+fn play(_notes: &'static [(f32, f32)]) {}

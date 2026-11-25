@@ -1,7 +1,6 @@
 //! The main window: menus, layout, status bar and the frame loop.
 
-use std::path::PathBuf;
-use std::time::Instant;
+use web_time::Instant;
 
 use eframe::egui::{self, Align, Key, KeyboardShortcut, Layout, Modifiers, RichText, Ui};
 use spline_fitter::geometry::AirfoilData;
@@ -17,6 +16,9 @@ use crate::settings::{AdvancedBaseline, Settings, Values};
 use crate::store::Store;
 use crate::theme::{self, size, typeface, Palette, ThemeMode};
 use crate::widgets;
+
+/// The browser version (packaging/web): no recent files, folders or Exit.
+const WEB: bool = cfg!(target_arch = "wasm32");
 
 pub const DEFAULT_SCROLL_MS: u64 = 350;
 pub const DEFAULT_ZOOM_MS: u64 = 650;
@@ -88,6 +90,8 @@ pub struct App {
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         crate::fonts::install(&cc.egui_ctx);
+        #[cfg(target_arch = "wasm32")]
+        crate::web::set_context(&cc.egui_ctx);
         spline_fitter::formatting::set_decimal_point(crate::locale::decimal_point());
         let store = Store::open();
         let theme_mode = ThemeMode::from_value(&store.string("theme/mode", "system"));
@@ -424,23 +428,40 @@ impl App {
             }
         }
         if !typing && !self.fitting() {
-            let pasted = ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Paste(_))));
-            if pasted {
+            let pasted = ctx.input(|i| {
+                i.events.iter().find_map(|e| match e {
+                    egui::Event::Paste(text) => Some(text.clone()),
+                    _ => None,
+                })
+            });
+            // The browser hands the pasted text over with the event; the
+            // desktop reads the clipboard (which may hold a file).
+            #[cfg(target_arch = "wasm32")]
+            if let Some(text) = pasted {
+                self.paste_text(&text);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            if pasted.is_some() {
                 self.on_paste();
             }
         }
     }
 
     fn dropped_files(&mut self, ctx: &egui::Context) {
-        let files: Vec<PathBuf> = ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).collect());
+        let files: Vec<_> = ctx.input(|i| i.raw.dropped_files.clone());
         if self.fitting() {
             return;
         }
         let supported =
-            |p: &PathBuf| p.extension().map(|e| e.to_string_lossy().to_lowercase()).is_some_and(|e| e == "dat" || e == "asfproj");
-        if let Some(path) = files.into_iter().find(supported) {
+            |p: &std::path::Path| p.extension().map(|e| e.to_string_lossy().to_lowercase()).is_some_and(|e| e == "dat" || e == "asfproj");
+        let Some(file) = files.into_iter().find(|f| supported(f.path())) else { return };
+        // The browser reads the file later and hands it over (crate::web).
+        #[cfg(target_arch = "wasm32")]
+        crate::web::read_dropped(file);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-            self.open_path(&path);
+            self.open_path(&file.path().to_path_buf());
         }
     }
 
@@ -491,7 +512,7 @@ impl App {
                 if m.item(ui, &p, entries[1], !fitting, None) {
                     self.on_open_airfoil();
                 }
-                ui.add_enabled_ui(!fitting, |ui| {
+                ui.add_enabled_ui(!fitting && !WEB, |ui| {
                     ui.spacing_mut().button_padding.x = m.text_x;
                     let id = ui.next_auto_id();
                     if self.open_submenu == Some(id) {
@@ -539,11 +560,11 @@ impl App {
                     self.on_save_project_as();
                 }
                 menu_separator(ui);
-                if m.item(ui, &p, entries[9], !fitting, None) {
+                if m.item(ui, &p, entries[9], !fitting && !WEB, None) {
                     self.dialog = Some(Dialog::batch());
                 }
                 menu_separator(ui);
-                if m.item(ui, &p, entries[10], true, None) {
+                if m.item(ui, &p, entries[10], !WEB, None) {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             }));
@@ -933,6 +954,13 @@ impl eframe::App for App {
         self.tick_job(&ctx);
         self.shortcuts(&ctx);
         self.dropped_files(&ctx);
+        #[cfg(target_arch = "wasm32")]
+        for item in crate::web::take() {
+            match item {
+                crate::web::Incoming::File { name, bytes } => self.open_bytes(&name, &bytes),
+                crate::web::Incoming::Text(text) => self.paste_text(&text),
+            }
+        }
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(self.title()));
 
         let p = self.palette.clone();

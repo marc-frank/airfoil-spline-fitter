@@ -1,6 +1,7 @@
 //! Undo and redo of settings: changes within 500 ms form one step.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 const MERGE: Duration = Duration::from_millis(500);
 const LIMIT: usize = 200;
