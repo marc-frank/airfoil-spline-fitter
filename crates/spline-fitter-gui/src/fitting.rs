@@ -99,6 +99,16 @@ fn preview_curves(preview: &crate::job::Preview) -> Vec<BSpline> {
 }
 
 impl App {
+    /// One continuity label per junction of a curve fitted with `config`:
+    /// those of the open airfoil's junctions (a corner of the data is G0)
+    /// when it is cut as `config` cuts it, else those of the layout.
+    pub fn junction_labels(&self, config: &SplineConfig) -> Vec<String> {
+        match &self.airfoil {
+            Some(a) if a.split == config.split() => config.seam_specs(&a.seams),
+            _ => config.junction_specs(),
+        }
+    }
+
     /// The sidebar's settings, with an automatic tolerance updated first.
     fn configs(&mut self) -> spline_fitter::Result<(SplineConfig, OptimizationConfig)> {
         let config = self.settings.spline_config()?;
@@ -111,7 +121,8 @@ impl App {
     }
 
     /// The Fit spline button. The split belongs to the fit: the airfoil is
-    /// split for the section count here, not when the count changes.
+    /// cut for the section count and the corners setting here, not when
+    /// they change.
     pub fn on_fit(&mut self) {
         let Some(mut airfoil) = self.airfoil.clone() else {
             return self.set_status("Load an airfoil first.");
@@ -120,8 +131,8 @@ impl App {
             Ok(c) => c,
             Err(e) => return self.set_status(e.0),
         };
-        if airfoil.num_sections() != config.num_sections {
-            airfoil = match airfoil.resplit(config.num_sections) {
+        if airfoil.split != config.split() {
+            airfoil = match airfoil.resplit(config.split()) {
                 Ok(a) => a,
                 Err(e) => return self.set_status(e.0),
             };
@@ -136,7 +147,8 @@ impl App {
             Some(t) => format!("tolerance {}", number(t, ".2e")),
             None => format!("{} control points", config.num_control_points),
         };
-        let specs = config.junction_specs();
+        // Every junction as it will be joined: a corner of the data with G0.
+        let specs = config.seam_specs(&airfoil.seams);
         let mode = if specs.is_empty() { format!("G{}", config.continuity.order()) } else { specs.join(", ") };
         self.set_status(format!("Preparing {size}, degree {}, {mode} continuity...", config.degree));
         self.preparing = Some(Box::new((config, opt, airfoil)));
@@ -264,8 +276,10 @@ impl App {
             // As the run of its own count would have taken.
             fit.elapsed_seconds = seconds - since;
             since = seconds;
+            // The count that makes this fit: a section at a corner may
+            // take fewer.
             let mut config = job.config.clone();
-            config.num_control_points = fit.section_control_points.first().map_or(0, Vec::len);
+            config.num_control_points = fit.section_control_points.iter().map(Vec::len).max().unwrap_or(0);
             let opt = OptimizationConfig { tolerance: None, grow_control_points: false, ..job.options.clone() };
             let mut run = OptimizationRun::new(config, opt, fit, own);
             run.search = Some(search_id.clone());
@@ -331,7 +345,7 @@ impl App {
                 }
                 self.fit = Some(outcome.fit.clone());
                 self.show_current_fit();
-                let specs = job.config.junction_specs();
+                let specs = self.junction_labels(&job.config);
                 let continuity = if specs.is_empty() {
                     "none".to_string()
                 } else if specs.iter().all(|s| *s == specs[0]) {
@@ -444,8 +458,8 @@ impl App {
         let combo = &sweep.combos[sweep.index];
         let (config, opt) = combination_configs(&sweep.base, &sweep.opt, combo);
         let airfoil: AirfoilData = match &self.airfoil {
-            Some(a) if a.num_sections() == config.num_sections => a.clone(),
-            Some(a) => match a.resplit(config.num_sections) {
+            Some(a) if a.split == config.split() => a.clone(),
+            Some(a) => match a.resplit(config.split()) {
                 Ok(a) => a,
                 Err(e) => {
                     let mut sweep = sweep;
@@ -555,11 +569,12 @@ impl App {
             let (c, o) = (&run.spline_config, &run.optimization_config);
             // Along the sections axis the junction count changes: compare the
             // continuity setting instead of the junctions themselves.
-            let same_junctions = if swept.contains(&Axis::Sections) {
-                c.continuity == base.continuity && c.geometric_continuity == base.geometric_continuity
-            } else {
-                c.junction_specs() == base.junction_specs()
-            };
+            let same_junctions = c.split_at_corners == base.split_at_corners
+                && if swept.contains(&Axis::Sections) {
+                    c.continuity == base.continuity && c.geometric_continuity == base.geometric_continuity
+                } else {
+                    c.junction_specs() == base.junction_specs()
+                };
             let others_equal = [Axis::ControlPoints, Axis::Degree, Axis::Sections, Axis::Smoothing]
                 .into_iter()
                 .filter(|a| !swept.contains(a))

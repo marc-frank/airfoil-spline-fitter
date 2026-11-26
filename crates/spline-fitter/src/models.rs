@@ -5,6 +5,7 @@ use std::fmt;
 use bspline_varpro::{minimum_control_points as section_minimums, BSpline, KnotPlacement};
 
 use crate::analysis::Report;
+use crate::geometry::{Seam, Split};
 use crate::{bail, Result, Vec2};
 
 /// Continuity order linked across junctions.
@@ -125,6 +126,10 @@ pub struct SplineConfig {
     pub geometric_continuity: bool,
     /// Per-junction continuity (`G2`, `C1`, ...), overriding the above.
     pub junction_continuity: Vec<String>,
+    /// Cut the outline at the clear corners of the data too and join the
+    /// sections there with G0, whatever the continuity of the junctions the
+    /// section count places.
+    pub split_at_corners: bool,
 }
 
 impl Default for SplineConfig {
@@ -136,6 +141,7 @@ impl Default for SplineConfig {
             continuity: ContinuityMode::G3,
             geometric_continuity: true,
             junction_continuity: vec![],
+            split_at_corners: true,
         }
     }
 }
@@ -170,13 +176,29 @@ impl SplineConfig {
         Ok(self)
     }
 
-    /// The continuity of every junction: `G2`, `C1`, ...
+    /// How an outline is cut into sections for these settings.
+    pub fn split(&self) -> Split {
+        Split { sections: self.num_sections, corners: self.split_at_corners }
+    }
+
+    /// The continuity of every junction of the layout (the `num_sections
+    /// - 1` the section count places; a corner of the data is G0): `G2`,
+    /// `C1`, ...
     pub fn junction_specs(&self) -> Vec<String> {
         if !self.junction_continuity.is_empty() {
             return self.junction_continuity.clone();
         }
         let kind = if self.geometric_continuity { 'G' } else { 'C' };
         vec![format!("{kind}{}", self.continuity.order()); self.num_sections.saturating_sub(1)]
+    }
+
+    /// The continuity of every junction of an outline cut for these
+    /// settings: `G0` at a corner of the data (`C0` with parametric
+    /// continuity), else that of the layout junction it is.
+    pub fn seam_specs(&self, seams: &[Seam]) -> Vec<String> {
+        let layout = self.junction_specs();
+        let corner = format!("{}0", if self.geometric_continuity { 'G' } else { 'C' });
+        seams.iter().map(|s| s.layout.filter(|_| !s.corner).and_then(|k| layout.get(k)).cloned().unwrap_or_else(|| corner.clone())).collect()
     }
 
     /// Orders of the junctions.

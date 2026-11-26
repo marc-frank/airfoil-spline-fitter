@@ -76,7 +76,7 @@ fn capitalized(text: &str) -> String {
     chars.next().map(|c| c.to_uppercase().chain(chars.flat_map(|c| c.to_lowercase())).collect()).unwrap_or_default()
 }
 
-pub const COLUMNS: [Column; 24] = [
+pub const COLUMNS: [Column; 25] = [
     Column {
         name: "Run",
         tooltip: "Order in which the runs were done; a number stays when other runs are deleted",
@@ -177,11 +177,11 @@ pub const COLUMNS: [Column; 24] = [
     },
     Column {
         name: "Control points",
-        tooltip: "Control points per section of the fit (a tolerance search: of the fit it ended on).\nSections that differ, in tolerance runs of older projects: of the whole curve, junction points once.",
+        tooltip: "Control points per section of the fit (a tolerance search: of the fit it ended on).\nA section at a corner of the data may have fewer: what its points determine.\nSections that differ, in tolerance runs of older projects: of the whole curve, junction points once.",
         log: false,
         metric: true,
         format: Format::Plain,
-        value: |r| Cell::Int(r.result.control_points_per_section() as i64),
+        value: |r| Cell::Int(r.control_points_per_section() as i64),
         applies: always,
     },
     Column {
@@ -219,6 +219,15 @@ pub const COLUMNS: [Column; 24] = [
         format: Format::Plain,
         value: |r| Cell::Text(r.spline_config.junction_continuity.join(", ")),
         applies: varpro,
+    },
+    Column {
+        name: "Join corners",
+        tooltip: "Sections joined with G0 at the corners of the data",
+        log: false,
+        metric: false,
+        format: Format::Plain,
+        value: |r| Cell::Bool(r.spline_config.split_at_corners),
+        applies: always,
     },
     Column {
         name: "Smoothing",
@@ -303,7 +312,7 @@ pub const COLUMNS: [Column; 24] = [
     },
 ];
 
-pub const RMS_DEVIATION_COLUMN: usize = 18;
+pub const RMS_DEVIATION_COLUMN: usize = 19;
 const _: () = assert!(matches!(COLUMNS[RMS_DEVIATION_COLUMN].name.as_bytes(), b"RMS deviation"));
 const _: () = assert!(matches!(COLUMNS[CONTROL_POINTS_COLUMN].name.as_bytes(), b"Control points"));
 pub const CONTROL_POINTS_COLUMN: usize = 10;

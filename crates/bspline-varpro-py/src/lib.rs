@@ -261,12 +261,46 @@ fn naca4<'py>(py: Python<'py>, code: &str, n_per_side: usize, closed_te: bool) -
 }
 
 /// Splits Selig-ordered points into `count` sections that share their
-/// junction points: two split at the leading edge.
+/// junction points: two split at the leading edge. With `corners`, also at
+/// the clear corners of the data (`corners` says where they are), as the
+/// application cuts an airfoil: one more section for every corner away
+/// from those junctions, to be joined there with G0.
 #[pyfunction]
-#[pyo3(signature = (points, count = 2))]
-fn split_sections<'py>(py: Python<'py>, points: Vec<[f64; 2]>, count: usize) -> PyResult<Vec<Bound<'py, PyAny>>> {
-    let (sections, _) = app::geometry::split_into_sections(&to_points(points), count).map_err(value_error)?;
+#[pyo3(signature = (points, count = 2, corners = false))]
+fn split_sections<'py>(py: Python<'py>, points: Vec<[f64; 2]>, count: usize, corners: bool) -> PyResult<Vec<Bound<'py, PyAny>>> {
+    let split = app::geometry::Split { sections: count, corners };
+    let (sections, _, _) = app::geometry::cut_into_sections(&to_points(points), split).map_err(value_error)?;
     sections.iter().map(|s| point_array(py, s)).collect()
+}
+
+/// The corners of ordered points, read from the points alone: a list of
+/// `(index, turn, clear)`, the turn in degrees. A corner is a point where
+/// the points turn at least 20 degrees and six times as much as at either
+/// neighbour, beyond what their rounding can make of it; `clear` is false
+/// where the points are too far apart to tell it from a tight bend. Any
+/// ordered points: no chord line is assumed.
+#[pyfunction]
+fn corners(points: Vec<[f64; 2]>) -> Vec<(usize, f64, bool)> {
+    varpro::corners::corners(&to_points(points)).iter().map(|c| (c.index, c.turn, !c.sparse)).collect()
+}
+
+/// Ordered points cut into sections at their clear corners (one section
+/// without any). The sections share the corner points: fit them with
+/// `continuity="G0"`.
+#[pyfunction]
+fn split_at_corners<'py>(py: Python<'py>, points: Vec<[f64; 2]>) -> PyResult<Vec<Bound<'py, PyAny>>> {
+    let (sections, _) = varpro::corners::split_at_corners(&to_points(points));
+    sections.iter().map(|s| point_array(py, s)).collect()
+}
+
+/// `count` points on the smoothest curve through `points` (a natural cubic
+/// spline over their chord lengths; the straight line through two), the
+/// given points among them. A section with fewer points than control
+/// points is fitted to these, so that its points decide every control
+/// point (`fit_airfoil` does so for sections that end at a corner).
+#[pyfunction]
+fn smoothest_through<'py>(py: Python<'py>, points: Vec<[f64; 2]>, count: usize) -> PyResult<Bound<'py, PyAny>> {
+    point_array(py, &varpro::corners::smoothest_through(&to_points(points), count))
 }
 
 /// The tolerance the data support: their rounding error (from `decimals`,
@@ -383,10 +417,17 @@ impl ContinuityArg {
 /// `start_control_points` one fewer while the tolerance holds (or one more
 /// until it does). Without a `tolerance`, the one the data support
 /// (`default_tolerance`, with the data's `decimals` when given).
+///
+/// With `corners` (the default) the outline is also cut at the clear
+/// corners of the data and joined there with G0, whatever `continuity`
+/// says of the other junctions (one entry per junction of `sections`): a
+/// sharp leading edge is a G0 junction, a ridge behind a round nose one
+/// more section. A section that ends at a corner takes of the count what
+/// its points determine.
 #[pyfunction]
 #[pyo3(signature = (
     points, tolerance = None, degree = 5, sections = 2, continuity = ContinuityArg::All("G3".into()),
-    smoothing = 1e-3, knots = "uniform", start_control_points = 25, decimals = None,
+    smoothing = 1e-3, knots = "uniform", start_control_points = 25, decimals = None, corners = true,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn fit_airfoil(
@@ -400,20 +441,22 @@ fn fit_airfoil(
     knots: &str,
     start_control_points: usize,
     decimals: Option<i32>,
+    corners: bool,
 ) -> PyResult<Fit> {
     let points = to_points(points);
     let tolerance = tolerance.unwrap_or_else(|| airfoil::default_tolerance(&points, decimals));
-    let data = app::geometry::AirfoilData::new(points.clone(), sections, "", "", decimals.unwrap_or(0))
-        .map_err(value_error)?;
     let config = app::models::SplineConfig {
         degree,
         num_control_points: start_control_points,
         num_sections: sections,
         junction_continuity: continuity.per_junction(sections),
+        split_at_corners: corners,
         ..app::models::SplineConfig::default()
     }
     .validated()
     .map_err(value_error)?;
+    let data = app::geometry::AirfoilData::new(points.clone(), config.split(), "", "", decimals.unwrap_or(0))
+        .map_err(value_error)?;
     let options = app::models::OptimizationConfig {
         tolerance: Some(tolerance),
         smoothing_weight: smoothing,
@@ -457,6 +500,9 @@ fn bspline_varpro(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(read_airfoil, m)?)?;
     m.add_function(wrap_pyfunction!(naca4, m)?)?;
     m.add_function(wrap_pyfunction!(split_sections, m)?)?;
+    m.add_function(wrap_pyfunction!(corners, m)?)?;
+    m.add_function(wrap_pyfunction!(split_at_corners, m)?)?;
+    m.add_function(wrap_pyfunction!(smoothest_through, m)?)?;
     m.add_function(wrap_pyfunction!(default_tolerance, m)?)?;
     m.add_function(wrap_pyfunction!(fit, m)?)?;
     m.add_function(wrap_pyfunction!(fit_to_tolerance, m)?)?;

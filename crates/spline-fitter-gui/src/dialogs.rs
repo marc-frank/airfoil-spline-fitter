@@ -7,8 +7,7 @@ use eframe::egui::{self, Align, Layout, RichText, Ui};
 use spline_fitter::analysis::{Note, Report, JUNCTION_COLUMNS};
 use spline_fitter::bspline_varpro::airfoil::Shape;
 use spline_fitter::formatting::number;
-use spline_fitter::io::Finding;
-use spline_fitter::Vec2;
+use spline_fitter::io::{Finding, ParsedAirfoil};
 
 use crate::app::{App, DEFAULT_SCROLL_MS, DEFAULT_ZOOM_MS};
 use crate::overlays::QUANTITIES;
@@ -52,22 +51,86 @@ pub struct Confirm {
 }
 
 /// The mistakes the reader found in an airfoil file, before the airfoil is
-/// loaded: Use corrected (the default, also on closing) loads it without
-/// them, Keep as read loads the points as the file has them.
+/// loaded: a check box per mistake chooses which corrections to make (all
+/// by default), a preview shows the points they remove, Load loads the
+/// airfoil with them and Cancel leaves the window as it was.
 pub struct ReadReport {
-    /// The file (or "Pasted airfoil") the mistakes are in.
+    /// The file (or "The pasted airfoil") the mistakes are in.
     pub source: String,
-    pub findings: Vec<Finding>,
-    /// Points read, with the mistakes.
-    pub read_points: usize,
-    /// Coordinates and precision without and with the mistakes.
-    pub corrected: (Vec<Vec2>, i32),
-    pub uncorrected: (Vec<Vec2>, i32),
+    pub parsed: ParsedAirfoil,
+    /// One per finding: make its correction.
+    pub accept: Vec<bool>,
+    /// The finding the preview is zoomed to.
+    pub selected: Option<usize>,
+    pub view: View,
     /// What `App::set_airfoil` takes besides.
     pub filename: String,
     pub name: String,
     pub path: String,
     pub verb: String,
+    /// Adjusts the precision read (a pasted text without decimals gets 6).
+    pub precision: fn(i32) -> i32,
+    /// The check boxes of the last frame: Enter on one loads, as anywhere
+    /// else in the window, instead of toggling it (Space toggles).
+    checks: Vec<egui::Id>,
+}
+
+impl ReadReport {
+    pub fn new(parsed: ParsedAirfoil, source: &str, filename: &str, name: &str, path: &str, verb: &str, precision: fn(i32) -> i32) -> Self {
+        ReadReport {
+            source: source.to_string(),
+            accept: vec![true; parsed.cleanup.findings.len()],
+            parsed,
+            selected: None,
+            view: View::default(),
+            filename: filename.to_string(),
+            name: name.to_string(),
+            path: path.to_string(),
+            verb: verb.to_string(),
+            precision,
+            checks: Vec::new(),
+        }
+    }
+
+    pub fn findings(&self) -> &[Finding] {
+        &self.parsed.cleanup.findings
+    }
+
+    /// Zooms the preview to finding `i`: its points and the neighbours
+    /// within a tenth of the airfoil, at least 2 % of the airfoil across.
+    /// For the selected one, back to the whole airfoil.
+    pub fn toggle_selected(&mut self, i: usize) {
+        self.selected = if self.selected == Some(i) { None } else { Some(i) };
+        let points = &self.parsed.read_points;
+        let Some(i) = self.selected else {
+            self.view.follow = true;
+            return;
+        };
+        let xy = |k: usize| [points[k].x, points[k].y];
+        let Some(all) = crate::plots::bounds_of(points.iter().map(|q| [q.x, q.y])) else { return };
+        let span = all.width().max(all.height());
+        let f = &self.parsed.cleanup.findings[i];
+        let own = crate::plots::bounds_of(f.removes.iter().map(|&k| xy(k))).expect("a finding removes points");
+        let centre = own.center();
+        let near = |k: usize| ((points[k].x - centre.x).hypot(points[k].y - centre.y)) <= 0.1 * span;
+        let (first, last) = (f.removes[0], *f.removes.last().unwrap());
+        let neighbours = (first.saturating_sub(3)..=(last + 3).min(points.len() - 1)).filter(|&k| near(k));
+        let b = crate::plots::bounds_of(f.removes.iter().copied().chain(neighbours).map(xy)).expect("not empty");
+        let c = b.center();
+        let (w, h) = (b.width().max(0.02 * span) / 2.0, b.height().max(0.02 * span) / 2.0);
+        self.view.fit(Some(egui_plot::PlotBounds::from_min_max([c.x - w, c.y - h], [c.x + w, c.y + h])));
+        self.view.follow = false;
+    }
+
+    /// The status verb for the corrections chosen.
+    fn verb(&self) -> String {
+        let (made, all) = (self.accept.iter().filter(|a| **a).count(), self.accept.len());
+        match made {
+            0 => format!("{} as read", self.verb),
+            m if m == all => format!("{} corrected", self.verb),
+            m => format!("{} with {m} of {all} corrections", self.verb),
+        }
+    }
 }
 
 /// An open dialog.
@@ -545,24 +608,28 @@ impl App {
                 }
             }
             Dialog::ReadReport(report) => {
-                const WIDTH: f32 = 520.0;
-                let mut keep_as_read = false;
+                const WIDTH: f32 = 640.0;
+                let zoom_ms = self.zoom_ms;
                 let answer = open_dialog(ctx, "Mistakes in the airfoil file", WIDTH, DIALOG_MARGIN, |ui| {
-                    read_report_content(ui, &p, report);
+                    let on_check = ui.memory(|m| m.focused()).is_some_and(|f| report.checks.contains(&f));
+                    let enter = on_check && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+                    read_report_content(ui, &p, report, zoom_ms);
                     ui.add_space(size::GROUP - size::GAP);
-                    let (a, r, _) = buttons(ui, &p, Some(("Use corrected", true)), "Keep as read", None);
-                    keep_as_read = r;
-                    answer_of(a, r)
+                    let (a, r, _) = buttons(ui, &p, Some(("Load", true)), "Cancel", None);
+                    answer_of(a || enter, r)
                 });
-                if matches!(answer, Answer::Open) {
-                    true
-                } else {
-                    // Closing the window takes the default: corrected.
-                    let Dialog::ReadReport(r) = dialog else { unreachable!() };
-                    let ((coords, precision), verb) =
-                        if keep_as_read { (r.uncorrected, format!("{} as read", r.verb)) } else { (r.corrected, format!("{} corrected", r.verb)) };
-                    self.set_airfoil(coords, &r.filename, &r.name, precision, &r.path, &verb);
-                    return;
+                match answer {
+                    Answer::Open => true,
+                    Answer::Reject => {
+                        self.set_status("Cancelled: the airfoil was not loaded");
+                        false
+                    }
+                    Answer::Accept => {
+                        let Dialog::ReadReport(r) = dialog else { unreachable!() };
+                        let (coords, precision) = r.parsed.with_corrections(&r.accept);
+                        self.set_airfoil(coords, &r.filename, &r.name, (r.precision)(precision), &r.path, &r.verb());
+                        return;
+                    }
                 }
             }
             Dialog::PointsPerSide { value } => {
@@ -844,40 +911,45 @@ fn report_document(ui: &mut Ui, p: &Palette, rect: egui::Rect, title: &str, repo
     ui.painter().rect_stroke(rect, radius, egui::Stroke::new(1.0, p.rule), egui::StrokeKind::Inside);
 }
 
-/// The explanation and the table of the mistakes in a read airfoil file.
-fn read_report_content(ui: &mut Ui, p: &Palette, report: &ReadReport) {
+/// The explanation, the table of the mistakes in a read airfoil file with a
+/// check box each, and the preview of the points the checked corrections
+/// remove. Clicking a row zooms the preview to it; clicking it again shows
+/// the whole airfoil.
+fn read_report_content(ui: &mut Ui, p: &Palette, report: &mut ReadReport, motion_ms: u64) {
     const ROW: f32 = 24.0;
-    const MAX_ROWS: usize = 10;
-    let mistakes = report.findings.len();
-    let removed: usize = report.findings.iter().map(Finding::removed).sum();
+    const MAX_ROWS: usize = 6;
+    const PREVIEW_HEIGHT: f32 = 280.0;
+    let mistakes = report.findings().len();
+    let removed: usize = report.findings().iter().zip(&report.accept).filter(|(_, a)| **a).map(|(f, _)| f.removed()).sum();
     let message = format!(
-        "{} has {} {} that would make the fitted curve loop or turn back. The corrected airfoil leaves out {} of its {} points; keep it as read to fit the points as they were written.",
+        "{} has {} {} that would make the fitted curve loop or turn back. With the checked corrections the airfoil leaves out {} of its {} points.",
         report.source,
         mistakes,
         if mistakes == 1 { "mistake" } else { "mistakes" },
         removed,
-        report.read_points,
+        report.parsed.read_points.len(),
     );
     ui.add(egui::Label::new(RichText::new(message).color(p.text)).wrap());
     ui.add_space(size::GROUP - size::GAP);
+
     let body = egui::FontId::proportional(crate::theme::typeface::BASE);
     let mono = egui::FontId::monospace(crate::theme::typeface::BASE);
     let header = crate::fonts::semibold_id(crate::theme::typeface::BASE);
     let g = |v: f64| number(v, "g");
     let rows: Vec<[String; 4]> = report
-        .findings
+        .findings()
         .iter()
         .map(|f| [f.line.map_or(String::new(), |l| l.to_string()), g(f.point.x), g(f.point.y), f.description()])
         .collect();
     let painter = ui.painter().clone();
     let width = |text: &str, font: &egui::FontId| painter.layout_no_wrap(text.to_string(), font.clone(), p.text).size().x;
     let heads = ["Line", "x", "y", "Mistake"];
-    // Line, x and y as wide as their widest text; the mistake takes the rest.
+    // The check box, then line, x and y as wide as their widest text; the mistake takes the rest.
+    let check = size::CHECK_BOX + size::PAD;
     let widths: Vec<f32> = (0..3).map(|c| rows.iter().map(|r| width(&r[c], &mono)).fold(width(heads[c], &header), f32::max) + size::PAD).collect();
-    let line = |ui: &mut Ui, cells: [&str; 4], head: bool| {
-        let (r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW), egui::Sense::hover());
-        let mut x = r.left();
-        for (c, text) in cells.iter().enumerate() {
+    let cells = |ui: &Ui, r: egui::Rect, texts: [&str; 4], head: bool| {
+        let mut x = r.left() + check;
+        for (c, text) in texts.iter().enumerate() {
             let (font, color) = match (head, c) {
                 (true, _) => (header.clone(), p.text_3),
                 (false, 3) => (body.clone(), p.text),
@@ -892,19 +964,91 @@ fn read_report_content(ui: &mut Ui, p: &Palette, report: &ReadReport) {
                 ui.painter().text(egui::pos2(x, r.center().y), egui::Align2::LEFT_CENTER, *text, font, color);
             }
         }
-        if head {
-            ui.painter().hline(r.left()..=r.right(), r.bottom() - 2.0, egui::Stroke::new(1.0, p.rule));
-        }
     };
+    let check_rect = |r: egui::Rect| egui::Rect::from_min_size(egui::pos2(r.left() + 3.0, r.center().y - size::CHECK_BOX / 2.0), egui::Vec2::splat(size::CHECK_BOX));
     ui.spacing_mut().item_spacing.y = 0.0;
-    line(ui, heads, true);
+
+    // The header: a check box for all of them.
+    let (head, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW), egui::Sense::hover());
+    let mut all = report.accept.iter().all(|a| *a);
+    let partly = !all && report.accept.iter().any(|a| *a);
+    report.checks.clear();
+    let all_box = ui.put(check_rect(head), |ui: &mut Ui| widgets::tristate_checkbox(ui, p, &mut all, partly, ""));
+    report.checks.push(all_box.id);
+    let toggled = all_box.on_hover_text("Make all corrections or none").changed();
+    if toggled {
+        report.accept.iter_mut().for_each(|a| *a = all);
+    }
+    cells(ui, head, heads, true);
+    ui.painter().hline(head.left()..=head.right(), head.bottom() - 2.0, egui::Stroke::new(1.0, p.rule));
+
+    let mut clicked = None;
     egui::ScrollArea::vertical().id_salt("read_report").max_height(ROW * MAX_ROWS as f32).auto_shrink([false, true]).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
-        for r in &rows {
-            line(ui, [&r[0], &r[1], &r[2], &r[3]], false);
+        for (i, r) in rows.iter().enumerate() {
+            let (rect, row) = ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW), egui::Sense::click());
+            let fill = if report.selected == Some(i) {
+                Some(p.select)
+            } else if row.hovered() {
+                Some(p.field_hover)
+            } else {
+                None
+            };
+            if let Some(fill) = fill {
+                ui.painter().rect_filled(rect, egui::CornerRadius::same(size::RADIUS), fill);
+            }
+            let check = ui.put(check_rect(rect), |ui: &mut Ui| widgets::checkbox(ui, p, &mut report.accept[i], ""));
+            report.checks.push(check.id);
+            check.on_hover_text("Make this correction");
+            cells(ui, rect, [&r[0], &r[1], &r[2], &r[3]], false);
+            if row.on_hover_text("Show it in the preview; click again for the whole airfoil").clicked() {
+                clicked = Some(i);
+            }
         }
     });
     ui.spacing_mut().item_spacing.y = size::GAP;
+    ui.add_space(size::GROUP - size::GAP);
+
+    // The preview, in the file's own coordinates.
+    if let Some(i) = clicked {
+        report.toggle_selected(i);
+    }
+    let points = report.parsed.read_points.clone();
+    let xy = |i: &usize| [points[*i].x, points[*i].y];
+    if report.view.follow {
+        report.view.fit(crate::plots::bounds_of(points.iter().map(|q| [q.x, q.y])));
+    }
+    let removed: Vec<usize> = report.findings().iter().zip(&report.accept).filter(|(_, a)| **a).flat_map(|(f, _)| f.removes.iter().copied()).collect();
+    let kept_back: Vec<usize> = report.findings().iter().zip(&report.accept).filter(|(_, a)| !**a).flat_map(|(f, _)| f.removes.iter().copied()).collect();
+    let selected: Vec<usize> = report.selected.map_or(vec![], |i| report.findings()[i].removes.clone());
+    let line: Vec<[f64; 2]> = (0..points.len()).filter(|i| !removed.contains(i)).map(|i| xy(&i)).collect();
+    let axes = crate::plots::Axes {
+        x_label: "x",
+        y_label: "y",
+        log_x: false,
+        log_y: false,
+        x_ticks: None,
+        whole_x: false,
+        equal_aspect: true,
+        marker_pad: crate::plots::marker_pad(size::MARKER_SIZE, 1.5),
+    };
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), PREVIEW_HEIGHT), egui::Sense::hover());
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+    crate::plots::show_plot(&mut child, p, "read_report_preview", &mut report.view, &axes, motion_ms, |c| {
+        use crate::plots::Marker;
+        // Drawing order: the outline that is loaded, the data, then the rings.
+        c.polyline(line.iter().copied(), egui::Stroke::new(1.0, p.construction), false);
+        c.markers(points.iter().map(|q| [q.x, q.y]), Marker::Circle, size::DATA_SIZE, p.data(), egui::Stroke::NONE);
+        let ring = |stroke: egui::Color32, width: f32| egui::Stroke::new(width, stroke);
+        c.markers(kept_back.iter().map(xy), Marker::Circle, size::EXTREMUM_SIZE + 1.0, egui::Color32::TRANSPARENT, ring(p.text_3, 1.5));
+        c.markers(removed.iter().map(xy), Marker::Circle, size::EXTREMUM_SIZE + 1.0, egui::Color32::TRANSPARENT, ring(p.warn, 1.5));
+        c.markers(selected.iter().map(xy), Marker::Circle, size::MARKER_SIZE, egui::Color32::TRANSPARENT, ring(p.text, 1.5));
+    });
+    muted(
+        ui,
+        p,
+        "The line joins the points that are loaded. Rings mark the points the checked corrections remove, grey rings\nthe mistakes left in. Click a row to zoom to it; scroll to zoom, drag to pan.",
+    );
 }
 
 /// The texts of a toggle with settings.

@@ -50,6 +50,9 @@ pub fn output_name(stem: &str, config: &SplineConfig, opt: &OptimizationConfig, 
         let all_equal = specs.iter().all(|s| *s == specs[0]);
         parts.push(if all_equal { specs[0].clone() } else { specs.join("-") });
     }
+    if config.split_at_corners != reference.split_at_corners {
+        parts.push(if config.split_at_corners { "corners" } else { "no-corners" }.into());
+    }
     if opt.optimizer != reference_opt.optimizer {
         parts.push(match opt.optimizer {
             OptimizerType::DirectLsq => "lsq".into(),
@@ -154,7 +157,7 @@ fn prepare_parsed(
     let file_name = file_name.to_string();
     let name = parsed.name.unwrap_or_else(|| file_name.clone());
     let corrections = parsed.cleanup.findings.len();
-    let airfoil = AirfoilData::new(parsed.coords, config.num_sections, &file_name, &name, parsed.precision)?;
+    let airfoil = AirfoilData::new(parsed.coords, config.split(), &file_name, &name, parsed.precision)?;
     let stem = if file_name.is_empty() { &name } else { &file_name };
     let output = target.join(output_name(stem, config, opt, auto_tolerance));
     Ok(BatchItem { airfoil, output, corrections })
@@ -201,7 +204,7 @@ pub fn result_text(item: &BatchItem, config: &SplineConfig, result: &RawResult) 
         degree: Some(config.degree),
         control_points: result.section_control_points.clone(),
         knots: result.section_knots.clone(),
-        continuity: Some(config.junction_specs()),
+        continuity: Some(config.seam_specs(&a.seams)),
     };
     spline_data_text(&spline, Some(12))
 }
@@ -209,6 +212,33 @@ pub fn result_text(item: &BatchItem, config: &SplineConfig, result: &RawResult) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A batch has one section count for every file; each file is cut at
+    /// its own corners on top of it, unless the settings leave corners
+    /// alone.
+    #[test]
+    fn files_are_cut_at_their_own_corners() {
+        let dir = tempfile::tempdir().unwrap();
+        let write = |name: &str, points: &[crate::Vec2]| {
+            let rows: String = points.iter().map(|p| format!("{:.6} {:.6}
+", p.x, p.y)).collect();
+            std::fs::write(dir.path().join(name), format!("{name}
+{rows}")).unwrap();
+        };
+        write("ridge.dat", &crate::geometry::tests::saratov());
+        write("round.dat", &bspline_varpro::airfoil::Naca4::new("2412", true).unwrap().points(41));
+        let (config, opt) = (SplineConfig { num_control_points: 8, ..SplineConfig::default() }, OptimizationConfig::default());
+        let sizes = |name: &str, config: &SplineConfig| prepare(&dir.path().join(name), dir.path(), config, &opt, false).unwrap().airfoil.section_sizes();
+        assert_eq!((sizes("ridge.dat", &config), sizes("round.dat", &config)), ("[15, 9, 7]".to_string(), "[41, 41]".to_string()));
+        let plain = SplineConfig { split_at_corners: false, ..config.clone() };
+        assert_eq!((sizes("ridge.dat", &plain), sizes("round.dat", &plain)), ("[15, 15]".to_string(), "[41, 41]".to_string()));
+        let item = prepare(&dir.path().join("ridge.dat"), dir.path(), &config, &opt, false).unwrap();
+        let Outcome::Done(result) = convert(&item, &config, &opt, false, &mut crate::optimize::Unmonitored, || false).unwrap() else {
+            panic!("not fitted");
+        };
+        assert_eq!(result.section_control_points.iter().map(Vec::len).collect::<Vec<_>>(), [8, 8, 6]);
+        assert!(dir.path().join("ridge.deg5.n8.spline.dat").exists());
+    }
 
     #[test]
     fn numbers() {
@@ -268,7 +298,10 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(output_name("x", &config, &o, false), "x.deg3.C2.lsq.arc-length.smooth0.01.free-le.spline.dat");
-        let one = SplineConfig { num_sections: 1, ..spline };
+        let one = SplineConfig { num_sections: 1, ..spline.clone() };
         assert_eq!(output_name("x", &one, &opt, false), "x.deg5.s1.spline.dat");
+        // Corners left alone, where a new window joins them with G0.
+        let smooth = SplineConfig { split_at_corners: false, continuity: crate::models::ContinuityMode::G2, ..spline };
+        assert_eq!(output_name("x", &smooth, &opt, false), "x.deg5.G2.no-corners.spline.dat");
     }
 }

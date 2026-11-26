@@ -5,13 +5,15 @@
 //! control points), junctions between sections carry geometric (G1-G3) or
 //! parametric (C0-C3) continuity, and [`fit_to_tolerance`] searches for the
 //! fewest control points that keep every point within a maximum orthogonal
-//! deviation. Diagnostics, airfoil helpers and STEP/IGES/DXF export complete
+//! deviation. [`corners`] finds the corners of the data, where sections join
+//! with G0. Diagnostics, airfoil helpers and STEP/IGES/DXF export complete
 //! the toolbox.
 
 pub mod airfoil;
 pub mod basis;
 pub mod chain;
 pub mod constraints;
+pub mod corners;
 pub mod curve;
 pub mod diagnostics;
 pub mod export;

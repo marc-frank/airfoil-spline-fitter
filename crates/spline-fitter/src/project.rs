@@ -10,7 +10,7 @@ use bspline_varpro::numfmt::shortest;
 use bspline_varpro::KnotPlacement;
 
 use crate::analysis::{FairnessReport, JunctionReport, Report, ShapeReport};
-use crate::geometry::AirfoilData;
+use crate::geometry::{AirfoilData, Seam, Split};
 use crate::models::{
     placement_from_value, placement_value, ContinuityMode, FitResult, IterationRecord, OptimizationConfig, OptimizerType, Parameterization,
     SplineConfig, ToleranceMetric,
@@ -64,6 +64,20 @@ pub struct OptimizationRun {
     pub loss_history: Vec<IterationRecord>,
     /// The tolerance search this run is a fit of (its `search_id`).
     pub search: Option<String>,
+}
+
+impl OptimizationRun {
+    /// Control points per section, as the sidebar sets them. Where the
+    /// sections differ: of a run cut at corners, the most of any section
+    /// (one at a corner takes what its points determine of the count); of
+    /// tolerance runs of older projects, of the chain.
+    pub fn control_points_per_section(&self) -> usize {
+        let most = self.result.section_control_points.iter().map(Vec::len).max();
+        match most {
+            Some(most) if self.spline_config.split_at_corners => most,
+            _ => self.result.control_points_per_section(),
+        }
+    }
 }
 
 /// A tolerance search: its settings (the start count, the tolerance) and
@@ -362,7 +376,7 @@ fn mark_non_finite(text: &str) -> String {
 // Encoding
 
 fn encode_airfoil(a: &AirfoilData) -> Json {
-    obj(vec![
+    let mut json = obj(vec![
         ("coordinates", points(&a.coordinates)),
         ("sections", Json::Array(a.sections.iter().map(|s| points(s)).collect())),
         ("junction_indices", ints(&a.junction_indices)),
@@ -370,18 +384,37 @@ fn encode_airfoil(a: &AirfoilData) -> Json {
         ("filename", string(&a.filename)),
         ("name", string(&a.name)),
         ("precision", Json::Int(a.precision as i64)),
-    ])
+    ]);
+    // An airfoil cut at its corners says what each junction is; one cut
+    // by the section count alone keeps the layout of format 1.0.
+    if a.split.corners {
+        if let Json::Object(fields) = &mut json {
+            fields.push(("split_at_corners".into(), Json::Bool(true)));
+            fields.push(("layout_sections".into(), int(a.split.sections)));
+            fields.push(("corner_junctions".into(), Json::Array(a.seams.iter().map(|s| Json::Bool(s.corner)).collect())));
+            fields.push(("layout_junctions".into(), Json::Array(a.seams.iter().map(|s| s.layout.map_or(Json::Null, int)).collect())));
+        }
+    }
+    json
 }
 
 fn encode_spline_config(c: &SplineConfig) -> Json {
-    obj(vec![
+    let mut json = obj(vec![
         ("degree", int(c.degree)),
         ("num_control_points", int(c.num_control_points)),
         ("num_sections", int(c.num_sections)),
         ("continuity", string(c.continuity.name())),
         ("geometric_continuity", Json::Bool(c.geometric_continuity)),
         ("junction_continuity", Json::Array(c.junction_continuity.iter().map(|s| string(s)).collect())),
-    ])
+    ]);
+    // Written only when set: settings without it keep the layout of format
+    // 1.0, and are read as they were made, without it.
+    if c.split_at_corners {
+        if let Json::Object(fields) = &mut json {
+            fields.push(("split_at_corners".into(), Json::Bool(true)));
+        }
+    }
+    json
 }
 
 fn encode_optimization_config(c: &OptimizationConfig) -> Json {
@@ -710,6 +743,8 @@ impl<'a> Part<'a> {
 
 /// The airfoil; its sections are rebuilt from the coordinates and the
 /// junction indices (the stored `sections` and `num_sections` are not read).
+/// One cut at its corners says what each junction is; without that every
+/// junction is one of the layout, in order.
 fn decode_airfoil(json: &Json) -> Result<AirfoilData> {
     let part = Part { json, place: "Airfoil" };
     let coordinates = part.points_of("coordinates", part.field("coordinates")?)?;
@@ -722,10 +757,42 @@ fn decode_airfoil(json: &Json) -> Result<AirfoilData> {
     let starts = std::iter::once(0).chain(junction_indices.iter().copied());
     let ends = junction_indices.iter().copied().chain(std::iter::once(n - 1));
     let sections = starts.zip(ends).map(|(a, b)| coordinates[a..=b].to_vec()).collect();
+    let (seams, split) = if part.bool_or("split_at_corners", false)? {
+        let corners = part
+            .list("corner_junctions")?
+            .iter()
+            .map(|v| match v {
+                Json::Bool(b) => Ok(*b),
+                _ => Err(part.error("'corner_junctions' holds something other than true or false")),
+            })
+            .collect::<Result<Vec<bool>>>()?;
+        let layout = part
+            .list("layout_junctions")?
+            .iter()
+            .map(|v| if v.is_null() { Ok(None) } else { part.count_of("layout_junctions", v).map(Some) })
+            .collect::<Result<Vec<Option<usize>>>>()?;
+        let layout_sections = part.count("layout_sections")?;
+        let seams: Vec<Seam> = corners.iter().zip(&layout).map(|(&corner, &layout)| Seam { corner, layout }).collect();
+        let of_layout: Vec<usize> = layout.iter().flatten().copied().collect();
+        let fits = corners.len() == junction_indices.len()
+            && layout.len() == junction_indices.len()
+            && seams.iter().all(|s| s.corner || s.layout.is_some())
+            && of_layout.windows(2).all(|w| w[0] < w[1])
+            && of_layout.iter().all(|&k| k + 1 < layout_sections);
+        if !fits {
+            return Err(part.error("the corner and layout junctions do not describe the junction indices"));
+        }
+        (seams, Split { sections: layout_sections, corners: true })
+    } else {
+        let seams = (0..junction_indices.len()).map(|k| Seam { corner: false, layout: Some(k) }).collect();
+        (seams, Split::from(junction_indices.len() + 1))
+    };
     Ok(AirfoilData {
         sections,
         coordinates,
         junction_indices,
+        seams,
+        split,
         filename: part.text_or("filename", "")?.to_string(),
         name: part.text_or("name", "")?.to_string(),
         precision: part.float_or("precision", 6.0)? as i32,
@@ -756,6 +823,7 @@ fn decode_spline_config(json: &Json, place: &str) -> Result<SplineConfig> {
         continuity,
         geometric_continuity: geometric,
         junction_continuity: junctions,
+        split_at_corners: part.bool_or("split_at_corners", false)?,
     }
     .validated()
     .map_err(|e| part.error(e.0.trim_end_matches('.')))
@@ -1190,7 +1258,12 @@ pub mod wire {
             let config = SplineConfig { junction_continuity: vec!["G2".into()], ..SplineConfig::default() };
             let options = OptimizationConfig { tolerance: Some(1e-4), smoothing_weight: 0.1 + 0.2, ..Default::default() };
             let (c, o, a) = parse_request(&request(&config, &options, &airfoil)).unwrap();
-            assert_eq!((&c, &o, &a.coordinates, &a.junction_indices), (&config, &options, &airfoil.coordinates, &airfoil.junction_indices));
+            assert_eq!((&c, &o, &a), (&config, &options, &airfoil));
+            // Cut at a corner: the worker fits the same sections and junctions.
+            let ridged = AirfoilData::new(crate::geometry::tests::saratov(), SplineConfig::default().split(), "saratov", "Saratov", 5).unwrap();
+            let (c, _, a) = parse_request(&request(&SplineConfig::default(), &options, &ridged)).unwrap();
+            assert_eq!((a.num_sections(), &a, c.split_at_corners), (3, &ridged, true));
+            let (c, o, a) = parse_request(&request(&config, &options, &airfoil)).unwrap();
 
             let mut sent = Sent(vec![]);
             let result = run_optimization(&c, &o, &a, &mut sent);
@@ -1323,6 +1396,55 @@ mod tests {
             assert_eq!(junctions(bad.clone()).unwrap_err().0, "Airfoil: the junction indices do not split the coordinates.", "{bad}");
         }
         assert_eq!(junctions(serde_json::json!([3, 6])).unwrap().project.airfoil.sections.len(), 3);
+    }
+
+    /// An airfoil cut at its corners says what every junction is, and
+    /// settings that cut there say so; without corners both are written as
+    /// before, and read as made without.
+    #[test]
+    fn corner_cuts_round_trip() {
+        use crate::geometry::{Seam, Split};
+        let config = SplineConfig { num_sections: 4, ..SplineConfig::default() };
+        assert!(config.split_at_corners);
+        let cut = AirfoilData::new(crate::geometry::tests::saratov(), config.split(), "saratov", "Saratov", 5).unwrap();
+        assert_eq!(cut.seams[2], Seam { corner: true, layout: Some(2) });
+        let mut p = project();
+        p.airfoil = cut.clone();
+        p.runs[0].spline_config = config.clone();
+        let text = project_text(&p);
+        let loaded = parse_project(&text).unwrap().project;
+        assert_eq!((&loaded.airfoil, &loaded.runs[0].spline_config), (&cut, &config));
+        assert_eq!(loaded.airfoil.split, Split { sections: 4, corners: true });
+        // Cut by the count alone, with settings that leave corners alone:
+        // the keys of format 1.0 and no others.
+        let plain = SplineConfig { split_at_corners: false, ..config.clone() };
+        p.airfoil = cut.resplit(plain.split()).unwrap();
+        p.runs[0].spline_config = plain.clone();
+        let text = project_text(&p);
+        assert!(!text.contains("corner") && !text.contains("layout"), "{text}");
+        let loaded = parse_project(&text).unwrap().project;
+        assert_eq!((&loaded.airfoil, &loaded.runs[0].spline_config), (&p.airfoil, &plain));
+        assert_eq!(loaded.airfoil.split, Split::from(4));
+        // What the junctions are has to describe them.
+        let json = |change: &dyn Fn(&mut serde_json::Value)| {
+            let mut p = project();
+            p.airfoil = cut.clone();
+            let mut json: serde_json::Value = serde_json::from_str(&project_text(&p)).unwrap();
+            change(&mut json["airfoil"]);
+            parse_project(&json.to_string())
+        };
+        assert_eq!(json(&|_| {}).unwrap().project.airfoil, cut);
+        let wrong: [&dyn Fn(&mut serde_json::Value); 5] = [
+            &|a| a["corner_junctions"] = serde_json::json!([false, false]),
+            &|a| a["layout_junctions"] = serde_json::json!([0, 1, 1]),
+            &|a| a["layout_junctions"] = serde_json::json!([0, 1, 3]),
+            &|a| a["layout_junctions"] = serde_json::json!([null, 0, 1]),
+            &|a| a["layout_sections"] = 2.into(),
+        ];
+        for change in wrong {
+            assert_eq!(json(change).unwrap_err().0, "Airfoil: the corner and layout junctions do not describe the junction indices.");
+        }
+        assert_eq!(json(&|a| a["corner_junctions"] = serde_json::json!([0, 0, 1])).unwrap_err().0, "Airfoil: 'corner_junctions' holds something other than true or false.");
     }
 
     #[test]

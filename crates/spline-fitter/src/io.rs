@@ -198,16 +198,14 @@ pub struct Finding {
     pub point: Vec2,
     /// Its line in the text, from 1, when read by [`parse_airfoil_text`].
     pub line: Option<usize>,
+    /// Indices of the points it removes, in the list given to [`clean_outline`].
+    pub removes: Vec<usize>,
 }
 
 impl Finding {
     /// Points the mistake removed.
     pub fn removed(&self) -> usize {
-        match self.mistake {
-            Mistake::Repeated { times } => times,
-            Mistake::RepeatedOutline { points } => points,
-            Mistake::AfterTrailingEdge | Mistake::Spike => 1,
-        }
+        self.removes.len()
     }
 
     /// The mistake in words, for a report.
@@ -269,25 +267,26 @@ pub fn clean_outline(coords: Vec<Vec2>) -> (Vec<Vec2>, Cleanup) {
         return (coords, report);
     }
     let same = |a: usize, b: usize| (coords[a] - coords[b]).norm() <= 1e-9 * size;
-    let found = |report: &mut Cleanup, mistake: Mistake, index: usize| {
-        report.findings.push(Finding { mistake, index, point: coords[index], line: None });
+    let found = |report: &mut Cleanup, mistake: Mistake, removes: Vec<usize>| {
+        let index = removes[0];
+        report.findings.push(Finding { mistake, index, point: coords[index], line: None, removes });
     };
     // The points kept, as indices into `coords`; repeats merge into the first.
     let dedup = |keep: &mut Vec<usize>, report: &mut Cleanup| {
         let mut kept: Vec<usize> = Vec::with_capacity(keep.len());
-        let mut run: Option<(usize, usize)> = None;
+        let mut run: Vec<usize> = Vec::new();
         for &i in keep.iter() {
             if kept.last().is_some_and(|&last| same(last, i)) {
-                run = Some(run.map_or((i, 1), |(first, k)| (first, k + 1)));
+                run.push(i);
                 continue;
             }
-            if let Some((first, times)) = run.take() {
-                found(report, Mistake::Repeated { times }, first);
+            if !run.is_empty() {
+                found(report, Mistake::Repeated { times: run.len() }, std::mem::take(&mut run));
             }
             kept.push(i);
         }
-        if let Some((first, times)) = run {
-            found(report, Mistake::Repeated { times }, first);
+        if !run.is_empty() {
+            found(report, Mistake::Repeated { times: run.len() }, run);
         }
         *keep = kept;
     };
@@ -297,7 +296,7 @@ pub fn clean_outline(coords: Vec<Vec2>) -> (Vec<Vec2>, Cleanup) {
     // The outline twice: the points from the first return to the start on repeat the start.
     let n = keep.len();
     if let Some(p) = (2..n.saturating_sub(2)).find(|&p| same(keep[p], keep[0]) && (0..n - p).all(|i| same(keep[i + p], keep[i]))) {
-        found(&mut report, Mistake::RepeatedOutline { points: n - 1 - p }, keep[p + 1]);
+        found(&mut report, Mistake::RepeatedOutline { points: n - 1 - p }, keep[p + 1..].to_vec());
         keep.truncate(p + 1);
     }
 
@@ -313,7 +312,7 @@ pub fn clean_outline(coords: Vec<Vec2>) -> (Vec<Vec2>, Cleanup) {
     let te_gap = (pts[te] - pts[0]).norm();
     if n > MAX_STRAY_TAIL + 2 && tail > 0 && tail <= MAX_STRAY_TAIL && te > le && pts[te + 1..].iter().all(|p| (p - pts[0]).norm() > te_gap) {
         for &i in &keep[te + 1..] {
-            found(&mut report, Mistake::AfterTrailingEdge, i);
+            found(&mut report, Mistake::AfterTrailingEdge, vec![i]);
         }
         keep.truncate(te + 1);
     }
@@ -344,7 +343,7 @@ pub fn clean_outline(coords: Vec<Vec2>) -> (Vec<Vec2>, Cleanup) {
     let lone: Vec<usize> = spikes.iter().copied().filter(|i| !spikes.contains(&(i + 1)) && !spikes.contains(&(i.wrapping_sub(1)))).collect();
     if !lone.is_empty() {
         for &k in &lone {
-            found(&mut report, Mistake::Spike, keep[k]);
+            found(&mut report, Mistake::Spike, vec![keep[k]]);
         }
         keep = keep.iter().enumerate().filter(|(k, _)| !lone.contains(k)).map(|(_, &i)| i).collect();
         dedup(&mut keep, &mut report);
@@ -474,14 +473,6 @@ pub fn name_of_line(line: &str) -> String {
     }
 }
 
-/// The points of an airfoil file as read, before [`clean_outline`]
-/// removed its mistakes, normalized as the corrected ones.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Uncorrected {
-    pub coords: Vec<Vec2>,
-    pub precision: i32,
-}
-
 /// An airfoil read from text.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParsedAirfoil {
@@ -493,8 +484,35 @@ pub struct ParsedAirfoil {
     pub precision: i32,
     /// Mistakes in the file that were removed, with their lines.
     pub cleanup: Cleanup,
-    /// The points with the mistakes, when there were any.
-    pub uncorrected: Option<Uncorrected>,
+    /// The points as the file has them (in Selig order, not normalized);
+    /// the findings' indices point into it.
+    pub read_points: Vec<Vec2>,
+    /// Decimal places the file writes.
+    read_precision: i32,
+}
+
+impl ParsedAirfoil {
+    /// Normalized coordinates and precision with only the corrections
+    /// `accept` picks (one entry per finding; all true gives `coords`, all
+    /// false the points as read).
+    pub fn with_corrections(&self, accept: &[bool]) -> (Vec<Vec2>, i32) {
+        let removed: std::collections::HashSet<usize> =
+            self.cleanup.findings.iter().zip(accept).filter(|(_, &a)| a).flat_map(|(f, _)| f.removes.iter().copied()).collect();
+        let kept = self.read_points.iter().enumerate().filter(|(i, _)| !removed.contains(i)).map(|(_, p)| *p).collect();
+        normalized(kept, self.read_precision)
+    }
+
+    /// Normalized coordinates and precision of the points as read.
+    pub fn as_read(&self) -> (Vec<Vec2>, i32) {
+        self.with_corrections(&[])
+    }
+}
+
+/// Coordinates without outliers, normalized, and the precision of the file's
+/// `precision` decimals at that scale.
+fn normalized(coords: Vec<Vec2>, precision: i32) -> (Vec<Vec2>, i32) {
+    let (coords, scale) = normalize(filter_coordinate_outliers(coords));
+    (coords, scaled_precision(precision, scale))
 }
 
 /// Reads an airfoil file; `None` when it holds no coordinates.
@@ -547,20 +565,12 @@ pub fn parse_airfoil_text(text: &str, file_name: Option<&str>) -> Option<ParsedA
     let coords: Vec<Vec2> = order.iter().map(|&i| rows[i].point).collect();
     let texts: Vec<&str> = rows.iter().flat_map(|r| r.texts.iter().map(String::as_str)).collect();
     let precision = file_precision(&texts);
-    let normalized = |coords: Vec<Vec2>| {
-        let (coords, scale) = normalize(filter_coordinate_outliers(coords));
-        (coords, scaled_precision(precision, scale))
-    };
     let (cleaned, mut cleanup) = clean_outline(coords.clone());
     for f in &mut cleanup.findings {
         f.line = Some(rows[order[f.index]].line);
     }
-    let uncorrected = cleanup.any().then(|| {
-        let (coords, precision) = normalized(coords);
-        Uncorrected { coords, precision }
-    });
-    let (coords, precision) = normalized(cleaned);
-    Some(ParsedAirfoil { name, coords, precision, cleanup, uncorrected })
+    let (corrected, corrected_precision) = normalized(cleaned, precision);
+    Some(ParsedAirfoil { name, coords: corrected, precision: corrected_precision, cleanup, read_points: coords, read_precision: precision })
 }
 
 /// Number of decimals written: 8 by default, at most 16.
@@ -854,8 +864,11 @@ mod tests {
         let found: Vec<(Mistake, Option<usize>)> = a.cleanup.findings.iter().map(|f| (f.mistake, f.line)).collect();
         assert_eq!(found, [(Mistake::Repeated { times: 1 }, Some(6)), (Mistake::AfterTrailingEdge, Some(9))]);
         assert_eq!(a.cleanup.findings[1].description(), "A stray point after the closing trailing edge");
-        assert_eq!(a.uncorrected.as_ref().map(|u| u.coords.len()), Some(7));
-        assert!(parse("t\n1 0\n0.5 0.06\n0 0\n0.5 -0.06\n1 0\n").uncorrected.is_none());
+        assert_eq!(a.as_read().0.len(), 7);
+        assert_eq!(a.with_corrections(&[true, false]).0.len(), 6);
+        assert_eq!(a.with_corrections(&[false, true]).0.len(), 6);
+        assert_eq!(a.with_corrections(&[true, true]), (a.coords.clone(), a.precision));
+        assert_eq!(a.cleanup.findings.iter().map(|f| f.removes.clone()).collect::<Vec<_>>(), [vec![3], vec![6]]);
         // Lednicer files tell the lines too (upper surface read backwards).
         let l = parse("t\n3 3\n0 0\n0.5 0.06\n1 0\n0 0\n0.5 -0.05\n0.5 -0.05\n1 0\n");
         assert_eq!(l.cleanup.findings.iter().map(|f| f.line).collect::<Vec<_>>(), [Some(8)]);

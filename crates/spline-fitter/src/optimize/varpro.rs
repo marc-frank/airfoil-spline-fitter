@@ -7,10 +7,10 @@
 
 use web_time::Instant;
 
-use bspline_varpro::chain::{chain_data, chain_deviations};
-use bspline_varpro::{minimum_control_points, ChainOptions, Continuity, FitOptions, FitResult, Junction, Observer, Progress, STOPPED};
+use bspline_varpro::chain::{chain_data, chain_deviations, evaluate_chain};
+use bspline_varpro::{ChainOptions, Continuity, FitOptions, FitResult, Observer, Progress, STOPPED};
 
-use super::{Monitor, RawResult, SearchOutcome, Update, UpdateKind};
+use super::{Chain, Monitor, RawResult, SearchOutcome, Update, UpdateKind};
 use crate::models::{OptimizationConfig, SplineConfig};
 use crate::{bail, Result, Vec2};
 
@@ -58,22 +58,26 @@ impl Relay<'_> {
     }
 }
 
-fn chain_options(config: &SplineConfig, options: &OptimizationConfig, smoothing: f64) -> Result<ChainOptions> {
-    let junctions = config.junction_specs().iter().map(|s| s.parse::<Junction>()).collect::<Result<Vec<_>>>()?;
-    Ok(ChainOptions {
-        continuity: Continuity::Each(junctions),
+fn chain_options(chain: &Chain, options: &OptimizationConfig, smoothing: f64) -> ChainOptions {
+    ChainOptions {
+        continuity: Continuity::Each(chain.junctions.clone()),
         fix_junctions: !options.optimize_le_position,
         fix_ends: true,
         smoothing,
         regularization: REGULARIZATION,
-    })
+    }
 }
 
-/// A fixed-count fit as a run: judged by its RMS error.
-fn raw(result: FitResult, evaluations: usize) -> RawResult {
+/// A fixed-count fit as a run: judged by its RMS error, of the airfoil's
+/// own points.
+fn raw(chain: &Chain, result: FitResult, evaluations: usize) -> RawResult {
+    let rms = chain.rms(result.rms_error, || {
+        let (data, curves) = (chain_data(&chain.sections), result.curves());
+        data.iter().zip(&result.parameters).map(|(d, &u)| (evaluate_chain(&curves, u, 0) - d).norm_squared()).collect()
+    });
     RawResult {
-        error: result.rms_error,
-        rms_error: result.rms_error,
+        error: rms,
+        rms_error: rms,
         iterations: evaluations.max(result.nfev),
         evaluations,
         success: result.success,
@@ -88,26 +92,26 @@ fn raw(result: FitResult, evaluations: usize) -> RawResult {
 
 /// The options of a fixed-count fit (a search's fits never grow: each is
 /// the fit of its own count).
-fn fit_options(config: &SplineConfig, options: &OptimizationConfig, grow: bool) -> Result<FitOptions> {
-    Ok(FitOptions {
-        chain: chain_options(config, options, options.smoothing_weight)?,
+fn fit_options(chain: &Chain, options: &OptimizationConfig, grow: bool) -> FitOptions {
+    FitOptions {
+        chain: chain_options(chain, options, options.smoothing_weight),
         knot_placement: options.knot_placement,
         grow,
         min_knot_gap: options.min_knot_gap,
         ..FitOptions::default()
-    })
+    }
 }
 
-pub fn fit(config: &SplineConfig, options: &OptimizationConfig, sections: &[Vec<Vec2>], monitor: &mut dyn Monitor) -> Result<RawResult> {
+pub fn fit(config: &SplineConfig, options: &OptimizationConfig, chain: &Chain, monitor: &mut dyn Monitor) -> Result<RawResult> {
     let mut relay = Relay { monitor, degree: config.degree, evaluations: 0 };
     let Some(tolerance) = options.tolerance else {
-        let fit_options = fit_options(config, options, options.grow_control_points)?;
-        let counts = vec![config.num_control_points; sections.len()];
-        let result = bspline_varpro::fit(sections, &counts, config.degree, &fit_options, &mut relay)?;
+        let fit_options = fit_options(chain, options, options.grow_control_points);
+        let counts = chain.counts(config.num_control_points);
+        let result = bspline_varpro::fit(&chain.sections, &counts, config.degree, &fit_options, &mut relay)?;
         let evaluations = relay.evaluations;
-        return Ok(raw(result, evaluations));
+        return Ok(raw(chain, result, evaluations));
     };
-    search(config, options, tolerance, sections, &mut relay)
+    search(config, options, tolerance, chain, &mut relay)
 }
 
 /// A finished fit of a search.
@@ -122,47 +126,45 @@ struct Fitted {
     stopped: bool,
 }
 
-/// The fewest control points (the same in every section) whose fixed-count
-/// fit keeps every point within `tolerance`: from the start count, one more
-/// at a time until a fit meets it, or one fewer at a time while they do.
+/// The fewest control points (the same count for every section; a section
+/// at a corner takes of it what its points determine) whose fixed-count fit
+/// keeps every point within `tolerance`: from the start count, one more at
+/// a time until a fit meets it, or one fewer at a time while they do.
 fn search(
     config: &SplineConfig,
     options: &OptimizationConfig,
     tolerance: f64,
-    sections: &[Vec<Vec2>],
+    chain: &Chain,
     relay: &mut Relay,
 ) -> Result<RawResult> {
     if !tolerance.is_finite() || tolerance <= 0.0 {
         bail!("Tolerance must be positive.");
     }
     let degree = config.degree;
-    let fit_options = fit_options(config, options, false)?;
-    let need = minimum_control_points(&fit_options.chain.orders(sections.len())?, degree);
+    let fit_options = fit_options(chain, options, false);
     // Name the section and the counts, so the user sees what to change.
-    for (s, (points, &n)) in sections.iter().map(Vec::len).zip(&need).enumerate() {
-        if n > points - 1 {
-            bail!(
-                "Section {} has {points} points, too few for its end conditions: they need {n} control points, so at least {} points.",
-                s + 1,
-                n + 1
-            );
-        }
+    if let Some((s, points, n)) = chain.too_short() {
+        bail!(
+            "Section {} has {points} points, too few for its end conditions: they need {n} control points, so at least {} points.",
+            s + 1,
+            n + 1
+        );
     }
-    let low = need.iter().copied().max().unwrap_or(2);
-    let limit = sections.iter().map(|s| s.len() - 1).min().unwrap_or(low).max(low);
+    let low = chain.fewest();
+    let limit = chain.most();
     let start = if options.grow_control_points { low } else { config.num_control_points.clamp(low, limit) };
-    let data = chain_data(sections);
+    let data = chain.own(&chain_data(&chain.sections));
     let began = Instant::now();
     let mut fits: Vec<Fitted> = Vec::new();
     let one = |count: usize, relay: &mut Relay| -> Result<Fitted> {
         let before = relay.evaluations;
-        let result = bspline_varpro::fit(sections, &vec![count; sections.len()], degree, &fit_options, relay)?;
+        let result = bspline_varpro::fit(&chain.sections, &chain.counts(count), degree, &fit_options, relay)?;
         let deviations = chain_deviations(&data, &result.curves());
         let worst = (0..deviations.len()).fold(0, |b, i| if deviations[i] > deviations[b] { i } else { b });
         let max_deviation = deviations.get(worst).copied().unwrap_or(0.0);
         let deviation = options.tolerance_metric.of(&deviations);
         let stopped = result.stopped || relay.refit(&result, deviation);
-        let mut fit = raw(result, relay.evaluations - before);
+        let mut fit = raw(chain, result, relay.evaluations - before);
         fit.seconds = Some(began.elapsed().as_secs_f64());
         Ok(Fitted { raw: fit, count, deviation, max_deviation, worst: data[worst], stopped })
     };

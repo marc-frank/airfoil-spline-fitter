@@ -1104,49 +1104,167 @@ fn the_tolerance_line_is_drawn_from_the_data() {
     assert!(h.state().main_plot.tolerance_line.is_empty());
 }
 
-/// Mistakes the reader finds in a file are shown before the airfoil loads:
-/// Use corrected (Enter, or closing the window) loads it without them,
-/// Keep as read with them.
+/// Mistakes the reader finds in a file are shown before the airfoil loads,
+/// with a check box each (all checked) and a preview: Load (Enter) makes
+/// the checked corrections, Cancel (Escape) loads nothing.
 #[test]
 fn file_mistakes_are_reported_before_loading() {
+    use crate::dialogs::Dialog;
     use egui_kittest::kittest::Queryable;
     // The leading edge written twice (line 8) and a stray `0 0` after the
     // closing trailing edge (line 14).
     let text = "t\n1 0\n0.75 0.03\n0.5 0.05\n0.25 0.055\n0.1 0.04\n0 0\n0 0\n0.1 -0.04\n0.25 -0.055\n0.5 -0.05\n0.75 -0.03\n1 0\n0 0\n";
-    let report = |h: &Harness<'static, App>| match &h.state().dialog {
-        Some(crate::dialogs::Dialog::ReadReport(r)) => Some(r.findings.iter().map(|f| f.line).collect::<Vec<_>>()),
+    let lines = |h: &Harness<'static, App>| match &h.state().dialog {
+        Some(Dialog::ReadReport(r)) => Some(r.findings().iter().map(|f| f.line).collect::<Vec<_>>()),
         _ => None,
     };
+    let loaded = |h: &Harness<'static, App>| h.state().airfoil.as_ref().map(|a| a.coordinates.len());
     let mut h = harness();
     h.state_mut().paste_text(text);
     h.run_steps(4);
-    assert_eq!(report(&h), Some(vec![Some(8), Some(14)]));
-    assert!(h.state().airfoil.is_none(), "nothing is loaded before the answer");
+    assert_eq!(lines(&h), Some(vec![Some(8), Some(14)]));
+    assert_eq!(loaded(&h), None, "nothing is loaded before the answer");
     shot(&mut h, "r_file_mistakes");
-    // Enter: corrected.
+    // A row zooms the preview to its mistake, and back.
+    if let Some(Dialog::ReadReport(r)) = &mut h.state_mut().dialog {
+        r.toggle_selected(1);
+        assert!(!r.view.follow);
+    }
+    h.run_steps(4);
+    shot(&mut h, "r_file_mistakes_zoomed");
+    if let Some(Dialog::ReadReport(r)) = &mut h.state_mut().dialog {
+        r.toggle_selected(1);
+        assert!(r.selected.is_none() && r.view.follow);
+    }
+    h.run_steps(2);
+    // Enter: all corrections.
     key(&mut h, egui::Key::Enter, egui::Modifiers::NONE);
     h.run_steps(3);
     assert!(h.state().dialog.is_none());
-    assert_eq!(h.state().airfoil.as_ref().unwrap().coordinates.len(), 11);
+    assert_eq!(loaded(&h), Some(11));
     assert!(h.state().status.starts_with("Pasted corrected: t (11 points"), "{}", h.state().status);
-    // Keep as read: the points as the text has them.
+    // One correction unchecked: the stray point stays.
     h.state_mut().paste_text(text);
     h.run_steps(4);
-    h.get_by_label("Keep as read").click();
+    if let Some(Dialog::ReadReport(r)) = &mut h.state_mut().dialog {
+        r.accept[1] = false;
+    }
     h.run_steps(3);
-    assert!(h.state().dialog.is_none());
-    assert_eq!(h.state().airfoil.as_ref().unwrap().coordinates.len(), 13);
+    shot(&mut h, "r_file_mistakes_one");
+    h.get_by_label("Load").click();
+    h.run_steps(3);
+    assert_eq!(loaded(&h), Some(12));
+    assert!(h.state().status.starts_with("Pasted with 1 of 2 corrections: t (12 points"), "{}", h.state().status);
+    // None checked: the points as read.
+    h.state_mut().paste_text(text);
+    h.run_steps(4);
+    if let Some(Dialog::ReadReport(r)) = &mut h.state_mut().dialog {
+        r.accept = vec![false, false];
+    }
+    h.get_by_label("Load").click();
+    h.run_steps(3);
+    assert_eq!(loaded(&h), Some(13));
     assert!(h.state().status.starts_with("Pasted as read: t (13 points"), "{}", h.state().status);
-    // Closing the window takes the default.
+    // Escape cancels: the airfoil stays as it was.
     h.state_mut().paste_text(text);
     h.run_steps(4);
     key(&mut h, egui::Key::Escape, egui::Modifiers::NONE);
     h.run_steps(3);
     assert!(h.state().dialog.is_none());
-    assert_eq!(h.state().airfoil.as_ref().unwrap().coordinates.len(), 11);
+    assert_eq!(loaded(&h), Some(13));
+    assert_eq!(h.state().status, "Cancelled: the airfoil was not loaded");
     // A file without mistakes loads at once.
     h.state_mut().paste_text("t\n1 0\n0.5 0.05\n0 0\n0.5 -0.05\n1 0\n");
     h.run_steps(3);
     assert!(h.state().dialog.is_none());
-    assert_eq!(h.state().airfoil.as_ref().unwrap().coordinates.len(), 5);
+    assert_eq!(loaded(&h), Some(5));
+}
+
+/// Corners the points show are joined with G0 by the fit, whatever the
+/// Sections and Continuity settings, which stay as they are; the Corners
+/// row says where they are. Switched off, only the settings cut the
+/// outline. A NACA outline has none.
+#[test]
+fn corners_are_joined_with_g0() {
+    use egui_kittest::kittest::Queryable;
+    // How far the fitted curve turns at each junction, in degrees.
+    fn breaks(app: &App) -> Vec<f64> {
+        let sections = &app.fit.as_ref().unwrap().section_control_points;
+        sections
+            .windows(2)
+            .map(|w| {
+                let (u, v) = (w[0][w[0].len() - 1] - w[0][w[0].len() - 2], w[1][1] - w[1][0]);
+                (u.x * v.y - u.y * v.x).atan2(u.dot(&v)).abs().to_degrees()
+            })
+            .collect()
+    }
+    let mut h = harness();
+    h.state_mut().new_naca_airfoil("2412", 81, true);
+    h.run_steps(3);
+    assert!(h.state().settings.corners, "joined unless switched off");
+    assert!(h.query_by_label_contains("At the leading edge").is_none(), "a NACA nose is round");
+    // A wedge: straight sides meeting at a point, finely sampled.
+    let xs: Vec<f64> = (0..=200).map(|i| 1.0 - i as f64 * 0.005).collect();
+    let half = |x: f64| 0.1 * x.min(1.0 - x) + 0.02 * x;
+    let outline = |name: &str, lower: &dyn Fn(f64) -> f64| {
+        let upper = xs.iter().map(|&x| format!("{x} {}\n", half(x)));
+        let under = xs.iter().rev().skip(1).map(|&x| format!("{x} {}\n", lower(x)));
+        format!("{name}\n{}", upper.chain(under).collect::<String>())
+    };
+    h.state_mut().paste_text(&outline("wedge", &|x| -half(x)));
+    h.run_steps(3);
+    assert_eq!(h.state().airfoil.as_ref().unwrap().name, "wedge");
+    assert!(h.query_by_label("At the leading edge").is_some());
+    shot(&mut h, "n_sharp_nose");
+    h.state_mut().settings.control_points.value.set(8);
+    h.state_mut().on_fit();
+    assert_eq!(h.state().status, "Preparing 8 control points, degree 5, G0 continuity...");
+    finish(&mut h);
+    {
+        let app = h.state();
+        let (s, a) = (&app.settings, app.airfoil.as_ref().unwrap());
+        // The settings are the user's: two sections, G3 where they join smoothly.
+        assert_eq!((s.sections.value.value, s.continuity, a.num_sections()), (2, 3, 2));
+        assert!(a.seams[0].corner && breaks(app)[0] > 150.0, "{:?}", breaks(app));
+    }
+    shot(&mut h, "n_sharp_nose_fit");
+    // Switched off: the nose is a junction of the settings, G3. (A smooth
+    // curve round a point takes a minute to fit, so this one is stopped.)
+    h.state_mut().settings.corners = false;
+    h.run_steps(2);
+    h.state_mut().on_fit();
+    assert_eq!(h.state().status, "Preparing 8 control points, degree 5, G3 continuity...");
+    h.run_steps(3);
+    h.state_mut().on_cancel();
+    finish(&mut h);
+    {
+        let a = h.state().airfoil.as_ref().unwrap();
+        assert_eq!((a.num_sections(), a.seams[0].corner, a.split.corners), (2, false, false));
+    }
+    // A flap-like kink on the lower side, 3/4 of the chord back: a second
+    // corner, and a third section for it.
+    h.state_mut().settings.corners = true;
+    h.state_mut().paste_text(&outline("flapped", &|x| -half(x) - 0.5 * (x - 0.75).max(0.0)));
+    h.run_steps(3);
+    // The wedge's run is not saved.
+    h.get_by_label("Don't save").click();
+    h.run_steps(3);
+    assert_eq!(h.state().airfoil.as_ref().unwrap().name, "flapped");
+    assert!(h.query_by_label("At the leading edge and x 0.750").is_some());
+    shot(&mut h, "n_flap_corner");
+    h.state_mut().on_fit();
+    assert_eq!(h.state().status, "Preparing 8 control points, degree 5, G0, G0 continuity...");
+    finish(&mut h);
+    let app = h.state();
+    let a = app.airfoil.as_ref().unwrap();
+    let at: Vec<f64> = a.junction_indices.iter().map(|&j| a.coordinates[j].x).collect();
+    assert!(at.len() == 2 && at[0].abs() < 1e-9 && (at[1] - 0.75).abs() < 1e-9, "{at:?}");
+    assert_eq!((app.settings.sections.value.value, app.settings.continuity), (2, 3));
+    let turns = breaks(app);
+    assert!(turns[0] > 150.0 && (20.0..30.0).contains(&turns[1]), "{turns:?}");
+    // The run says so, and its count is the setting's.
+    let run = app.projects.runs().last().unwrap();
+    assert!(run.spline_config.split_at_corners);
+    assert_eq!(run.control_points_per_section(), 8);
+    shot(&mut h, "n_flap_corner_fit");
 }

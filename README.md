@@ -37,9 +37,23 @@ where sections meet, written exactly to STEP, IGES or DXF.
   chord line, and drops common file mistakes that make a fit loop: a point
   written twice, the outline written twice, stray points after the closing
   trailing edge, and a single mistyped point sticking out of the outline.
-  Opening or pasting such a file lists each mistake with its line and asks
-  whether to use the corrected points (the default) or keep them as read;
-  batch conversion uses the corrected points and counts the files.
+  Opening or pasting such a file lists each mistake with its line and a
+  check box (all checked), with a preview of the points the checked
+  corrections remove; batch conversion makes every correction and counts
+  the files.
+- Joins sections with G0 at the corners of the data (a sharp leading
+  edge, a ridge, a flap kink): where the points turn at one point far more
+  than beside it. Corners are read from the points alone, of any curve,
+  and cut the outline on top of the Sections setting, whose other
+  junctions keep their Continuity: one smooth curve squeezes a corner into
+  a curvature spike. A section that ends at a corner gets the control
+  points its own points determine. Where the points are over 1 % of the
+  chord apart, a corner counts only when its sides, extended, meet at it
+  (a sparsely sampled round nose passes the turn test but its sides meet
+  well ahead). A turn counts only by as much as the coordinates' rounding
+  cannot explain, so a round nose written with three decimals shows no
+  corner. The Corners row of the sidebar says where they are; clearing
+  its Join with G0 box leaves the outline to the Sections setting alone.
 
 ## Building and running
 
@@ -133,9 +147,12 @@ fit.export("naca2412.step", scale=100.0, units="mm", merge=True)
 |---|---|
 | `read_airfoil(path)` | `(name, points, decimals)` of a Selig or Lednicer file |
 | `naca4(code, n_per_side=81)` | Points of a NACA 4-digit section |
-| `split_sections(points, count=2)` | Sections sharing their junction points |
+| `split_sections(points, count=2, corners=False)` | Sections sharing their junction points; with `corners`, cut at the corners too |
+| `corners(points)` | `(index, turn, clear)` of every corner of any ordered points |
+| `split_at_corners(points)` | Any ordered points cut at their clear corners, for a `"G0"` fit |
+| `smoothest_through(points, count)` | `count` points on the smoothest curve through a few |
 | `default_tolerance(points, decimals=None)` | The tolerance the data support |
-| `fit_airfoil(points, tolerance=None, ...)` | The app's tolerance search with its defaults |
+| `fit_airfoil(points, tolerance=None, ...)` | The app's tolerance search with its defaults (`corners=True`: G0 at the corners of the data) |
 | `fit(sections, control_points, ...)` | A fit with fixed control-point counts |
 | `fit_to_tolerance(sections, tolerance, ...)` | The library's free-knot tolerance search |
 
@@ -190,6 +207,33 @@ Python results), and differs on purpose where the behaviour was a defect:
 
 - The application starts its own version numbering at 0.1.0 (the Python
   version was 2.0.0); project files record it as `app_version`.
+- The outline is also cut at the clear corners of the data
+  (`bspline_varpro::corners`) and the sections are joined there with G0,
+  whatever the continuity of the junctions the section count places
+  (`SplineConfig.split_at_corners`, on in a new window;
+  `geometry::cut_into_sections`). Python joined every junction alike: of
+  12,407 library files 1,010 have a corner (at the nose in all but one
+  airfoil, which has a ridge). Round the sharp nose of a 401-point wedge a
+  smooth curve took a minute to fit; two sections joined there with G0
+  take a quarter of a second.
+  - A junction of the section count within two points of a corner gives
+    way to it, so a sharp leading edge is one G0 junction and a corner
+    elsewhere one section more. Without corners in the data nothing
+    changes.
+  - A section that ends at a corner takes of the control-point count what
+    its points determine: one fewer than it has, and at least what its
+    ends need. With fewer points than that needs, it is fitted to its
+    points and more on the smoothest curve through them
+    (`corners::smoothest_through`), so a face of three points between two
+    corners follows its points whatever the smoothing. A tolerance search
+    raises the count as far as the other sections' points allow.
+  - Direct LSQ joins a corner with C0. Spline files name every junction
+    (`G3 G0`), and batch file names say `no-corners` when corners are left
+    alone.
+  - Project files and settings written without `split_at_corners` are
+    read as they were made, without it; an airfoil cut at corners also
+    stores which junctions are corners (`corner_junctions`) and which are
+    the section count's (`layout_junctions`, `layout_sections`).
 - The airfoil reader drops repeated points, a repeated outline, stray points
   after the closing trailing edge and lone mistyped points
   (`io::clean_outline`); Python kept them, and the fit had to loop or stop

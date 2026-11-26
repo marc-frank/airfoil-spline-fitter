@@ -183,6 +183,8 @@ pub struct Settings {
     pub degree: IntSweep,
     pub continuity: usize,
     pub geometric: bool,
+    /// Join the sections at the corners of the data with G0.
+    pub corners: bool,
     pub control_points: IntSweep,
     pub per_junction: String,
     /// Smallest spacing of free knots, as a fraction of a section.
@@ -208,6 +210,7 @@ impl Default for Settings {
             degree: IntSweep::new(c.degree, 1, UNLIMITED),
             continuity: c.continuity.order(),
             geometric: c.geometric_continuity,
+            corners: c.split_at_corners,
             control_points: IntSweep::new(c.num_control_points, 2, UNLIMITED),
             per_junction: c.junction_continuity.join(", "),
             knot_gap: o.min_knot_gap,
@@ -234,6 +237,7 @@ pub struct Values {
     degree: usize,
     continuity: usize,
     geometric: bool,
+    corners: bool,
     control_points: usize,
     per_junction: String,
     knot_gap: f64,
@@ -262,6 +266,7 @@ impl Values {
             "degree": self.degree,
             "continuity": self.continuity,
             "geometric": self.geometric,
+            "corners": self.corners,
             "control_points": self.control_points,
             "per_junction": self.per_junction,
             "knot_gap": self.knot_gap,
@@ -292,6 +297,7 @@ impl Values {
             degree: count("degree", d.degree),
             continuity: count("continuity", d.continuity).min(3),
             geometric: flag("geometric", d.geometric),
+            corners: flag("corners", d.corners),
             control_points: count("control_points", d.control_points),
             per_junction: text("per_junction").map_or_else(|| d.per_junction.clone(), str::to_string),
             knot_gap: float("knot_gap", d.knot_gap, |v| v.is_finite() && v >= 0.0),
@@ -519,6 +525,7 @@ impl Settings {
             continuity: ContinuityMode::from_order(self.continuity),
             geometric_continuity: self.varpro() && self.geometric,
             junction_continuity: junctions,
+            split_at_corners: self.corners,
         }
         .validated()
     }
@@ -558,6 +565,7 @@ impl Settings {
         self.continuity = c.continuity.order();
         self.degree.value.set(c.degree);
         self.geometric = c.geometric_continuity;
+        self.corners = c.split_at_corners;
         self.control_points.value.set(c.num_control_points);
         self.per_junction = c.junction_continuity.join(", ");
         self.knot_gap = o.min_knot_gap;
@@ -580,6 +588,7 @@ impl Settings {
             degree: self.degree.value.value,
             continuity: self.continuity,
             geometric: self.geometric,
+            corners: self.corners,
             control_points: self.control_points.value.value,
             per_junction: self.per_junction.clone(),
             knot_gap: self.knot_gap,
@@ -606,6 +615,7 @@ impl Settings {
         self.degree.value.set(v.degree);
         self.continuity = v.continuity;
         self.geometric = v.geometric;
+        self.corners = v.corners;
         self.control_points.value.set(v.control_points);
         self.per_junction = v.per_junction.clone();
         self.knot_gap = v.knot_gap;

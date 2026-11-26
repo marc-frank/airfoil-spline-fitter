@@ -344,15 +344,27 @@ Returns `(sections, junction_indices)` (tuples of point tuples; indices into `co
 
 `split_at_leading_edge(coords)` (application) = `split_into_sections(coords, 2)` returned as `(upper, lower, le_index)`.
 
+[Rust: `cut_into_sections(coords, split)`, `split = Split(sections, corners)`, returns `(sections, junction_indices, seams)`. Its junctions are those of `split_into_sections(coords, split.sections)` (the layout) and, with `split.corners`, every clear corner of the data (4.5). A layout junction within `CORNER_SIDE = 2` points of a corner gives way to the nearest (the first of two as near). Each junction has a `Seam(corner, layout)`: `corner` when it is a corner of the data, `layout` the index (from 0) of the layout junction it is (the first, when a corner stands for several) and none for a corner away from them. Without corners in the data, or with `split.corners` false, the result is that of `split_into_sections` with `Seam(false, k)` for junction `k`.]
+
 ### 4.3 `AirfoilData`
 
 Immutable record: `coordinates` (tuple of points), `sections` (tuple of tuples), `junction_indices`, `num_sections`, `filename = ""`, `name = ""`, `precision = 6`. `num_points = len(coordinates)`. `create_airfoil_data(coords, num_sections=2, filename="", name="", precision=6)` splits by 4.2.
+
+[Rust: also `seams` (one per junction, 4.2) and `split`, how it was cut. It is built from a `Split` (a section count alone is `Split(count, false)`); `num_sections` is the number of sections made, `split.sections` the count asked for. `at_corner()` says of every section whether a junction at one of its ends is a corner.]
 
 ### 4.4 Other geometry helpers
 
 - `compute_bounding_box(points)`: empty raises `ValueError("Cannot compute bounding box of empty point set")`; else `BoundingBox(min x, max x, min y, max y)`.
 - `BoundingBox`: `center`, `width = x_max - x_min`, `height`, `diagonal = hypot(width, height)`, `scaled(f)` (half sizes times `f` about the centre), `x_bounds()`, `y_bounds()`.
 - `interpolate_along_polyline(points, t_params, query_t)`: empty points -> `(0.0, 0.0)` per query; one point -> that point per query; else per query: `<= t[0]` -> first point; `>= t[-1]` -> last point; else `idx = searchsorted(t, q) - 1` clamped to `[0, N-2]`, linear interpolation with weight `(q - t0)/(t1 - t0)` (0 if `t1 <= t0`).
+
+### 4.5 Corners `[Rust]`
+
+No Python counterpart; library module `bspline_varpro.corners`, for any ordered points.
+
+`corners(points)` returns `Corner(index, turn, sparse)` for every point `i` in `2 .. n-3` (none for `n < 7`) that passes the turn test. `turn(i)` is the angle in degrees between `points[i] - points[i-1]` and `points[i+1] - points[i]`. `doubt(i)` is what rounding alone can make of it: with `floor = precision_floor(points)` (12.6; 0 for unrounded data), `atan2(2·floor, |segment|)` in degrees for each of the two segments at `i`, added. The test: `at = turn(i) - doubt(i)`, `beside = max(turn(i-1) + doubt(i-1), turn(i+1) + doubt(i+1))`, and `at >= 20` and `at >= 6·beside`. `sparse`: `spacing = max` of the two segment lengths at `i`; `sparse = spacing > 0.01·extent and not sharp`, `extent` the larger of the x and y ranges of the points (an airfoil's chord), `sharp` when the line through `points[i-2], points[i-1]` and the line through `points[i+1], points[i+2]` meet within `0.5·spacing` of `points[i]` (parallel lines never do). `clear_corners(points)` = the indices of the corners that are not sparse; `split_at_corners(points)` = the points cut at them into sections sharing the corner points.
+
+`smoothest_through(points, count)`: `points` as they are when `len(points) < 2` or `count <= len(points)`; else `count` points, the given ones among them in order, the others on the natural cubic spline through them over their chord lengths (second derivative zero at both ends; a straight line through two points, and piecewise straight when two consecutive points coincide). The `count - len(points)` added points are placed one at a time in the gap whose current spacing (its length over one more than the points already added to it) is largest, the first on ties, and spaced evenly in the gap's parameter.
 
 ---
 
@@ -404,6 +416,8 @@ Construction (in this order):
 
 `junction_specs()`: the entries if given; else `[("G" if geometric_continuity else "C") + str(order)] * (S - 1)`.
 `minimum_control_points` property: 5.2 over the digits of `junction_specs()`.
+
+[Rust: one more field, `split_at_corners`, default `True`: the outline is cut at the clear corners of the data too and the sections are joined there with G0 (4.2, 11.2). `split()` = `Split(num_sections, split_at_corners)`. `junction_specs()` and `minimum_control_points` describe the junctions of the layout, as above. `seam_specs(seams)` gives one spec per junction of a cut outline: `G0` (`C0` when `geometric_continuity` is false) for a corner, else `junction_specs()[seam.layout]`.]
 
 ### 5.5 `OptimizationConfig` (immutable)
 
@@ -823,6 +837,8 @@ where `(ce_r, cs_r) = end_derivative_coefficients(t, p, r)` (7.1/7.5). Orders ar
 
 `get_optimizer(type)` returns a new `ConstrainedLSQOptimizer` or `GNVarProOptimizer` (unknown: `ValueError("Unknown optimizer type: {type}")`). Both are called the same way: `fit(config, opt_config, airfoil, callback=callback, should_stop=should_stop)` `[D10]`. Nothing is copied onto the optimizer first `[D6]`: the VarPro adapter reads `opt_config.smoothing_weight` itself.
 
+[Rust: both optimizers fit a chain made from the airfoil's seams (4.2), whatever `split_at_corners` says (it only cuts the airfoil). Junctions: VarPro `seam_specs(airfoil.seams)` (5.4), after `ValueError("Expected {airfoil.split.sections - 1} continuity entries, got {len(junction_specs())}.")` when those differ; Direct LSQ order 0 at a corner, else the order of `continuity`, parametric. `need_s` = 5.2 for the orders at the ends of section `s`. Control points for a count `n`: a section with a corner at an end gets `min(max(n, need_s), max(need_s, len_s - 1))`, the others `n` (so sections can differ; Direct LSQ then has one knot vector and one block of columns per section). A section with a corner at an end and `len_s < need_s + 1` points is fitted to `smoothest_through(points_s, need_s + 1)` (4.5) in place of its points; `fun` and `rms_error` are then of the airfoil's own points only, and the search's deviations too. The search of 11.3 runs the count from `max_s need_s` to the smallest `len_s - 1` among the sections without a corner (when all have one: the largest `max(need_s, len_s - 1)`), and raises its too-few-points error only for a section without a corner. A fit of the search is the single run of the largest control-point count of its sections.]
+
 ### 11.3 `GNVarProOptimizer` (name `"VarPro LM"`)
 
 Constants `[D6]`: `REGULARIZATION = 1e-12`, `LM_TOLERANCE = 1e-8` `[D24]`, `TOLERANCE_SMOOTHING = 1e-7`. There is no `GNVarProConfig` object: its other fields either repeated `OptimizationConfig.smoothing_weight` or were never changed (`use_exact_jacobian = True`, `verbose = 0`). [Rust: tolerance fits use the sidebar's smoothing weight like fixed-count fits; there is no `TOLERANCE_SMOOTHING`.]
@@ -1193,6 +1209,7 @@ Decoding rules:
 | `geometric_continuity` | if absent: `str(continuity_type).upper() == "GEOMETRIC"` (absent -> false) |
 | `num_sections` | default 2 |
 | `junction_continuity` | default `()` (then validated by `SplineConfig`) |
+| `split_at_corners` [Rust] | default false; written only when true, so settings without it are read as they were made |
 | `optimizer` | required; matches a value (lower-cased); retired names: `hierarchical-lsq` -> VarPro, `constrained-lsq` -> Direct LSQ, `orthogonal-lsq`, `param-opt`, `bfgs`, `slsqp`, `l-bfgs-b`, `cg`, `tnc`, `powell`, `nelder-mead`, `cobyla`, `de`, `da`, `bh` -> VarPro, logging warning `"Optimizer %r was retired; showing the run as %s."`; unknown -> VarPro with warning `"Unknown optimizer %r; showing the run as %s."` |
 | `smoothing_weight` | default `1e-3` |
 | `optimize_le_position` | default false |
@@ -1211,6 +1228,7 @@ Decoding rules:
 | `number` | `int(data.get("number", 0))` |
 | metadata fields | defaults `"1.0.0"`, `""` ... |
 | airfoil `coordinates`, `junction_indices` | required; `filename`, `name` default `""`, `precision` default 6 |
+| airfoil `split_at_corners` [Rust] | default false: every junction is `Seam(false, k)` and `split = Split(len(junction_indices) + 1, false)`. When true (written only then, with the three keys that follow): `corner_junctions` (a bool per junction), `layout_junctions` (an index or `null` per junction) and `layout_sections` are required and give the seams and `split = Split(layout_sections, true)`; lists of another length than `junction_indices`, a junction that is neither, layout indices not increasing or not below `layout_sections - 1`: `the corner and layout junctions do not describe the junction indices` |
 | airfoil sections `[D17]` | rebuilt, not read: with `J` = the junction indices as integers and `N` points, `J` must be strictly increasing with `1 <= J_k <= N - 2`, else `ValueError("the junction indices do not split the coordinates")` (shown as `Airfoil: the junction indices do not split the coordinates.`); sections = `coordinates[J_{k-1} : J_k + 1]` with `J_0 = 0` and the last `coordinates[J_last:]` (4.2); `num_sections = len(J) + 1`. Stored `sections` and `num_sections` are ignored |
 | result `degree` `[D17]` | ignored: the run's result takes `spline_config.degree` |
 
@@ -1231,7 +1249,7 @@ Reference settings `[D7]`: the model defaults, `SplineConfig()` (degree 5, 25 co
 1. `stem`, `deg{p}`.
 2. `n{n}` when (`opt.tolerance is None` or not `opt.grow_control_points`) and `n != 25`.
 3. `s{S}` when `S != 2`.
-4. `specs = junction_specs()`; when non-empty and not all equal to `"G3"`: `"-".join(specs)` if they are not all equal, else the single spec.
+4. `specs = junction_specs()`; when non-empty and not all equal to `"G3"`: `"-".join(specs)` if they are not all equal, else the single spec. [Rust: then `no-corners` when `split_at_corners` is false (`corners` if it were true against a false default).]
 5. When the optimizer differs from VarPro: `lsq` for Direct LSQ (else the value); then, still only in that case, the parameterization with `_` -> `-` when it is not `centripetal`.
 6. When `tolerance` is not `None`: `tol-auto` if `auto_tolerance` else `tol{num(tolerance)}`.
 7. `knots-{placement}` when not `uniform`; then `gap{num(min_knot_gap)}` when the placement is `free` and `min_knot_gap != 0.05` `[D22]`.
@@ -1367,6 +1385,7 @@ The tolerance spin box and Auto share one row (spin stretches, spacing 6).
 | `Sections` | spin box with sweep | 1 .. UNLIMITED, maximum reset to `max(1, N - 1)` for each airfoil | 2 | `Number of sections, each its own spline, joined at junctions.` / `2 (default) splits upper and lower surface at the leading edge.` |
 | `Continuity` | segmented, 4 items with data G0..G3; texts `C0..C3` or `G0..G3` (19.6) | | index 3 (G3) | item `i`: `{Position, Tangent, Curvature, Curvature rate}[i] matches across junctions` |
 | `Type` | segmented `Geometric` (true), `Parametric` (false) | | Geometric | `Geometric: tangent direction, curvature and curvature rate match` / `across the junction (what CAD calls G1/G2/G3).` / `Parametric: the derivative vectors themselves match (C1/C2/C3),` / `which is stricter and needs more control points.` / `Only VarPro LM supports geometric continuity; other optimizers` / `always use parametric.` |
+| `Corners` [Rust] | check box `Join with G0`, then, when the open airfoil has corners (4.5), where: `At the leading edge`, `At x 0.400`, `At the leading edge and x 0.400` (a clear corner within 2 points of the leading-edge index is the leading edge; each place once; `.3f`), or `Unclear, sparse points` when it has only sparse ones | | checked | `Cut the outline at the corners of the data too, and join the sections` / `there with G0, whatever the Continuity of the other junctions. One smooth` / `curve squeezes a corner into a curvature spike. A junction of the` / `Sections setting within two points of a corner gives way to it; a` / `section that ends at a corner gets the control points its own points` / `determine. Off: only the Sections setting cuts the outline.` |
 
 **Advanced** (collapsible, header ` ADVANCED`, collapsed):
 
@@ -1392,6 +1411,7 @@ Start values come from the models `[D7]`. The `Default` columns above show the v
 | `Degree`, `Control points`, `Sections` | `degree`, `num_control_points`, `num_sections` |
 | `Continuity`, `Type` | `continuity`, `geometric_continuity` |
 | `Per junction` | `", ".join(junction_continuity)` |
+| `Corners` [Rust] | `split_at_corners` |
 | `Smoothing` | `smoothing_weight` |
 | `Junctions` | `optimize_le_position` |
 
@@ -1456,7 +1476,7 @@ Tracked fields: `("Per junction", text)`, `("Smoothing", spin)`, `("Junctions", 
 
 ### 19.10 Building configurations from the sidebar
 
-`spline_config()`: `junctions` = for VarPro, the Per junction text with `,` and `;` replaced by spaces, split on whitespace (as given, upper-cased by `SplineConfig`); else `()`. `SplineConfig(degree, control points, sections, Continuity data, geometric = VarPro and Type is Geometric, junctions)`. Its `ValueError`s reach the user (19.12).
+`spline_config()`: `junctions` = for VarPro, the Per junction text with `,` and `;` replaced by spaces, split on whitespace (as given, upper-cased by `SplineConfig`); else `()`. `SplineConfig(degree, control points, sections, Continuity data, geometric = VarPro and Type is Geometric, junctions)`. Its `ValueError`s reach the user (19.12). [Rust: and `split_at_corners` = the Corners check box. The fit cuts the airfoil by `config.split()` when its `split` differs, and opening or pasting an airfoil cuts it by the Sections value and the Corners check box.]
 
 `optimization_config()`: tolerance = `None` unless VarPro and goal Tolerance; then, if Auto and an airfoil is loaded, the spin box is first set to `default_tolerance(coords, precision)` (any exception ignored), and the tolerance is the spin value. `OptimizationConfig(optimizer, optimize_le_position = checked and sections > 1, smoothing_weight = spin, tolerance, knot_placement, min_knot_gap = spin, parameterization, grow_control_points = checked)`.
 
@@ -1758,7 +1778,7 @@ Dialog title `Open project`, home directory, filter `Spline project (*.asfproj);
 5. The first matching run is replaced in place and `run.number` = its number; otherwise append and `last_number = number_runs(runs, last_number)`.
 6. Modified; label; fill the explorer; refresh the comparison plot if `replot`. Return true.
 
-Match: equal `degree`, `num_control_points`, `num_sections`, `continuity`, `geometric_continuity`, `junction_continuity`, `tolerance`, `knot_placement`, `parameterization`, `optimize_le_position`, `grow_control_points`, `optimizer`; only when the new run has free knots, `min_knot_gap` `[D22]`; only when the new run has no tolerance, `smoothing_weight`; and, when it has a tolerance, the same number of control points in every section of the two fits `[D23]`. [Rust: `smoothing_weight` is compared for tolerance runs too.] [Rust: only runs of their own match; runs of a search are replaced with their search.]
+Match: equal `degree`, `num_control_points`, `num_sections`, `continuity`, `geometric_continuity`, `junction_continuity`, `tolerance`, `knot_placement`, `parameterization`, `optimize_le_position`, `grow_control_points`, `optimizer`; only when the new run has free knots, `min_knot_gap` `[D22]`; only when the new run has no tolerance, `smoothing_weight`; and, when it has a tolerance, the same number of control points in every section of the two fits `[D23]`. [Rust: `smoothing_weight` is compared for tolerance runs too.] [Rust: only runs of their own match; runs of a search are replaced with their search.] [Rust: and `split_at_corners`.]
 
 Earlier fits of a tolerance search `[D23]`: a tolerance search is a sequence of fits like a sweep of the control point count, and each is kept. For every entry `raw` of the optimizer result's `fits` (11.3), in order, the worker builds `FitResult(section_control_points, degree, final_error = raw.fun, num_iterations = raw.nit, num_evaluations = raw.evaluations or 0, elapsed_seconds = raw.seconds or 0, converged = raw.success, cancelled = False, section_knots, rms_error)` and attaches its report like any fit's. On the GUI thread, before the search's last fit is stored, each is added with `add_optimization_run(config, opt, fit, loss history up to its elapsed_seconds, replot=False)`. [Rust: the loss history of its own refit only, after the elapsed_seconds of the fit before it; the last fit keeps the whole history. The search adds one control point a round, so histories up to each fit held its evaluations many times over: one search on Darkstar root saved 7.3 MB, now 1.5 MB.] The fits of one search differ in their control point counts, so each is a run; a later fit of the same search with the counts of an earlier one replaces it, as does the same search run again. Fits the search tried and rejected (removal trials that left the tolerance) are not recorded and not stored. Batch conversion writes the last fit only. [Rust: a search is stored as a folder: a `ToleranceSearch` record (id, number `Search N`, timestamp, the sidebar's spline and fit settings with the start count and tolerance, the run it ended on, its count per section, largest deviation, met, message, fits, evaluations, seconds, cancelled) and its fits as runs: each a fixed-count run (`num_control_points` = its count, `tolerance` None, `grow_control_points` false, the other settings of the search) naming the search, with the loss history and the elapsed time of its own fit. A new search of the same settings replaces the old one with its runs and keeps its number; a cancelled search does not replace a finished one. Runs of a search never replace runs of their own, nor these them.]
 
@@ -1800,6 +1820,7 @@ The run's result becomes the current fit; the loss data become its history (iter
 | 12 | `Continuity` | `G0`..`G3` (enum name) | | | | sections > 1 | |
 | 13 | `Type` | `Geometric` / `Parametric` | | | | VarPro and sections > 1 | |
 | 14 | `Per junction` | entries joined by `", "` | | | | VarPro | |
+| 14a | `Join corners` [Rust] | bool, `split_at_corners` | | | | | `Sections joined with G0 at the corners of the data` |
 | 15 | `Smoothing` | smoothing weight | `.3g` | yes | | VarPro without tolerance [Rust: VarPro] | |
 | 16 | `Optimize junctions` | bool | | | | sections > 1 | |
 | 17 | `Error` | `comparison_error` | `.3e` | yes | yes | | `RMS distance of the points to the curve, the same measure for every run` | [Rust: no such column. The method is `rms_deviation`; the runs are compared by Max deviation and RMS deviation, the RMS deviation column is the runs plot's default y axis and the column a numeric filter term compares.]

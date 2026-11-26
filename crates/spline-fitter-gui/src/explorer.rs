@@ -140,6 +140,7 @@ fn same_settings(run: &OptimizationRun, config: &SplineConfig, opt: &Optimizatio
         && c.continuity == config.continuity
         && c.geometric_continuity == config.geometric_continuity
         && c.junction_continuity == config.junction_continuity
+        && c.split_at_corners == config.split_at_corners
         && o.tolerance == opt.tolerance
         && o.knot_placement == opt.knot_placement
         && o.parameterization == opt.parameterization
@@ -601,7 +602,7 @@ impl App {
                 // "max deviation", but "RMS deviation".
                 let name = COLUMNS[yc].name;
                 let name = if name.starts_with("RMS") { name.to_string() } else { name.to_lowercase() };
-                format!("Run {}: {} control points, {name} {value}", r.number, r.result.control_points_per_section())
+                format!("Run {}: {} control points, {name} {value}", r.number, r.control_points_per_section())
             })
         };
         c.labels = xy.iter().map(|(id, q)| label(id, q[1])).collect();
@@ -1257,12 +1258,15 @@ impl App {
         }
         let Some(run) = self.projects.run(id) else { return };
         let (c, o, r) = (&run.spline_config, &run.optimization_config, &run.result);
-        let count = r.control_points_per_section();
+        let count = run.control_points_per_section();
         let mut pairs = vec![
             ("Degree".to_string(), c.degree.to_string()),
             ("Control points".to_string(), count.to_string()),
             ("Continuity".to_string(), c.continuity_label()),
         ];
+        if c.split_at_corners {
+            pairs.push(("Corners".into(), "G0".into()));
+        }
         if let Some(t) = o.tolerance {
             pairs.push(("Tolerance".into(), number(t, ".3e")));
         }

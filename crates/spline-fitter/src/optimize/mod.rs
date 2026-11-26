@@ -3,9 +3,13 @@
 mod direct_lsq;
 mod varpro;
 
+use bspline_varpro::chain::shared_junctions;
+use bspline_varpro::corners::smoothest_through;
+use bspline_varpro::{minimum_control_points, Junction};
+
 use crate::geometry::AirfoilData;
 use crate::models::{OptimizationConfig, OptimizerType, SplineConfig};
-use crate::{Result, Vec2};
+use crate::{bail, Result, Vec2};
 
 /// What a progress update reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,6 +91,110 @@ pub struct SearchOutcome {
     pub seconds: f64,
 }
 
+/// An airfoil's sections as an optimizer fits them: the continuity of
+/// every junction, the points of every section and the control points it
+/// gets.
+///
+/// A junction at a corner of the data is G0; the others have the
+/// continuity of the layout junction they are. A section that ends at a
+/// corner is as long as the data make it, so its control points follow its
+/// points: the configured count, but no more than its points determine
+/// (one fewer than it has) and no fewer than its end conditions need. Where
+/// even those are more than its points determine, it is fitted to its
+/// points and more on the smoothest curve through them
+/// ([`smoothest_through`]), so no control point is left to a penalty. The
+/// other sections get the configured count, as without corners.
+pub(crate) struct Chain {
+    /// The points each section is fitted to.
+    pub sections: Vec<Vec<Vec2>>,
+    /// Continuity of every junction (as a fixed one).
+    pub junctions: Vec<Junction>,
+    /// Fewest control points of every section, for its end conditions.
+    pub need: Vec<usize>,
+    /// For a section at a corner: the most control points its points
+    /// determine (at least its `need`).
+    most: Vec<Option<usize>>,
+    /// Which points of the chain (a junction point once) are the airfoil's.
+    own: Vec<bool>,
+}
+
+impl Chain {
+    pub fn new(config: &SplineConfig, options: &OptimizationConfig, airfoil: &AirfoilData) -> Result<Self> {
+        let junctions: Vec<Junction> = if options.optimizer == OptimizerType::VarPro {
+            // The settings name the junctions of a layout: the airfoil's.
+            let layout = config.junction_specs().len();
+            if layout + 1 != airfoil.split.sections {
+                bail!("Expected {} continuity entries, got {layout}.", airfoil.split.sections.saturating_sub(1));
+            }
+            config.seam_specs(&airfoil.seams).iter().map(|s| s.parse::<Junction>()).collect::<Result<_>>()?
+        } else {
+            // Direct LSQ joins every junction of the layout alike, parametrically.
+            let order = |seam: &crate::geometry::Seam| if seam.corner { 0 } else { config.continuity.order() };
+            airfoil.seams.iter().map(|seam| Junction::new(order(seam), false, true)).collect::<Result<_>>()?
+        };
+        let need = minimum_control_points(&junctions.iter().map(|j| j.order).collect::<Vec<_>>(), config.degree);
+        let at_corner = airfoil.at_corner();
+        let most: Vec<Option<usize>> =
+            (0..need.len()).map(|i| at_corner[i].then(|| need[i].max(airfoil.sections[i].len().saturating_sub(1)))).collect();
+        let sections: Vec<Vec<Vec2>> = airfoil
+            .sections
+            .iter()
+            .enumerate()
+            .map(|(i, points)| if at_corner[i] { smoothest_through(points, need[i] + 1) } else { points.clone() })
+            .collect();
+        // The airfoil's points among them, in the chain's order.
+        let shared = shared_junctions(&sections);
+        let mut own = Vec::new();
+        for (i, (fitted, points)) in sections.iter().zip(&airfoil.sections).enumerate() {
+            let mut given = points.iter().peekable();
+            let flags: Vec<bool> = fitted.iter().map(|p| given.next_if(|q| *q == p).is_some()).collect();
+            own.extend_from_slice(if i > 0 && shared[i - 1] { &flags[1..] } else { &flags });
+        }
+        Ok(Chain { sections, junctions, need, most, own })
+    }
+
+    /// Control points of every section for a configured count.
+    pub fn counts(&self, count: usize) -> Vec<usize> {
+        self.need.iter().zip(&self.most).map(|(&need, most)| most.map_or(count, |most| count.clamp(need, most))).collect()
+    }
+
+    /// The fewest control points a count can be: what the end conditions of
+    /// every section allow.
+    pub fn fewest(&self) -> usize {
+        self.need.iter().copied().max().unwrap_or(2)
+    }
+
+    /// The largest count worth fitting: one fewer than the points of the
+    /// smallest section that takes the count as it is; of sections at
+    /// corners alone, the most any of them takes.
+    pub fn most(&self) -> usize {
+        let plain = self.sections.iter().zip(&self.most).filter(|(_, most)| most.is_none()).map(|(s, _)| s.len() - 1).min();
+        plain.or_else(|| self.most.iter().flatten().copied().max()).unwrap_or(0).max(self.fewest())
+    }
+
+    /// The first section that takes the count as it is and has too few
+    /// points for its end conditions: its index, points and need.
+    pub fn too_short(&self) -> Option<(usize, usize, usize)> {
+        (0..self.need.len()).find(|&i| self.most[i].is_none() && self.need[i] > self.sections[i].len() - 1).map(|i| (i, self.sections[i].len(), self.need[i]))
+    }
+
+    /// The airfoil's own points of the chain, in order.
+    pub fn own<T: Copy>(&self, chain: &[T]) -> Vec<T> {
+        chain.iter().zip(&self.own).filter(|(_, own)| **own).map(|(v, _)| *v).collect()
+    }
+
+    /// The RMS distance of the airfoil's own points to their curve points:
+    /// `fitted` (the fit's own figure, exactly) when no points were added,
+    /// else from the squared distance of every point of the chain.
+    pub fn rms(&self, fitted: f64, squared: impl FnOnce() -> Vec<f64>) -> f64 {
+        if self.own.iter().all(|own| *own) {
+            return fitted;
+        }
+        let mine = self.own(&squared());
+        (mine.iter().sum::<f64>() / mine.len() as f64).sqrt()
+    }
+}
+
 /// Fits the airfoil's sections with the configured method.
 pub fn run_optimization(
     config: &SplineConfig,
@@ -94,9 +202,10 @@ pub fn run_optimization(
     airfoil: &AirfoilData,
     monitor: &mut dyn Monitor,
 ) -> Result<RawResult> {
+    let chain = Chain::new(config, options, airfoil)?;
     match options.optimizer {
-        OptimizerType::VarPro => varpro::fit(config, options, &airfoil.sections, monitor),
-        OptimizerType::DirectLsq => direct_lsq::fit(config, options, &airfoil.sections, monitor),
+        OptimizerType::VarPro => varpro::fit(config, options, &chain, monitor),
+        OptimizerType::DirectLsq => direct_lsq::fit(config, options, &chain, monitor),
     }
 }
 
@@ -117,6 +226,161 @@ pub(crate) mod tests {
 
     fn close(a: f64, b: f64) -> bool {
         (a - b).abs() <= 1e-3 * b.abs()
+    }
+
+    /// How far the curve's direction turns at every junction, in degrees.
+    fn tangent_breaks(sections: &[Vec<Vec2>]) -> Vec<f64> {
+        sections
+            .windows(2)
+            .map(|w| {
+                let (u, v) = (w[0][w[0].len() - 1] - w[0][w[0].len() - 2], w[1][1] - w[1][0]);
+                (u.x * v.y - u.y * v.x).atan2(u.dot(&v)).abs().to_degrees()
+            })
+            .collect()
+    }
+
+    fn cut(points: Vec<Vec2>, config: &SplineConfig) -> AirfoilData {
+        AirfoilData::new(points, config.split(), "", "", 5).unwrap()
+    }
+
+    fn counts(r: &RawResult) -> Vec<usize> {
+        r.section_control_points.iter().map(Vec::len).collect()
+    }
+
+    /// A corner of the data is joined with G0 and nothing else is: the
+    /// round nose of Saratov keeps the continuity of the settings, its
+    /// ridge gets its corner. The sections at the ridge take the control
+    /// points their points determine.
+    #[test]
+    fn corners_are_g0_and_nothing_else_is() {
+        use crate::geometry::tests::saratov;
+        let config = SplineConfig { num_control_points: 8, ..Default::default() };
+        let airfoil = cut(saratov(), &config);
+        assert_eq!(airfoil.section_sizes(), "[15, 9, 7]");
+        let options = OptimizationConfig::default();
+        let chain = Chain::new(&config, &options, &airfoil).unwrap();
+        assert_eq!(chain.junctions.iter().map(|j| j.label()).collect::<Vec<_>>(), ["G3", "G0"]);
+        let r = run_optimization(&config, &options, &airfoil, &mut Unmonitored).unwrap();
+        assert!(r.success, "{}", r.message);
+        assert_eq!(counts(&r), [8, 8, 6]);
+        let breaks = tangent_breaks(&r.section_control_points);
+        // The data turn 23 degrees at the ridge.
+        assert!(breaks[0] < 1e-6 && (18.0..28.0).contains(&breaks[1]), "{breaks:?}");
+        // Without the corner the ridge is rounded: no break anywhere, and
+        // the points farther from the curve.
+        let plain = SplineConfig { split_at_corners: false, ..config.clone() };
+        let rounded = run_optimization(&plain, &options, &cut(saratov(), &plain), &mut Unmonitored).unwrap();
+        assert_eq!(counts(&rounded), [8, 8]);
+        assert!(tangent_breaks(&rounded.section_control_points)[0] < 1e-6 && rounded.rms_error > 1.5 * r.rms_error, "{} {}", rounded.rms_error, r.rms_error);
+        // Direct LSQ: the same junctions, parametric. Its curve is free to
+        // break at the ridge (how far, its fixed parameters leave open on
+        // so few points) and is nearer the points for it.
+        let lsq = OptimizationConfig { optimizer: OptimizerType::DirectLsq, ..options.clone() };
+        let chain = Chain::new(&config, &lsq, &airfoil).unwrap();
+        assert_eq!(chain.junctions.iter().map(|j| j.label()).collect::<Vec<_>>(), ["C3", "C0"]);
+        let d = run_optimization(&config, &lsq, &airfoil, &mut Unmonitored).unwrap();
+        let breaks = tangent_breaks(&d.section_control_points);
+        assert_eq!(counts(&d), [8, 8, 6]);
+        assert!(breaks[0] < 1e-6 && breaks[1] > 10.0, "{breaks:?}");
+        let rounded = run_optimization(&plain, &lsq, &cut(saratov(), &plain), &mut Unmonitored).unwrap();
+        assert!(tangent_breaks(&rounded.section_control_points)[0] < 1e-6 && rounded.rms_error > 1.5 * d.rms_error, "{} {}", rounded.rms_error, d.rms_error);
+        // The continuity of each junction of the layout stays its own: with
+        // four sections the third junction is the ridge.
+        let four = SplineConfig { num_sections: 4, junction_continuity: vec!["G2".into(), "G3".into(), "G1".into()], ..config.clone() };
+        let chain = Chain::new(&four, &options, &cut(saratov(), &four)).unwrap();
+        assert_eq!(chain.junctions.iter().map(|j| j.label()).collect::<Vec<_>>(), ["G2", "G3", "G0"]);
+        // An airfoil cut for other settings is not fitted as if it were.
+        let three = SplineConfig { num_sections: 3, ..config.clone() };
+        assert_eq!(run_optimization(&three, &options, &airfoil, &mut Unmonitored).unwrap_err().0, "Expected 1 continuity entries, got 2.");
+    }
+
+    /// A section of very few points between two corners is fitted to its
+    /// own points whatever the smoothing, by either method: its control
+    /// points stay on the face they describe.
+    #[test]
+    fn a_few_points_between_corners_decide_their_section() {
+        use crate::geometry::tests::cut_nose;
+        let config = SplineConfig { num_control_points: 10, ..Default::default() };
+        let airfoil = cut(cut_nose(), &config);
+        assert_eq!(airfoil.section_sizes(), "[126, 3, 126]");
+        let face = &airfoil.sections[1];
+        for (optimizer, smoothing_weight) in [(OptimizerType::VarPro, 1e-3), (OptimizerType::VarPro, 0.0), (OptimizerType::DirectLsq, 0.0)] {
+            let options = OptimizationConfig { optimizer, smoothing_weight, ..Default::default() };
+            let chain = Chain::new(&config, &options, &airfoil).unwrap();
+            // Six control points need seven points: four more than the face has.
+            assert_eq!((chain.sections[1].len(), chain.own.iter().filter(|own| !**own).count()), (7, 4));
+            assert_eq!(chain.own(&bspline_varpro::chain::chain_data(&chain.sections)), airfoil.coordinates);
+            let r = run_optimization(&config, &options, &airfoil, &mut Unmonitored).unwrap();
+            assert_eq!(counts(&r), [10, 6, 10], "{optimizer} {smoothing_weight}");
+            // The face runs from corner to corner through its middle
+            // point, never leaving the strip its three points span.
+            let control = &r.section_control_points[1];
+            assert!((control[0] - face[0]).norm() < 1e-12 && (control[5] - face[2]).norm() < 1e-12, "{control:?}");
+            let curve = crate::BSpline { degree: 5, knots: bspline_varpro::open_uniform_knots(5, 6).unwrap(), control_points: control.clone() };
+            let on_face: Vec<Vec2> = (0..=40).map(|i| curve.derivative(i as f64 / 40.0, 0)).collect();
+            let within = |p: &Vec2| (-0.000201..=1e-9).contains(&p.x) && p.y.abs() <= 0.004 + 1e-9;
+            assert!(on_face.iter().all(within), "{optimizer} {smoothing_weight}: {control:?}");
+            assert!(on_face.windows(2).all(|w| w[1].y < w[0].y), "{optimizer} {smoothing_weight}: {control:?}");
+            let middle = bspline_varpro::chain::chain_deviations(&face[1..2], &[curve])[0];
+            assert!(middle < 2e-6, "{optimizer} {smoothing_weight}: {middle}");
+            assert!(r.rms_error.is_finite() && r.rms_error < 1e-4, "{optimizer} {smoothing_weight}: {}", r.rms_error);
+            let breaks = tangent_breaks(&r.section_control_points);
+            assert!(breaks.iter().all(|b| (60.0..100.0).contains(b)), "{optimizer} {smoothing_weight}: {breaks:?}");
+        }
+    }
+
+    /// A search with corners: every fit is the single run of its count, in
+    /// which a section at a corner takes what its points determine; the
+    /// count goes as far as the points of the other sections allow.
+    #[test]
+    fn a_search_sizes_sections_at_corners_by_their_points() {
+        use crate::geometry::tests::{saratov, wedge};
+        let config = SplineConfig { num_control_points: 6, ..Default::default() };
+        let airfoil = cut(saratov(), &config);
+        let tolerance = OptimizationConfig { tolerance: Some(1e-9), ..Default::default() };
+        let chain = Chain::new(&config, &tolerance, &airfoil).unwrap();
+        assert_eq!((chain.fewest(), chain.most(), chain.too_short()), (6, 14, None));
+        assert_eq!((chain.counts(6), chain.counts(9), chain.counts(14)), (vec![6, 6, 6], vec![9, 8, 6], vec![14, 8, 6]));
+        // The tolerance is out of reach: the search fits every count.
+        let r = run_optimization(&config, &tolerance, &airfoil, &mut Unmonitored).unwrap();
+        let search = r.search.clone().unwrap();
+        assert!(!search.met && search.fits == 9, "{} fits: {}", search.fits, search.message);
+        assert!(search.message.starts_with("Tolerance not reached: 14 control points are as many as the points of a section allow"), "{}", search.message);
+        for fit in r.earlier.iter().chain([&r]) {
+            let n = counts(fit).into_iter().max().unwrap();
+            assert_eq!(counts(fit), chain.counts(n));
+            let single = run_optimization(
+                &SplineConfig { num_control_points: n, ..config.clone() },
+                &OptimizationConfig { tolerance: None, ..tolerance.clone() },
+                &airfoil,
+                &mut Unmonitored,
+            )
+            .unwrap();
+            assert_eq!(single.section_control_points, fit.section_control_points, "{n} control points");
+            assert_eq!((single.error, single.evaluations), (fit.error, fit.evaluations));
+        }
+        // Both sections of a sharp nose end at its corner: each takes the
+        // count up to its own points, the longer one further.
+        let mut sharp = wedge(0.05, None);
+        sharp.truncate(sharp.len() - 4);
+        let airfoil = cut(sharp, &config);
+        assert_eq!(airfoil.section_sizes(), "[21, 17]");
+        let chain = Chain::new(&config, &tolerance, &airfoil).unwrap();
+        assert_eq!((chain.fewest(), chain.most(), chain.counts(18)), (6, 20, vec![18, 16]));
+    }
+
+    /// Without corners in the data the setting changes nothing.
+    #[test]
+    fn airfoils_without_corners_are_fitted_as_before() {
+        let with = SplineConfig::default();
+        let without = SplineConfig { split_at_corners: false, ..with.clone() };
+        assert!(with.split_at_corners);
+        let (a, b) = (naca2412().resplit(with.split()).unwrap(), naca2412().resplit(without.split()).unwrap());
+        assert_eq!((&a.sections, &a.junction_indices, &a.seams), (&b.sections, &b.junction_indices, &b.seams));
+        for options in [OptimizationConfig::default(), OptimizationConfig { tolerance: Some(2e-5), ..Default::default() }] {
+            let (x, y) = (run_optimization(&with, &options, &a, &mut Unmonitored).unwrap(), run_optimization(&without, &options, &b, &mut Unmonitored).unwrap());
+            assert_eq!((&x.section_control_points, x.error, x.evaluations), (&y.section_control_points, y.error, y.evaluations));
+        }
     }
 
     /// Every fit of a tolerance search is the fixed-count run of its count,

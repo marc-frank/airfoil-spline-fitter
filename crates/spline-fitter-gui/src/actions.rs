@@ -6,7 +6,7 @@ use spline_fitter::analysis::default_tolerance;
 use spline_fitter::bspline_varpro::airfoil::{resample, trailing_edge_segment, Naca4};
 use spline_fitter::bspline_varpro::export::{self, merge_curves, Units};
 use spline_fitter::formatting::file_stem;
-use spline_fitter::geometry::AirfoilData;
+use spline_fitter::geometry::{AirfoilData, Split};
 use spline_fitter::io::{airfoil_data_text, decode, parse_airfoil_text, spline_data_text, ParsedAirfoil, SplineFile};
 use spline_fitter::project::{load_project, parse_project, ProjectFile};
 use spline_fitter::{Result, Vec2};
@@ -134,36 +134,14 @@ impl App {
         self.offer_corrections(parsed, &source, filename, &name, path, "Loaded", |p| p);
     }
 
-    /// Loads a read airfoil; when the reader removed mistakes, first shows
-    /// them and asks whether to use the corrected points (the default) or
-    /// the points as read. `precision` adjusts the read precision.
-    fn offer_corrections(
-        &mut self,
-        parsed: ParsedAirfoil,
-        source: &str,
-        filename: &str,
-        name: &str,
-        path: &str,
-        verb: &str,
-        precision: impl Fn(i32) -> i32,
-    ) {
-        match parsed.uncorrected {
-            Some(read) if parsed.cleanup.any() => {
-                self.dialog = Some(Dialog::ReadReport(ReadReport {
-                    source: source.to_string(),
-                    read_points: read.coords.len(),
-                    findings: parsed.cleanup.findings,
-                    corrected: (parsed.coords, precision(parsed.precision)),
-                    uncorrected: (read.coords, precision(read.precision)),
-                    filename: filename.to_string(),
-                    name: name.to_string(),
-                    path: path.to_string(),
-                    verb: verb.to_string(),
-                }));
-            }
-            _ => {
-                self.set_airfoil(parsed.coords, filename, name, precision(parsed.precision), path, verb);
-            }
+    /// Loads a read airfoil; when the reader found mistakes, first shows
+    /// them and lets the user choose which corrections to make (all by
+    /// default). `precision` adjusts the read precision.
+    fn offer_corrections(&mut self, parsed: ParsedAirfoil, source: &str, filename: &str, name: &str, path: &str, verb: &str, precision: fn(i32) -> i32) {
+        if parsed.cleanup.any() {
+            self.dialog = Some(Dialog::ReadReport(ReadReport::new(parsed, source, filename, name, path, verb, precision)));
+        } else {
+            self.set_airfoil(parsed.coords, filename, name, precision(parsed.precision), path, verb);
         }
     }
 
@@ -182,8 +160,8 @@ impl App {
         // The airfoil is built before anything changes, so a failure leaves
         // the window as it was.
         let most = coords.len().saturating_sub(1).max(1);
-        let sections = self.settings.sections.value.value.min(most);
-        let airfoil = match AirfoilData::new(coords, sections, filename, name, precision) {
+        let split = Split { sections: self.settings.sections.value.value.min(most), corners: self.settings.corners };
+        let airfoil = match AirfoilData::new(coords, split, filename, name, precision) {
             Ok(a) => a,
             Err(e) => {
                 self.fail(format!("Failed to load: {e}"));
@@ -347,8 +325,9 @@ impl App {
         let continuity = self
             .projects
             .shown()
-            .map(|run| run.spline_config.junction_specs())
-            .or_else(|| self.settings.spline_config().ok().map(|c| c.junction_specs()));
+            .map(|run| run.spline_config.clone())
+            .or_else(|| self.settings.spline_config().ok())
+            .map(|c| self.junction_labels(&c));
         let spline = SplineFile {
             name: if airfoil.name.is_empty() { airfoil.file_base().to_string() } else { airfoil.name.clone() },
             degree: Some(fit.degree),
@@ -500,9 +479,9 @@ impl App {
         let path = path.as_path();
         let loaded = match read.and_then(|l| {
             // Pre-check: the airfoil splits and the last run's curves build.
-            l.project.airfoil.resplit(l.project.airfoil.num_sections())?;
+            l.project.airfoil.resplit(l.project.airfoil.split)?;
             if let Some(last) = l.project.runs.last() {
-                l.project.airfoil.resplit(last.spline_config.num_sections)?;
+                l.project.airfoil.resplit(last.spline_config.split())?;
                 for (i, c) in last.result.section_control_points.iter().enumerate() {
                     spline_fitter::BSpline::new(last.result.degree, last.result.knots(i), c.clone())?;
                 }
@@ -526,7 +505,7 @@ impl App {
         self.quiet = true;
         self.fit = None;
         self.settings.sections.value.set_max(airfoil.coordinates.len().saturating_sub(1).max(1));
-        self.settings.sections.value.set(airfoil.num_sections());
+        self.settings.sections.value.set(airfoil.split.sections);
         self.airfoil_path = path.to_string_lossy().into_owned();
         self.main_plot.set_data(&airfoil.coordinates);
         self.loss.reset();

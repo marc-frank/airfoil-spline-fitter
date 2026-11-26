@@ -30,22 +30,18 @@ fn airfoil_reader_matches_python() {
             (Value::Null, Some(p)) => panic!("case {i}: Python found no coordinates, Rust {} points\n{text}", p.coords.len()),
             (_, None) => panic!("case {i}: Rust found no coordinates\n{text}"),
             (expected, Some(p)) => {
-                assert_eq!(p.name.as_deref(), case["name"].as_str(), "case {i}
-{text}");
+                assert_eq!(p.name.as_deref(), case["name"].as_str(), "case {i}\n{text}");
                 // Rust drops repeated and stray points, which Python keeps:
                 // the points as read are Python's.
-                let (coords, precision) = match &p.uncorrected {
-                    Some(u) => (&u.coords, u.precision),
-                    None => (&p.coords, p.precision),
-                };
-                assert_eq!(precision as i64, case["precision"].as_i64().unwrap(), "case {i}
-{text}");
+                let (coords, precision) = p.as_read();
+                if !p.cleanup.any() {
+                    assert_eq!((&coords, precision), (&p.coords, p.precision), "case {i}\n{text}");
+                }
+                assert_eq!(precision as i64, case["precision"].as_i64().unwrap(), "case {i}\n{text}");
                 let expected = points(expected);
-                assert_eq!(coords.len(), expected.len(), "case {i}
-{text}");
+                assert_eq!(coords.len(), expected.len(), "case {i}\n{text}");
                 for (a, b) in coords.iter().zip(&expected) {
-                    assert!((a - b).norm() <= 1e-12 * (1.0 + b.norm()), "case {i}: {a:?} != {b:?}
-{text}");
+                    assert!((a - b).norm() <= 1e-12 * (1.0 + b.norm()), "case {i}: {a:?} != {b:?}\n{text}");
                 }
             }
         }
