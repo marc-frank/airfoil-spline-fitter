@@ -160,7 +160,10 @@ impl App {
         // The airfoil is built before anything changes, so a failure leaves
         // the window as it was.
         let most = coords.len().saturating_sub(1).max(1);
-        let split = Split { sections: self.settings.sections.value.value.min(most), corners: self.settings.corners };
+        // Cut as the fit will cut it; settings that cannot be fitted yet
+        // leave it to the section count.
+        let sections = self.settings.sections.value.value.min(most);
+        let split = self.settings.spline_config().map_or(Split::from(sections), |c| Split { sections, ..c.split() });
         let airfoil = match AirfoilData::new(coords, split, filename, name, precision) {
             Ok(a) => a,
             Err(e) => {

@@ -3,8 +3,8 @@
 use eframe::egui::{self, Align, Layout, RichText, Ui};
 use spline_fitter::bspline_varpro::KnotPlacement;
 use spline_fitter::formatting::{format_duration, format_error, number};
-use spline_fitter::geometry::{corners, find_leading_edge_index, Corner, CORNER_SIDE};
-use spline_fitter::models::{OptimizerType, Parameterization, ToleranceMetric};
+use spline_fitter::geometry::{corners, find_leading_edge_index, Corner, Split};
+use spline_fitter::models::{OptimizerType, Parameterization, SplineConfig, ToleranceMetric};
 use spline_fitter::Vec2;
 
 use crate::app::App;
@@ -35,9 +35,9 @@ fn field_width(ui: &Ui) -> f32 {
 
 /// Where the corners of the outline are, as the points show them: the
 /// text beside the Corners check box, and what it says on hover. Empty
-/// without any. A corner within two points of the leading edge is the
-/// leading edge (its junction gives way to the corner).
-fn corners_found(coords: &[Vec2]) -> (String, &'static str) {
+/// without any. A corner the leading-edge junction gives way to (`split`
+/// says how near that is) is the leading edge.
+fn corners_found(coords: &[Vec2], split: Split) -> (String, &'static str) {
     let found = corners(coords);
     if found.is_empty() {
         return (String::new(), "");
@@ -54,7 +54,7 @@ few to tell a corner from a tight bend. Not joined with G0.",
     let le = find_leading_edge_index(coords).unwrap_or(0);
     let mut places: Vec<String> = vec![];
     for c in clear {
-        let place = if c.index.abs_diff(le) <= CORNER_SIDE { "the leading edge".to_string() } else { format!("x {}", number(coords[c.index].x, ".3f")) };
+        let place = if split.gives_way(c.index.abs_diff(le)) { "the leading edge".to_string() } else { format!("x {}", number(coords[c.index].x, ".3f")) };
         if !places.contains(&place) {
             places.push(place);
         }
@@ -70,13 +70,16 @@ few to tell a corner from a tight bend. Not joined with G0.",
 /// the data, and where the open airfoil has them. Read from the points
 /// alone, no fit.
 fn corners_row(ui: &mut Ui, p: &Palette, s: &mut crate::settings::Settings, airfoil: Option<&spline_fitter::geometry::AirfoilData>) {
-    let (found, found_tip) = airfoil.map_or((String::new(), ""), |a| corners_found(&a.coordinates));
+    // As near as the settings' fit lets a junction be to a corner.
+    let split = s.spline_config().map_or(Split::at_corners(2, 0), |c| Split { corners: true, ..SplineConfig { split_at_corners: true, ..c }.split() });
+    let (found, found_tip) = airfoil.map_or((String::new(), ""), |a| corners_found(&a.coordinates, split));
     let tip = "Cut the outline at the corners of the data too, and join the sections
 there with G0, whatever the Continuity of the other junctions. One smooth
 curve squeezes a corner into a curvature spike. A junction of the
-Sections setting within two points of a corner gives way to it; a
-section that ends at a corner gets the control points its own points
-determine. Off: only the Sections setting cuts the outline.";
+Sections setting gives way to a corner too near to leave a section
+between them that can be fitted; a section that ends at a corner gets
+the control points its own points determine. Off: only the Sections
+setting cuts the outline.";
     widgets::check_row(ui, p, "Corners", true, |ui| {
         ui.spacing_mut().item_spacing.x = size::GROUP;
         widgets::checkbox(ui, p, &mut s.corners, "Join with G0").on_hover_text(tip);

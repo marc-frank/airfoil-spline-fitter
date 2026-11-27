@@ -147,7 +147,7 @@ fit.export("naca2412.step", scale=100.0, units="mm", merge=True)
 |---|---|
 | `read_airfoil(path)` | `(name, points, decimals)` of a Selig or Lednicer file |
 | `naca4(code, n_per_side=81)` | Points of a NACA 4-digit section |
-| `split_sections(points, count=2, corners=False)` | Sections sharing their junction points; with `corners`, cut at the corners too |
+| `split_sections(points, count=2, corners=False, degree=5)` | Sections sharing their junction points; with `corners`, cut at the corners too |
 | `corners(points)` | `(index, turn, clear)` of every corner of any ordered points |
 | `split_at_corners(points)` | Any ordered points cut at their clear corners, for a `"G0"` fit |
 | `smoothest_through(points, count)` | `count` points on the smoothest curve through a few |
@@ -216,10 +216,13 @@ Python results), and differs on purpose where the behaviour was a defect:
   airfoil, which has a ridge). Round the sharp nose of a 401-point wedge a
   smooth curve took a minute to fit; two sections joined there with G0
   take a quarter of a second.
-  - A junction of the section count within two points of a corner gives
-    way to it, so a sharp leading edge is one G0 junction and a corner
-    elsewhere one section more. Without corners in the data nothing
-    changes.
+  - A junction of the section count gives way to a corner within two
+    points of it, or so near that the section between them would have
+    too few points to fit (fewer than its fewest control points and one:
+    seven at degree 5). So a corner at the nose is one G0 junction (a
+    sharp leading edge, or GOE 777 refitted, whose corner is four points
+    below its nose point), and a corner elsewhere one section more.
+    Without corners in the data nothing changes.
   - A section that ends at a corner takes of the control-point count what
     its points determine: one fewer than it has, and at least what its
     ends need. With fewer points than that needs, it is fitted to its
@@ -232,8 +235,9 @@ Python results), and differs on purpose where the behaviour was a defect:
     alone.
   - Project files and settings written without `split_at_corners` are
     read as they were made, without it; an airfoil cut at corners also
-    stores which junctions are corners (`corner_junctions`) and which are
-    the section count's (`layout_junctions`, `layout_sections`).
+    stores which junctions are corners (`corner_junctions`), which are
+    the section count's (`layout_junctions`, `layout_sections`) and the
+    points a section beside a corner had to have (`section_points`).
 - The airfoil reader drops repeated points, a repeated outline, stray points
   after the closing trailing edge and lone mistyped points
   (`io::clean_outline`); Python kept them, and the fit had to loop or stop

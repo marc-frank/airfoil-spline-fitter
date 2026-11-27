@@ -178,7 +178,13 @@ impl SplineConfig {
 
     /// How an outline is cut into sections for these settings.
     pub fn split(&self) -> Split {
-        Split { sections: self.num_sections, corners: self.split_at_corners }
+        if !self.split_at_corners {
+            return Split::from(self.num_sections);
+        }
+        // A section from a layout junction to a corner needs one point more
+        // than its fewest control points (5.2 with order 0 at the corner).
+        let order = self.junction_orders().into_iter().max().unwrap_or(0);
+        Split::at_corners(self.num_sections, (self.degree + 1).max(order + 2) + 1)
     }
 
     /// The continuity of every junction of the layout (the `num_sections

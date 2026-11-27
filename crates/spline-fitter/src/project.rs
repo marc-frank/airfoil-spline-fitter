@@ -391,6 +391,7 @@ fn encode_airfoil(a: &AirfoilData) -> Json {
         if let Json::Object(fields) = &mut json {
             fields.push(("split_at_corners".into(), Json::Bool(true)));
             fields.push(("layout_sections".into(), int(a.split.sections)));
+            fields.push(("section_points".into(), int(a.split.least)));
             fields.push(("corner_junctions".into(), Json::Array(a.seams.iter().map(|s| Json::Bool(s.corner)).collect())));
             fields.push(("layout_junctions".into(), Json::Array(a.seams.iter().map(|s| s.layout.map_or(Json::Null, int)).collect())));
         }
@@ -782,7 +783,7 @@ fn decode_airfoil(json: &Json) -> Result<AirfoilData> {
         if !fits {
             return Err(part.error("the corner and layout junctions do not describe the junction indices"));
         }
-        (seams, Split { sections: layout_sections, corners: true })
+        (seams, Split::at_corners(layout_sections, part.count_or("section_points", 0)?))
     } else {
         let seams = (0..junction_indices.len()).map(|k| Seam { corner: false, layout: Some(k) }).collect();
         (seams, Split::from(junction_indices.len() + 1))
@@ -1414,7 +1415,7 @@ mod tests {
         let text = project_text(&p);
         let loaded = parse_project(&text).unwrap().project;
         assert_eq!((&loaded.airfoil, &loaded.runs[0].spline_config), (&cut, &config));
-        assert_eq!(loaded.airfoil.split, Split { sections: 4, corners: true });
+        assert_eq!(loaded.airfoil.split, Split::at_corners(4, 7));
         // Cut by the count alone, with settings that leave corners alone:
         // the keys of format 1.0 and no others.
         let plain = SplineConfig { split_at_corners: false, ..config.clone() };

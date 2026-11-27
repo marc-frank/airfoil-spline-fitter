@@ -264,11 +264,13 @@ fn naca4<'py>(py: Python<'py>, code: &str, n_per_side: usize, closed_te: bool) -
 /// junction points: two split at the leading edge. With `corners`, also at
 /// the clear corners of the data (`corners` says where they are), as the
 /// application cuts an airfoil: one more section for every corner away
-/// from those junctions, to be joined there with G0.
+/// from those junctions, to be joined there with G0. A junction of the
+/// count gives way to a corner too near to leave a section a fit of
+/// `degree` can determine (`degree + 2` points).
 #[pyfunction]
-#[pyo3(signature = (points, count = 2, corners = false))]
-fn split_sections<'py>(py: Python<'py>, points: Vec<[f64; 2]>, count: usize, corners: bool) -> PyResult<Vec<Bound<'py, PyAny>>> {
-    let split = app::geometry::Split { sections: count, corners };
+#[pyo3(signature = (points, count = 2, corners = false, degree = 5))]
+fn split_sections<'py>(py: Python<'py>, points: Vec<[f64; 2]>, count: usize, corners: bool, degree: usize) -> PyResult<Vec<Bound<'py, PyAny>>> {
+    let split = if corners { app::geometry::Split::at_corners(count, degree + 2) } else { count.into() };
     let (sections, _, _) = app::geometry::cut_into_sections(&to_points(points), split).map_err(value_error)?;
     sections.iter().map(|s| point_array(py, s)).collect()
 }
