@@ -58,7 +58,8 @@ def test_read_airfoil_keeps_the_file_values(naca2412, tmp_path):
     path.write_text("NACA 2412\n" + "".join(f"{x:.6f} {y:.6f}\n" for x, y in naca2412))
     name, points, precision = bv.read_airfoil(str(path))
     assert name == "NACA 2412" and precision == 6
-    assert [tuple(p) for p in points] == pytest.approx(naca2412)
+    assert len(points) == len(naca2412)
+    assert [v for p in points for v in p] == pytest.approx([v for p in naca2412 for v in p])
 
 
 def wedge(kink=None, step=0.005):
