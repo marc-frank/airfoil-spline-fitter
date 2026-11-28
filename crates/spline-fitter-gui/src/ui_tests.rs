@@ -71,7 +71,7 @@ fn reference_session() {
     finish(&mut h);
     {
         let app = h.state();
-        assert!(app.status.starts_with("Completed (VarPro LM): 33 evaluations in "), "{}", app.status);
+        assert!(app.status.starts_with("Completed (VarPro LM): 31 evaluations in "), "{}", app.status);
         assert!(app.status.ends_with(" | RMS error 8.978e-07 | max deviation 4.59e-06, RMS 8.98e-07, 49 control points"), "{}", app.status);
         assert_eq!(app.projects.label(), "Unsaved project*\n1 optimization run");
         assert_eq!(app.fit.as_ref().unwrap().section_counts(), vec![25, 25]);

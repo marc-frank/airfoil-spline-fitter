@@ -27,7 +27,51 @@ fn varpro_g3_fixed_count() {
     assert!(result.success, "{}", result.message);
     assert_eq!(result.message, "`ftol` termination condition is satisfied.");
     assert!(close(result.rms_error, 8.978e-7, 1e-3), "rms {}", result.rms_error);
-    assert_eq!(result.nfev, 33);
+    // 33 with the junction written from its ending section's side (the
+    // Python version); the same fit.
+    assert_eq!(result.nfev, 31);
+}
+
+/// A fit does not depend on the end its points are listed from, so the
+/// fit of a symmetric outline is symmetric: nothing asks for it. Here to
+/// rounding, for geometric and parametric junctions of every order.
+#[test]
+fn a_symmetric_outline_gets_a_symmetric_curve() {
+    let points: Vec<Vec2> = Naca4::new("0010", true).unwrap().points(81).iter().map(|p| p.map(|v| (v * 1e6).round_ties_even() / 1e6)).collect();
+    let sections = vec![points[..=80].to_vec(), points[80..].to_vec()];
+    for geometric in [true, false] {
+        for order in 0..=3 {
+            let chain = ChainOptions { continuity: Continuity::All(Junction::new(order, geometric, true).unwrap()), ..ChainOptions::default() };
+            let result = fit(&sections, &[25, 25], 5, &FitOptions { chain, ..FitOptions::default() }, &mut Silent).unwrap();
+            let (upper, lower) = (&result.control_points[0], &result.control_points[1]);
+            let apart = (0..25).map(|i| (Vec2::new(upper[24 - i].x, -upper[24 - i].y) - lower[i]).norm()).fold(0.0, f64::max);
+            assert!(apart < 1e-10, "order {order}, geometric {geometric}: {apart:e}");
+            // The speed ratio and the third-order shift are odd in the
+            // direction: zero at a symmetric junction, as far as the fit converges.
+            let odd = result.theta.iter().step_by(2).fold(0.0f64, |m, t| m.max(t.abs()));
+            assert!(odd < 1e-6, "order {order}: {:?}", result.theta);
+        }
+    }
+}
+
+/// The same curve whichever end a cambered outline is listed from, as far
+/// as the fits converge.
+#[test]
+fn the_direction_of_the_points_does_not_matter() {
+    let points: Vec<Vec2> = Naca4::new("2412", true).unwrap().points(81).iter().map(|p| p.map(|v| (v * 1e6).round_ties_even() / 1e6)).collect();
+    let reversed: Vec<Vec2> = points.iter().rev().copied().collect();
+    let cut = |p: &[Vec2]| vec![p[..=80].to_vec(), p[80..].to_vec()];
+    let chain = ChainOptions { continuity: Continuity::All(Junction::new(3, true, true).unwrap()), ..ChainOptions::default() };
+    let options = FitOptions { chain, ..FitOptions::default() };
+    let one = fit(&cut(&points), &[25, 25], 5, &options, &mut Silent).unwrap();
+    let other = fit(&cut(&reversed), &[25, 25], 5, &options, &mut Silent).unwrap();
+    assert_eq!(one.nfev, other.nfev);
+    let back: Vec<Vec2> = other.control_points.iter().rev().flat_map(|s| s.iter().rev().copied()).collect();
+    let apart = one.control_points.iter().flatten().zip(&back).map(|(a, b)| (a - b).norm()).fold(0.0, f64::max);
+    assert!(apart < 1e-6, "{apart:e}");
+    // Speed ratio and third-order shift change sign, the second-order one stays.
+    let (t, r) = (&one.theta, &other.theta);
+    assert!((t[0] + r[0]).abs() < 1e-5 && (t[1] - r[1]).abs() < 1e-3 * t[1].abs() && (t[2] + r[2]).abs() < 1e-3 * t[2].abs(), "{t:?} {r:?}");
 }
 
 fn g2(smoothing: f64) -> ChainOptions {

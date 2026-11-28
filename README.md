@@ -238,6 +238,19 @@ Python results), and differs on purpose where the behaviour was a defect:
     stores which junctions are corners (`corner_junctions`), which are
     the section count's (`layout_junctions`, `layout_sections`) and the
     points a section beside a corner had to have (`section_points`).
+- A geometric junction is written so that neither section is the
+  reference (`constraints.rs`): both are reparameterized towards each
+  other by the same amounts. They are the same junctions, but listing the
+  points from the other end now only changes signs of the junction's
+  parameters, so a fit does not depend on the direction of its points and
+  a symmetric outline gets a symmetric curve without a rule for it (NACA
+  0010, G3, smoothing 1e-3: control points mirror within 1.5e-12, 1e-7
+  before). The reference fit takes 31 evaluations for Python's 33. With a
+  smoothing below about 1e-6 a G3 fit of a symmetric outline can still
+  come out lopsided: there the points no longer decide the curve (fits
+  that differ by 0.05 in their control points differ by 1 % in an RMS
+  error below the rounding of the points), and the solver, on its way
+  through thousands of steps, turns to one side.
 - The airfoil reader drops repeated points, a repeated outline, stray points
   after the closing trailing edge and lone mistyped points
   (`io::clean_outline`); Python kept them, and the fit had to loop or stop

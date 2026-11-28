@@ -4,18 +4,29 @@
 //! ends and section `b` starts, the end points coincide and derivatives up
 //! to the junction order are linked. Parametric continuity `C^k` equates the
 //! derivatives; geometric continuity `G^k` lets the curves agree after a
-//! local reparameterization with `φ' = α > 0`, `φ'' = β`, `φ''' = γ`:
+//! local reparameterization. Neither section is the reference: both are
+//! reparameterized towards each other by the same amounts, the ending one
+//! with `φ' = α^-½`, `φ'' = -b/2`, `φ''' = -c/2` and the starting one with
+//! `φ' = α^½`, `φ'' = b/2`, `φ''' = c/2`:
 //!
 //! ```text
-//! G1:  C_a'   = α  C_b'
-//! G2:  C_a''  = α² C_b''  + β C_b'
-//! G3:  C_a''' = α³ C_b''' + 3αβ C_b'' + γ C_b'
+//! G1:  α^-½ C_a'                              = α^½ C_b'
+//! G2:  α^-1 C_a''  - b/2 C_a'                 = α   C_b''  + b/2 C_b'
+//! G3:  α^-3/2 C_a''' - 3b/2 α^-½ C_a'' - c/2 C_a' = α^3/2 C_b''' + 3b/2 α^½ C_b'' + c/2 C_b'
 //! ```
 //!
-//! The shape parameters enter `C` linearly, so the fit stays separable per
+//! These are the junctions of `C_a' = α C_b'`, `C_a'' = α² C_b'' + β C_b'`,
+//! `C_a''' = α³ C_b''' + 3αβ C_b'' + γ C_b'` with `β = b α(1+α)/2` and
+//! `γ = 3bαβ/2 + c (1+α) α^3/2 / 2`. Written this way, listing the points
+//! from the other end only swaps the sections and turns `(ln α, b, c)` into
+//! `(-ln α, b, -c)`: a fit does not depend on the direction of its points,
+//! and a symmetric outline gets a symmetric curve (`α = 1`, `c = 0`)
+//! without being asked to.
+//!
+//! `C` is linear in the control points for any shape parameters, so the fit stays separable per
 //! coordinate. `α` is kept within a factor [`ALPHA_RANGE`] of the interval
 //! between 1 (the parametric join) and the section length ratio:
-//! `ln α = c + h·tanh(a/h)`. Unbounded, `α` could collapse to 0 and make the
+//! `ln α = m + h·tanh(a/h)`. Unbounded, `α` could collapse to 0 and make the
 //! join degenerate (any curvature satisfies "G2" at zero speed).
 
 use std::fmt;
@@ -160,7 +171,7 @@ pub struct Constraints {
 /// Builds the junction and end constraints of a section chain.
 ///
 /// `θ` holds, for each geometric junction of order `k >= 1` in order, the
-/// `α` parameter, then `β` (`k >= 2`) and `γ` (`k = 3`).
+/// `α` parameter, then `b` (`k >= 2`) and `c` (`k = 3`).
 #[derive(Debug, Clone)]
 pub struct ChainConstraints {
     degree: usize,
@@ -244,7 +255,7 @@ impl ChainConstraints {
         self.lengths[junction] / self.lengths[junction + 1]
     }
 
-    /// Start values: each `α` at the section length ratio, `β = γ = 0`.
+    /// Start values: each `α` at the section length ratio, `b = c = 0`.
     pub fn initial_params(&self) -> Vec<f64> {
         self.slots
             .iter()
@@ -271,7 +282,7 @@ impl ChainConstraints {
         self.slots.iter().filter(|(_, s)| *s == Shape::Alpha).count()
     }
 
-    /// `(α, β, γ)` per junction; `(1, 0, 0)` for parametric or order-0 joins.
+    /// `(α, b, c)` per junction; `(1, 0, 0)` for parametric or order-0 joins.
     pub fn shape_values(&self, theta: &[f64]) -> Vec<[f64; 3]> {
         let mut values = vec![[1.0, 0.0, 0.0]; self.junctions.len()];
         for (i, &(j, shape)) in self.slots.iter().enumerate() {
@@ -364,29 +375,49 @@ impl ChainConstraints {
                 }
                 row
             };
-            let scaled = |scale: f64, v: &Vec<f64>| v.iter().map(|x| scale * x).collect::<Vec<f64>>();
-            let s1 = start_row(1);
-            let s2 = if jn.order >= 2 { start_row(2) } else { vec![] };
-            let s3 = if jn.order >= 3 { start_row(3) } else { vec![] };
+            // Each side reparameterized towards the other: p = α^-½ on the
+            // ending section, q = α^½ on the starting one; w = d ln α / da.
+            let (p, q, w) = (al.powf(-0.5), al.sqrt(), dal / al);
+            let (e1, s1) = (end_row(1), start_row(1));
+            let (e2, s2) = if jn.order >= 2 { (end_row(2), start_row(2)) } else { (vec![], vec![]) };
+            let (e3, s3) = if jn.order >= 3 { (end_row(3), start_row(3)) } else { (vec![], vec![]) };
+            let sum = |terms: &[(f64, &Vec<f64>)]| combine(new_row(), terms);
 
-            let row = combine(end_row(1), &[(-al, &s1)]);
-            let drow = ia.map(|i| vec![(i, scaled(-dal, &s1))]).unwrap_or_default();
+            let row = sum(&[(p, &e1), (-q, &s1)]);
+            let drow = ia.map(|i| vec![(i, sum(&[(-0.5 * p * w, &e1), (-0.5 * q * w, &s1)]))]).unwrap_or_default();
             add(row, Vec2::zeros(), drow);
             if jn.order >= 2 {
-                let row = combine(end_row(2), &[(-al * al, &s2), (-be, &s1)]);
+                let row = sum(&[(p * p, &e2), (-q * q, &s2), (-0.5 * be, &e1), (-0.5 * be, &s1)]);
                 let drow = match (ia, ib) {
-                    (Some(ia), Some(ib)) => vec![(ia, scaled(-2.0 * al * dal, &s2)), (ib, scaled(-1.0, &s1))],
+                    (Some(ia), Some(ib)) => {
+                        vec![(ia, sum(&[(-p * p * w, &e2), (-q * q * w, &s2)])), (ib, sum(&[(-0.5, &e1), (-0.5, &s1)]))]
+                    }
                     _ => vec![],
                 };
                 add(row, Vec2::zeros(), drow);
             }
             if jn.order >= 3 {
-                let row = combine(end_row(3), &[(-al * al * al, &s3), (-3.0 * al * be, &s2), (-ga, &s1)]);
+                let row = sum(&[
+                    (p * p * p, &e3),
+                    (-q * q * q, &s3),
+                    (-1.5 * be * p, &e2),
+                    (-1.5 * be * q, &s2),
+                    (-0.5 * ga, &e1),
+                    (-0.5 * ga, &s1),
+                ]);
                 let drow = match (ia, ib, ig) {
                     (Some(ia), Some(ib), Some(ig)) => vec![
-                        (ia, combine(scaled(-3.0 * al * al * dal, &s3), &[(-3.0 * be * dal, &s2)])),
-                        (ib, scaled(-3.0 * al, &s2)),
-                        (ig, scaled(-1.0, &s1)),
+                        (
+                            ia,
+                            sum(&[
+                                (-1.5 * p * p * p * w, &e3),
+                                (-1.5 * q * q * q * w, &s3),
+                                (0.75 * be * p * w, &e2),
+                                (-0.75 * be * q * w, &s2),
+                            ]),
+                        ),
+                        (ib, sum(&[(-1.5 * p, &e2), (-1.5 * q, &s2)])),
+                        (ig, sum(&[(-0.5, &e1), (-0.5, &s1)])),
                     ],
                     _ => vec![],
                 };
@@ -449,6 +480,32 @@ mod tests {
         assert_eq!(minimum_control_points(&[3], 5), vec![6, 6]);
         assert_eq!(minimum_control_points(&[3, 3], 1), vec![5, 8, 5]);
         assert_eq!(minimum_control_points(&[], 2), vec![3]);
+    }
+
+    /// Listed from the other end, the same control points meet the same
+    /// junction with `(a, b, c)` as `(-a, b, -c)`: neither section is the
+    /// reference.
+    #[test]
+    fn a_geometric_junction_has_no_direction() {
+        let first: Vec<Vec2> = (0..10).map(|i| Vec2::new(1.0 - i as f64 / 9.0, 0.1 * (i as f64).sin())).collect();
+        let mut second: Vec<Vec2> = (0..14).map(|i| Vec2::new(i as f64 / 13.0, -0.05 * (i as f64).cos())).collect();
+        second[0] = first[9];
+        let backwards = |s: &[Vec2]| s.iter().rev().copied().collect::<Vec<_>>();
+        let knots = vec![open_uniform_knots(5, 9).unwrap(); 2];
+        let junction = vec![Junction::new(3, true, false).unwrap()];
+        let free = End { fixed: false };
+        let forward = ChainConstraints::new(&[first.clone(), second.clone()], &knots, 5, junction.clone(), free, free).unwrap();
+        let reverse = ChainConstraints::new(&[backwards(&second), backwards(&first)], &knots, 5, junction, free, free).unwrap();
+        let control: Vec<f64> = (0..18).map(|i| ((i * i * 7 + 3) % 11) as f64 - 0.37 * i as f64).collect();
+        let listed_back: Vec<f64> = control.iter().rev().copied().collect();
+        let (a, b, c) = (0.3, -0.2, 0.15);
+        let one = forward.build(&[a, b, c]).c * DMatrix::from_column_slice(18, 1, &control);
+        let other = reverse.build(&[-a, b, -c]).c * DMatrix::from_column_slice(18, 1, &listed_back);
+        // Rows: the common point, then orders 1 to 3 (the even order turns its sign).
+        assert_eq!(one.nrows(), 4);
+        for (row, sign) in [(0, -1.0), (1, 1.0), (2, -1.0), (3, 1.0)] {
+            assert!((one[(row, 0)] - sign * other[(row, 0)]).abs() < 1e-9 * (1.0 + one[(row, 0)].abs()), "row {row}: {} {}", one[(row, 0)], other[(row, 0)]);
+        }
     }
 
     #[test]

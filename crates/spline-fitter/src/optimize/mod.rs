@@ -221,8 +221,9 @@ pub(crate) mod tests {
         AirfoilData::new(points, 2, "naca2412", "NACA 2412", 6).unwrap()
     }
 
-    /// Evaluations of the reference G3 fit (specification 21, item 11).
-    pub const REFERENCE_EVALUATIONS: usize = 33;
+    /// Evaluations of the reference G3 fit (specification 21, item 11: 33
+    /// in Python, whose junctions were written from one section's side).
+    pub const REFERENCE_EVALUATIONS: usize = 31;
 
     fn close(a: f64, b: f64) -> bool {
         (a - b).abs() <= 1e-3 * b.abs()
