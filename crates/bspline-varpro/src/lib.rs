@@ -2,7 +2,7 @@
 //!
 //! A chain of clamped planar B-spline sections is fitted to ordered points.
 //! The data parameters are free unknowns (variable projection eliminates the
-//! control points), junctions between sections carry geometric (G1-G3) or
+//! control points), junctions between sections carry geometric (G0-G3) or
 //! parametric (C0-C3) continuity, and [`fit_to_tolerance`] searches for the
 //! fewest control points that keep every point within a maximum orthogonal
 //! deviation. [`corners`] finds the corners of the data, where sections join

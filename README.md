@@ -1,7 +1,7 @@
 # Spline Fitter
 
 B-spline fitting of airfoil coordinates for CAD: the fewest control points
-that keep every point within a tolerance, with geometric G1-G3 continuity
+that keep every point within a tolerance, with geometric G0-G3 continuity
 where sections meet, written exactly to STEP, IGES or DXF.
 
 ## Features
@@ -10,7 +10,7 @@ where sections meet, written exactly to STEP, IGES or DXF.
   knots, whose curve stays within a maximum orthogonal deviation of every
   point. The automatic tolerance follows the file's decimals (or the noise
   level of scanned data).
-- **Continuity per junction**: parametric C0-C3 or geometric G1-G3, one
+- **Continuity per junction**: geometric G0-G3 or parametric C0-C3, one
   setting for all junctions or a list such as `G2, C1, G3`.
 - **Whole-chain fitting**: the sections are fitted to all points at once. The
   split only sets where the junctions start; points move between sections as
