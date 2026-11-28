@@ -4,9 +4,8 @@
 
 .DESCRIPTION
   Produces, in $env:DIST (default: dist/release):
-    spline-fitter-<version>-windows-<arch>.msi            per-machine installer (WiX v5)
-    spline-fitter-<version>-windows-<arch>-portable.zip   spline-fitter.exe + README + licence
-    AirfoilSplineFitter-<version>-windows-<arch>.exe      the app alone (x64 only: a plain download)
+    airfoil-spline-fitter-<version>-windows-<arch>.msi   per-machine installer (WiX v5)
+    airfoil-spline-fitter-<version>-windows-<arch>.exe   the app alone: runs without installing
 
   The binary links the C runtime statically (+crt-static), so nothing else needs installing, and
   carries the app icon (crates/spline-fitter-gui/build.rs).
@@ -20,13 +19,13 @@
 .EXAMPLE
   powershell -File packaging/windows/package.ps1 -Arch x64
   powershell -File packaging/windows/package.ps1 -Arch arm64     # cross-compiled; needs the MSVC ARM64 build tools
-  powershell -File packaging/windows/package.ps1 -Arch x64 -PortableOnly   # no WiX needed
+  powershell -File packaging/windows/package.ps1 -Arch x64 -NoInstaller   # only the .exe; no WiX needed
 #>
 param(
   [ValidateSet('x64', 'x86', 'arm64')] [string] $Arch = 'x64',
   [switch] $SkipBuild,
-  # Only the portable zip: no MSI, no plain .exe.
-  [switch] $PortableOnly
+  # Only the plain .exe: no MSI.
+  [switch] $NoInstaller
 )
 $ErrorActionPreference = 'Stop'
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
@@ -86,8 +85,8 @@ $Icon = Join-Path $Root 'crates\spline-fitter-gui\assets\app_icon.ico'
 $Outputs = @()
 
 # ---- MSI ---------------------------------------------------------------------------------------
-if (-not $PortableOnly) {
-  $Msi = Join-Path $Dist "spline-fitter-$Version-windows-$Arch.msi"
+if (-not $NoInstaller) {
+  $Msi = Join-Path $Dist "airfoil-spline-fitter-$Version-windows-$Arch.msi"
   Invoke-Native 'wix build' {
     wix build (Join-Path $PSScriptRoot 'spline-fitter.wxs') -arch $Arch `
       -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext -culture en-US `
@@ -99,22 +98,9 @@ if (-not $PortableOnly) {
   $Outputs += $Msi
 }
 
-# ---- portable zip ------------------------------------------------------------------------------
-$Portable = Join-Path $TargetDir "windows-package\spline-fitter-$Version-windows-$Arch-portable"
-Remove-Item -Recurse -Force $Portable -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Force -Path $Portable | Out-Null
-Copy-Item $Exe $Portable
-foreach ($f in 'README.md', 'LICENSE') { Copy-Item (Join-Path $Root $f) $Portable }
-$Zip = Join-Path $Dist "spline-fitter-$Version-windows-$Arch-portable.zip"
-Remove-Item -Force $Zip -ErrorAction SilentlyContinue
-Compress-Archive -Path $Portable -DestinationPath $Zip
-$Outputs += $Zip
-
-# ---- the app as a plain download (x64) ---------------------------------------------------------
-if ($Arch -eq 'x64' -and -not $PortableOnly) {
-  $Plain = Join-Path $Dist "AirfoilSplineFitter-$Version-windows-$Arch.exe"
-  Copy-Item $Exe $Plain
-  $Outputs += $Plain
-}
+# ---- the app alone: a plain download that runs without installing -------------------------------
+$Plain = Join-Path $Dist "airfoil-spline-fitter-$Version-windows-$Arch.exe"
+Copy-Item $Exe $Plain
+$Outputs += $Plain
 
 Get-Item $Outputs | Format-Table Name, Length

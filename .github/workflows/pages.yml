@@ -1,11 +1,17 @@
-# The browser version on GitHub Pages: every push to main builds the app to WebAssembly (Trunk)
-# and publishes it at https://<owner>.github.io/<repository>/. After SolidCraft's pages.yml.
+# The browser version on GitHub Pages: built to WebAssembly (Trunk) and published at
+# https://<owner>.github.io/<repository>/ with every new release, not with every push. It runs
+# when the Release workflow has built a push to `release` (release.yml), from the commit that was
+# released, or by hand (Actions > Pages > Run workflow). After SolidCraft's pages.yml.
 # Needs Settings > Pages > Source = GitHub Actions (once).
+#
+# A `workflow_run` runs for the default branch, which is the only one the github-pages
+# environment lets deploy; a run for the `release` branch or a release tag would be refused.
 name: Pages
 
 on:
-  push:
-    branches: [main]
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -23,10 +29,19 @@ env:
 
 jobs:
   build:
+    # A release build that succeeded (a dry run of it, started by hand, publishes nothing).
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'release')
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The released commit; run by hand, the branch chosen.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown

@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Build the browser version and zip it:  $DIST/spline-fitter-web-<version>.zip
+# Build the browser version and zip it:  $DIST/airfoil-spline-fitter-<version>-web.zip
+# Not part of a release (GitHub Pages hosts the site); for hosting it somewhere else.
 #
 # Usage: packaging/web/package.sh [--skip-build]
 #
 # Needs: trunk and the wasm32-unknown-unknown target. The zip holds a self-contained static site
-# in spline-fitter-web-<version>/ that works from any URL path (public_url = "./" in Trunk.toml);
+# in airfoil-spline-fitter-<version>-web/ that works from any URL path (public_url = "./" in Trunk.toml);
 # the Pages workflow (.github/workflows/pages.yml) publishes the same site on GitHub Pages.
 # After SolidCraft's packaging/web/package.sh (Apache-2.0).
 set -euo pipefail
@@ -24,7 +25,7 @@ if grep -Eq '(src|href)="/[^/]' "$SITE/index.html"; then
   exit 1
 fi
 
-NAME="spline-fitter-web-$VERSION"
+NAME="$ASSET_NAME-$VERSION-web"
 WORK="$CARGO_TARGET_DIR/web-package"
 rm -rf "$WORK"
 mkdir -p "$WORK/$NAME"

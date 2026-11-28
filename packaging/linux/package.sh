@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
 # Build and package Airfoil Spline Fitter for Linux (<arch> is x86_64 or aarch64):
 #
-#   $DIST/spline-fitter-<version>-linux-<arch>.AppImage        any distro with glibc >= the build host's
-#   $DIST/spline-fitter-<version>-linux-<arch>.AppImage.zsync  delta updates (needs zsyncmake)
-#   $DIST/spline-fitter-<version>-linux-<arch>.deb             Debian, Ubuntu, Mint, ...
-#   $DIST/spline-fitter-<version>-linux-<arch>.rpm             Fedora, openSUSE, RHEL, ...
-#   $DIST/spline-fitter-<version>-linux-<arch>.tar.gz          plain FHS-style tree (bin/, share/)
+#   $DIST/airfoil-spline-fitter-<version>-linux-<arch>.AppImage   any distro with glibc >= the build host's
+#   $DIST/airfoil-spline-fitter-<version>-linux-<arch>.deb        Debian, Ubuntu, Mint, ...
+#
+# A release holds these two. On request also:
+#   $DIST/airfoil-spline-fitter-<version>-linux-<arch>.rpm        Fedora, openSUSE, RHEL, ...
+#   $DIST/airfoil-spline-fitter-<version>-linux-<arch>.tar.gz     plain FHS-style tree (bin/, share/)
 #
 # Usage: packaging/linux/package.sh [--skip-build] [--formats "appimage deb rpm tar"]
 #
 # Needs: cargo, the X11/Wayland/ALSA development packages (see the release workflow); nfpm for
 # deb/rpm (https://nfpm.goreleaser.com); appimagetool for the AppImage (downloaded into
 # $CARGO_TARGET_DIR if missing). Build on an old distro (CI: Ubuntu 22.04, glibc 2.35) so the
-# binary runs on newer ones. Optional: desktop-file-validate, zsyncmake, ImageMagick (smaller icons).
+# binary runs on newer ones. Optional: desktop-file-validate, ImageMagick (smaller icons).
 # After SolidCraft's packaging/linux/package.sh (Apache-2.0).
 set -euo pipefail
 # shellcheck source=../env.sh
@@ -20,12 +21,12 @@ set -euo pipefail
 HERE="$ROOT/packaging/linux"
 
 SKIP_BUILD=0
-FORMATS="appimage deb rpm tar"
+FORMATS="appimage deb"
 while [ $# -gt 0 ]; do
   case "$1" in
     --skip-build) SKIP_BUILD=1; shift ;;
     --formats) FORMATS="$2"; shift 2 ;;
-    -h | --help) sed -n '2,16p' "$0"; exit 0 ;;
+    -h | --help) sed -n '2,17p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -36,7 +37,7 @@ case "$ARCH" in
   aarch64 | arm64) ARCH=aarch64; DEB_ARCH=arm64 ;;
   *) echo "unsupported architecture $ARCH" >&2; exit 2 ;;
 esac
-BASENAME="spline-fitter-$VERSION-linux-$ARCH"
+BASENAME="$ASSET_NAME-$VERSION-linux-$ARCH"
 
 echo "==> $APP_NAME $VERSION for Linux $ARCH ($FORMATS)"
 
@@ -114,19 +115,10 @@ if has appimage; then
   OUT="$DIST/$BASENAME.AppImage"
   APPDIR="$(cd "$APPDIR" && pwd)"
   TOOL="$(cd "$(dirname "$TOOL")" && pwd)/$(basename "$TOOL")"
-  rm -f "$OUT.zsync"
-  # Update information for AppImageUpdate: the .zsync of the newest stable GitHub release.
-  update=()
-  if [ -n "${GITHUB_REPOSITORY:-}" ]; then
-    update=(-u "gh-releases-zsync|${GITHUB_REPOSITORY%%/*}|${GITHUB_REPOSITORY#*/}|latest|spline-fitter-*-linux-$ARCH.AppImage.zsync")
-  fi
-  # Extract-and-run works without FUSE (containers, CI). With zsyncmake on the host appimagetool
-  # also writes the .zsync into its working directory, hence the cd.
-  (cd "$DIST" && ARCH="$ARCH" APPIMAGE_EXTRACT_AND_RUN=1 "$TOOL" --no-appstream "${update[@]}" "$APPDIR" "$OUT")
+  # No update information: a release has no .zsync files (a new version is a new download).
+  # Extract-and-run works without FUSE (containers, CI).
+  (cd "$DIST" && ARCH="$ARCH" APPIMAGE_EXTRACT_AND_RUN=1 "$TOOL" --no-appstream "$APPDIR" "$OUT")
   echo "wrote $OUT"
-  if [ ${#update[@]} -gt 0 ] && [ ! -s "$OUT.zsync" ]; then
-    warn "zsyncmake not found, so $OUT.zsync was not written; AppImage delta updates need it"
-  fi
 fi
 
 echo "==> done"

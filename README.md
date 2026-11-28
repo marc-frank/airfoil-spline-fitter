@@ -85,12 +85,14 @@ The release workflow ([`.github/workflows/release.yml`](.github/workflows/releas
 after SolidCraft's) builds every package when the `release` branch is pushed
 and attaches them to a draft GitHub release:
 
-| Platform | Packages |
+| Platform | Files, each `airfoil-spline-fitter-<version>-<system>-<arch>` |
 | --- | --- |
-| Windows x64, x86, arm64 | `.msi` installer, portable `.zip`; x64 also the plain `.exe` |
+| Windows x64, x86, arm64 | `.msi` installer and `.exe` that runs as it is |
 | macOS (universal) | `.dmg` (ad-hoc signed: first launch with right-click > Open) |
-| Linux x86_64, aarch64 | AppImage, `.deb`, `.rpm`, `.tar.gz` |
-| Web | `.zip` of the static site |
+| Linux x86_64, aarch64 | AppImage and `.deb` |
+
+Twelve files with the checksums; the browser version is not one of them (it
+is published on GitHub Pages, see below).
 
 Each package can also be built locally with its script in
 [`packaging/`](packaging), for example
@@ -100,7 +102,8 @@ Each package can also be built locally with its script in
 The same app runs in the browser: [Trunk](https://trunkrs.dev) builds it to
 WebAssembly (`cd crates/spline-fitter-gui && trunk serve` for a local copy),
 and the Pages workflow ([`.github/workflows/pages.yml`](.github/workflows/pages.yml))
-publishes it on GitHub Pages on every push to `main` (once Settings > Pages >
+publishes it on GitHub Pages with every release: after the release workflow
+has built a push to `release`, from that commit (once Settings > Pages >
 Source is set to GitHub Actions). In the browser:
 
 - Fits run in a web worker ([`crates/spline-fitter-worker`](crates/spline-fitter-worker)),

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build and package Airfoil Spline Fitter for macOS:
 #
-#   $DIST/spline-fitter-<version>-macos-<arch>.dmg   "Airfoil Spline Fitter.app" on a
+#   $DIST/airfoil-spline-fitter-<version>-macos-<arch>.dmg   "Airfoil Spline Fitter.app" on a
 #                                                    drag-to-Applications disk image
 #
 # Usage: packaging/macos/package.sh [--arch universal|aarch64|x86_64] [--skip-build]
@@ -45,7 +45,7 @@ export MACOSX_DEPLOYMENT_TARGET=11.0
 SHORT_VERSION="${VERSION%%-*}"
 WORK="$CARGO_TARGET_DIR/macos-package"
 APP="$WORK/dmg/$APP_NAME.app"
-DMG="$DIST/spline-fitter-$VERSION-macos-$ARCH.dmg"
+DMG="$DIST/$ASSET_NAME-$VERSION-macos-$ARCH.dmg"
 
 if [ -n "$BUILD_ONLY" ]; then
   case "$BUILD_ONLY" in

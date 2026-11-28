@@ -12,6 +12,7 @@
 #   CARGO_TARGET_DIR  cargo's target dir (default: $ROOT/target)
 #   APP_ID            the desktop id: Wayland app_id / X11 class, .desktop and icon name
 #   BIN_NAME          the executable's name
+#   ASSET_NAME        what every release file's name starts with, before the version
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export ROOT
@@ -41,6 +42,7 @@ export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target}"
 # Must match .with_app_id(...) in crates/spline-fitter-gui/src/main.rs, or Wayland shows no icon.
 export APP_ID=AirfoilSplineFitter
 export BIN_NAME=spline-fitter
+export ASSET_NAME=airfoil-spline-fitter
 export APP_NAME="Airfoil Spline Fitter"
 export ICON_PNG="$ROOT/crates/spline-fitter-gui/assets/app_icon.png"
 
