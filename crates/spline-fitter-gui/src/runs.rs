@@ -50,7 +50,8 @@ pub struct Column {
     /// A fit metric (offered as the comparison plot's y axis).
     pub metric: bool,
     format: Format,
-    value: fn(&OptimizationRun) -> Cell,
+    /// Of a run and the name of its airfoil.
+    value: fn(&OptimizationRun, &str) -> Cell,
     /// The value only applies when this holds.
     applies: fn(&OptimizationRun) -> bool,
 }
@@ -76,14 +77,23 @@ fn capitalized(text: &str) -> String {
     chars.next().map(|c| c.to_uppercase().chain(chars.flat_map(|c| c.to_lowercase())).collect()).unwrap_or_default()
 }
 
-pub const COLUMNS: [Column; 25] = [
+pub const COLUMNS: [Column; 26] = [
     Column {
         name: "Run",
         tooltip: "Order in which the runs were done; a number stays when other runs are deleted",
         log: false,
         metric: false,
         format: Format::Plain,
-        value: |r| Cell::Int(r.number as i64),
+        value: |r, _| Cell::Int(r.number as i64),
+        applies: always,
+    },
+    Column {
+        name: "Airfoil",
+        tooltip: "The airfoil the run fitted",
+        log: false,
+        metric: false,
+        format: Format::Plain,
+        value: |_, airfoil| Cell::Text(airfoil.into()),
         applies: always,
     },
     Column {
@@ -92,7 +102,7 @@ pub const COLUMNS: [Column; 25] = [
         log: false,
         metric: false,
         format: Format::Plain,
-        value: |r| Cell::Text(r.optimization_config.optimizer.display_name().into()),
+        value: |r, _| Cell::Text(r.optimization_config.optimizer.display_name().into()),
         applies: always,
     },
     Column {
@@ -101,7 +111,7 @@ pub const COLUMNS: [Column; 25] = [
         log: false,
         metric: false,
         format: Format::Plain,
-        value: |r| Cell::Text(if r.optimization_config.tolerance.is_some() { "Tolerance" } else { "Fixed count" }.into()),
+        value: |r, _| Cell::Text(if r.optimization_config.tolerance.is_some() { "Tolerance" } else { "Fixed count" }.into()),
         applies: varpro,
     },
     Column {
@@ -110,7 +120,7 @@ pub const COLUMNS: [Column; 25] = [
         log: true,
         metric: false,
         format: Format::Spec(".3g"),
-        value: |r| opt_float(r.optimization_config.tolerance),
+        value: |r, _| opt_float(r.optimization_config.tolerance),
         applies: |r| varpro(r) && r.optimization_config.tolerance.is_some(),
     },
     Column {
@@ -119,7 +129,7 @@ pub const COLUMNS: [Column; 25] = [
         log: false,
         metric: false,
         format: Format::Plain,
-        value: |r| Cell::Text(r.optimization_config.tolerance_metric.name().into()),
+        value: |r, _| Cell::Text(r.optimization_config.tolerance_metric.name().into()),
         applies: |r| varpro(r) && r.optimization_config.tolerance.is_some(),
     },
     Column {
@@ -128,7 +138,7 @@ pub const COLUMNS: [Column; 25] = [
         log: false,
         metric: false,
         format: Format::Plain,
-        value: |r| {
+        value: |r, _| {
             Cell::Text(
                 match r.optimization_config.knot_placement {
                     KnotPlacement::Uniform => "Uniform",
@@ -145,7 +155,7 @@ pub const COLUMNS: [Column; 25] = [
         log: false,
         metric: false,
         format: Format::Spec(".3g"),
-        value: |r| Cell::Float(r.optimization_config.min_knot_gap),
+        value: |r, _| Cell::Float(r.optimization_config.min_knot_gap),
         applies: |r| varpro(r) && r.optimization_config.knot_placement == KnotPlacement::Free,
     },
     Column {
@@ -154,7 +164,7 @@ pub const COLUMNS: [Column; 25] = [
         log: false,
         metric: false,
         format: Format::Plain,
-        value: |r| Cell::Text(capitalized(&r.optimization_config.parameterization.value().replace('_', " "))),
+        value: |r, _| Cell::Text(capitalized(&r.optimization_config.parameterization.value().replace('_', " "))),
         applies: |r| r.optimization_config.optimizer == OptimizerType::DirectLsq,
     },
     Column {
@@ -163,7 +173,7 @@ pub const COLUMNS: [Column; 25] = [
         log: false,
         metric: false,
         format: Format::Plain,
-        value: |r| Cell::Bool(r.optimization_config.grow_control_points),
+        value: |r, _| Cell::Bool(r.optimization_config.grow_control_points),
         applies: varpro,
     },
     Column {
@@ -172,7 +182,7 @@ pub const COLUMNS: [Column; 25] = [
         log: false,
         metric: false,
         format: Format::Plain,
-        value: |r| Cell::Int(r.spline_config.degree as i64),
+        value: |r, _| Cell::Int(r.spline_config.degree as i64),
         applies: always,
     },
     Column {
@@ -181,7 +191,7 @@ pub const COLUMNS: [Column; 25] = [
         log: false,
         metric: true,
         format: Format::Plain,
-        value: |r| Cell::Int(r.control_points_per_section() as i64),
+        value: |r, _| Cell::Int(r.control_points_per_section() as i64),
         applies: always,
     },
     Column {
@@ -190,7 +200,7 @@ pub const COLUMNS: [Column; 25] = [
         log: false,
         metric: false,
         format: Format::Plain,
-        value: |r| Cell::Int(r.spline_config.num_sections as i64),
+        value: |r, _| Cell::Int(r.spline_config.num_sections as i64),
         applies: always,
     },
     Column {
@@ -199,7 +209,7 @@ pub const COLUMNS: [Column; 25] = [
         log: false,
         metric: false,
         format: Format::Plain,
-        value: |r| Cell::Text(r.spline_config.continuity.name().into()),
+        value: |r, _| Cell::Text(r.spline_config.continuity.name().into()),
         applies: junctions,
     },
     Column {
@@ -208,7 +218,7 @@ pub const COLUMNS: [Column; 25] = [
         log: false,
         metric: false,
         format: Format::Plain,
-        value: |r| Cell::Text(if r.spline_config.geometric_continuity { "Geometric" } else { "Parametric" }.into()),
+        value: |r, _| Cell::Text(if r.spline_config.geometric_continuity { "Geometric" } else { "Parametric" }.into()),
         applies: |r| varpro(r) && junctions(r),
     },
     Column {
@@ -217,7 +227,7 @@ pub const COLUMNS: [Column; 25] = [
         log: false,
         metric: false,
         format: Format::Plain,
-        value: |r| Cell::Text(r.spline_config.junction_continuity.join(", ")),
+        value: |r, _| Cell::Text(r.spline_config.junction_continuity.join(", ")),
         applies: varpro,
     },
     Column {
@@ -226,7 +236,7 @@ pub const COLUMNS: [Column; 25] = [
         log: false,
         metric: false,
         format: Format::Plain,
-        value: |r| Cell::Bool(r.spline_config.split_at_corners),
+        value: |r, _| Cell::Bool(r.spline_config.split_at_corners),
         applies: always,
     },
     Column {
@@ -235,7 +245,7 @@ pub const COLUMNS: [Column; 25] = [
         log: true,
         metric: false,
         format: Format::Spec(".3g"),
-        value: |r| Cell::Float(r.optimization_config.smoothing_weight),
+        value: |r, _| Cell::Float(r.optimization_config.smoothing_weight),
         applies: varpro,
     },
     Column {
@@ -244,7 +254,7 @@ pub const COLUMNS: [Column; 25] = [
         log: false,
         metric: false,
         format: Format::Plain,
-        value: |r| Cell::Bool(r.optimization_config.optimize_le_position),
+        value: |r, _| Cell::Bool(r.optimization_config.optimize_le_position),
         applies: junctions,
     },
     Column {
@@ -253,7 +263,7 @@ pub const COLUMNS: [Column; 25] = [
         log: true,
         metric: true,
         format: Format::Spec(".3e"),
-        value: |r| opt_float(r.result.report.as_ref().map(|x| x.max_deviation)),
+        value: |r, _| opt_float(r.result.report.as_ref().map(|x| x.max_deviation)),
         applies: always,
     },
     Column {
@@ -262,7 +272,7 @@ pub const COLUMNS: [Column; 25] = [
         log: true,
         metric: true,
         format: Format::Spec(".3e"),
-        value: |r| opt_float(r.result.report.as_ref().map(|x| x.rms_deviation)),
+        value: |r, _| opt_float(r.result.report.as_ref().map(|x| x.rms_deviation)),
         applies: always,
     },
     Column {
@@ -271,7 +281,7 @@ pub const COLUMNS: [Column; 25] = [
         log: false,
         metric: true,
         format: Format::Plain,
-        value: |r| Cell::Int(r.result.num_iterations as i64),
+        value: |r, _| Cell::Int(r.result.num_iterations as i64),
         applies: always,
     },
     Column {
@@ -280,7 +290,7 @@ pub const COLUMNS: [Column; 25] = [
         log: false,
         metric: true,
         format: Format::Plain,
-        value: |r| Cell::Int(r.result.num_evaluations as i64),
+        value: |r, _| Cell::Int(r.result.num_evaluations as i64),
         applies: always,
     },
     Column {
@@ -289,7 +299,7 @@ pub const COLUMNS: [Column; 25] = [
         log: true,
         metric: true,
         format: Format::Duration,
-        value: |r| Cell::Float(r.result.elapsed_seconds),
+        value: |r, _| Cell::Float(r.result.elapsed_seconds),
         applies: always,
     },
     Column {
@@ -298,7 +308,7 @@ pub const COLUMNS: [Column; 25] = [
         log: false,
         metric: false,
         format: Format::Plain,
-        value: |r| Cell::Bool(r.result.converged),
+        value: |r, _| Cell::Bool(r.result.converged),
         applies: always,
     },
     Column {
@@ -307,20 +317,20 @@ pub const COLUMNS: [Column; 25] = [
         log: false,
         metric: false,
         format: Format::Plain,
-        value: |r| Cell::Text(r.timestamp.chars().take(16).collect::<String>().replace('T', " ")),
+        value: |r, _| Cell::Text(r.timestamp.chars().take(16).collect::<String>().replace('T', " ")),
         applies: always,
     },
 ];
 
-pub const RMS_DEVIATION_COLUMN: usize = 19;
+pub const RMS_DEVIATION_COLUMN: usize = 20;
 const _: () = assert!(matches!(COLUMNS[RMS_DEVIATION_COLUMN].name.as_bytes(), b"RMS deviation"));
 const _: () = assert!(matches!(COLUMNS[CONTROL_POINTS_COLUMN].name.as_bytes(), b"Control points"));
-pub const CONTROL_POINTS_COLUMN: usize = 10;
+pub const CONTROL_POINTS_COLUMN: usize = 11;
 
 impl Column {
-    pub fn cell(&self, run: &OptimizationRun) -> Cell {
+    pub fn cell(&self, run: &OptimizationRun, airfoil: &str) -> Cell {
         if (self.applies)(run) {
-            (self.value)(run)
+            (self.value)(run, airfoil)
         } else {
             Cell::Empty
         }
@@ -339,12 +349,12 @@ impl Column {
     }
 }
 
-/// Every cell of a run with its text.
-pub fn row(run: &OptimizationRun) -> Vec<(Cell, String)> {
+/// Every cell of a run with its text; `airfoil` is the name of its airfoil.
+pub fn row(run: &OptimizationRun, airfoil: &str) -> Vec<(Cell, String)> {
     COLUMNS
         .iter()
         .map(|c| {
-            let cell = c.cell(run);
+            let cell = c.cell(run, airfoil);
             let text = c.text(&cell);
             (cell, text)
         })

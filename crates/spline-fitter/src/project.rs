@@ -1,8 +1,9 @@
-//! Project files (`.asfproj`): an airfoil and the fit runs made on it.
+//! Project files (`.asfproj`): airfoils and the fit runs made on them.
 //!
-//! UTF-8 JSON with two-space indentation, floats in shortest round-trip
-//! form and non-finite numbers as `Infinity`/`NaN`, so files stay
-//! interchangeable with earlier versions of the application.
+//! UTF-8 JSON with two-space indentation, a list of numbers on one line,
+//! floats in shortest round-trip form and non-finite numbers as the strings
+//! `"Infinity"`/`"NaN"`. Projects of format 1 (one airfoil, as the Python
+//! application wrote them) are read; format 2 is written.
 
 use std::path::Path;
 
@@ -23,7 +24,12 @@ use crate::{bail, Error, Result, Vec2};
 /// 1.2: tolerance searches (`tolerance_searches`), whose fits are
 /// fixed-count runs with a `search` key; readers of 1.0 see those runs as
 /// plain fixed-count runs.
-pub const FORMAT_VERSION: &str = "1.2.0";
+/// 2.0: several airfoils (`airfoils`, each with an `airfoil_id`; every run
+/// and search names its `airfoil`), without the copies format 1 carried
+/// (`airfoil.sections`, `airfoil.num_sections`, `result.degree`,
+/// `metadata.format_version`), a list of numbers on one line and the loss
+/// history as three lists.
+pub const FORMAT_VERSION: &str = "2.0.0";
 /// The smoothing weight of tolerance fits in projects before format 1.1.
 pub const OLD_TOLERANCE_SMOOTHING: f64 = 1e-7;
 
@@ -57,6 +63,8 @@ pub struct OptimizationRun {
     pub run_id: String,
     /// 1, 2, ... in the order runs were added; 0 until numbered.
     pub number: usize,
+    /// The airfoil it fitted (its id in the project).
+    pub airfoil: String,
     pub timestamp: String,
     pub spline_config: SplineConfig,
     pub optimization_config: OptimizationConfig,
@@ -88,6 +96,8 @@ pub struct ToleranceSearch {
     pub search_id: String,
     /// 1, 2, ... in the order searches were added.
     pub number: usize,
+    /// The airfoil it fitted (its id in the project).
+    pub airfoil: String,
     pub timestamp: String,
     /// The sidebar's settings: `num_control_points` is the start count.
     pub spline_config: SplineConfig,
@@ -114,14 +124,16 @@ impl ToleranceSearch {
 
 impl OptimizationRun {
     pub fn new(
+        airfoil: &str,
         spline_config: SplineConfig,
         optimization_config: OptimizationConfig,
         result: FitResult,
         loss_history: Vec<IterationRecord>,
     ) -> Self {
         OptimizationRun {
-            run_id: uuid::Uuid::new_v4().to_string(),
+            run_id: new_id(),
             number: 0,
+            airfoil: airfoil.to_string(),
             timestamp: now_iso(),
             spline_config,
             optimization_config,
@@ -132,18 +144,68 @@ impl OptimizationRun {
     }
 }
 
-/// An airfoil, its runs and its tolerance searches.
+/// An airfoil of a project. Its split is the one it was last fitted with.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProjectAirfoil {
+    /// What its runs and searches name it by.
+    pub id: String,
+    pub data: AirfoilData,
+}
+
+/// Airfoils, their runs and their tolerance searches.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProjectFile {
     pub metadata: ProjectMetadata,
-    pub airfoil: AirfoilData,
+    pub airfoils: Vec<ProjectAirfoil>,
     pub runs: Vec<OptimizationRun>,
     pub searches: Vec<ToleranceSearch>,
 }
 
+impl Default for ProjectFile {
+    fn default() -> Self {
+        ProjectFile { metadata: ProjectMetadata::new(None), airfoils: vec![], runs: vec![], searches: vec![] }
+    }
+}
+
 impl ProjectFile {
-    pub fn new(airfoil: AirfoilData) -> Self {
-        ProjectFile { metadata: ProjectMetadata::new(None), airfoil, runs: vec![], searches: vec![] }
+    /// A project of one airfoil, and that airfoil's id.
+    pub fn new(airfoil: AirfoilData) -> (Self, String) {
+        let mut project = ProjectFile::default();
+        let id = project.add_airfoil(airfoil);
+        (project, id)
+    }
+
+    pub fn airfoil(&self, id: &str) -> Option<&AirfoilData> {
+        self.airfoils.iter().find(|a| a.id == id).map(|a| &a.data)
+    }
+
+    pub fn airfoil_mut(&mut self, id: &str) -> Option<&mut AirfoilData> {
+        self.airfoils.iter_mut().find(|a| a.id == id).map(|a| &mut a.data)
+    }
+
+    /// The id of the airfoil with these points, names and decimals, however
+    /// it is split.
+    pub fn find_airfoil(&self, airfoil: &AirfoilData) -> Option<&str> {
+        let same = |a: &AirfoilData| {
+            a.coordinates == airfoil.coordinates && a.name == airfoil.name && a.filename == airfoil.filename && a.precision == airfoil.precision
+        };
+        self.airfoils.iter().find(|a| same(&a.data)).map(|a| a.id.as_str())
+    }
+
+    /// Adds an airfoil and returns its id; one the project holds already
+    /// ([`Self::find_airfoil`]) stays as it is.
+    pub fn add_airfoil(&mut self, airfoil: AirfoilData) -> String {
+        if let Some(id) = self.find_airfoil(&airfoil) {
+            return id.to_string();
+        }
+        let id = new_id();
+        self.airfoils.push(ProjectAirfoil { id: id.clone(), data: airfoil });
+        id
+    }
+
+    /// The runs of an airfoil, in the order they were added.
+    pub fn airfoil_runs<'a>(&'a self, id: &'a str) -> impl Iterator<Item = &'a OptimizationRun> + 'a {
+        self.runs.iter().filter(move |r| r.airfoil == id)
     }
 
     pub fn search(&self, id: &str) -> Option<&ToleranceSearch> {
@@ -167,7 +229,7 @@ pub fn number_runs(runs: &mut [OptimizationRun], after: usize) -> usize {
     last
 }
 
-/// A new run or search id.
+/// A new run, search or airfoil id.
 pub fn new_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
@@ -251,7 +313,9 @@ fn ints(v: &[usize]) -> Json {
 }
 
 impl Json {
-    /// Text as Python's `json.dumps(indent=2, ensure_ascii=False)` writes it.
+    /// Text as Python's `json.dumps(indent=2, ensure_ascii=False)` writes it,
+    /// but a list that holds no list or object (a point, a knot vector) on
+    /// one line.
     pub fn to_text(&self) -> String {
         let mut out = String::new();
         self.write(&mut out, 0);
@@ -272,8 +336,17 @@ impl Json {
             Json::Float(f) if f.is_infinite() => out.push_str(if *f > 0.0 { "\"Infinity\"" } else { "\"-Infinity\"" }),
             Json::Float(f) => out.push_str(&shortest(*f)),
             Json::Str(s) => out.push_str(&serde_json::to_string(s).unwrap()),
-            Json::Array(items) if items.is_empty() => out.push_str("[]"),
             Json::Object(items) if items.is_empty() => out.push_str("{}"),
+            Json::Array(items) if items.iter().all(|i| !matches!(i, Json::Array(_) | Json::Object(_))) => {
+                out.push('[');
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        out.push_str(", ");
+                    }
+                    item.write(out, depth);
+                }
+                out.push(']');
+            }
             Json::Array(items) => {
                 out.push('[');
                 for (i, item) in items.iter().enumerate() {
@@ -375,18 +448,18 @@ fn mark_non_finite(text: &str) -> String {
 // ---------------------------------------------------------------------------
 // Encoding
 
+/// An airfoil: its points and where they are split (the sections follow
+/// from the two).
 fn encode_airfoil(a: &AirfoilData) -> Json {
     let mut json = obj(vec![
-        ("coordinates", points(&a.coordinates)),
-        ("sections", Json::Array(a.sections.iter().map(|s| points(s)).collect())),
-        ("junction_indices", ints(&a.junction_indices)),
-        ("num_sections", int(a.num_sections())),
-        ("filename", string(&a.filename)),
         ("name", string(&a.name)),
+        ("filename", string(&a.filename)),
         ("precision", Json::Int(a.precision as i64)),
+        ("coordinates", points(&a.coordinates)),
+        ("junction_indices", ints(&a.junction_indices)),
     ]);
     // An airfoil cut at its corners says what each junction is; one cut
-    // by the section count alone keeps the layout of format 1.0.
+    // by the section count alone has only the junction indices.
     if a.split.corners {
         if let Json::Object(fields) = &mut json {
             fields.push(("split_at_corners".into(), Json::Bool(true)));
@@ -495,7 +568,6 @@ fn encode_report(r: &Report) -> Json {
 
 fn encode_fit_result(r: &FitResult) -> Json {
     obj(vec![
-        ("degree", int(r.degree)),
         ("final_error", float(r.final_error)),
         ("num_iterations", int(r.num_iterations)),
         ("num_evaluations", int(r.num_evaluations)),
@@ -512,18 +584,18 @@ fn encode_run(run: &OptimizationRun) -> Json {
     let mut fields = vec![
         ("run_id", string(&run.run_id)),
         ("number", int(run.number)),
+        ("airfoil", string(&run.airfoil)),
         ("timestamp", string(&run.timestamp)),
         ("spline_config", encode_spline_config(&run.spline_config)),
         ("optimization_config", encode_optimization_config(&run.optimization_config)),
         ("result", encode_fit_result(&run.result)),
         (
             "loss_history",
-            Json::Array(
-                run.loss_history
-                    .iter()
-                    .map(|r| obj(vec![("iter", int(r.iteration)), ("error", float(r.error)), ("time", float(r.elapsed_seconds))]))
-                    .collect(),
-            ),
+            obj(vec![
+                ("iter", Json::Array(run.loss_history.iter().map(|r| int(r.iteration)).collect())),
+                ("error", Json::Array(run.loss_history.iter().map(|r| float(r.error)).collect())),
+                ("time", Json::Array(run.loss_history.iter().map(|r| float(r.elapsed_seconds)).collect())),
+            ]),
         ),
         ("section_control_points", Json::Array(run.result.section_control_points.iter().map(|s| points(s)).collect())),
     ];
@@ -537,6 +609,7 @@ fn encode_search(s: &ToleranceSearch) -> Json {
     obj(vec![
         ("search_id", string(&s.search_id)),
         ("number", int(s.number)),
+        ("airfoil", string(&s.airfoil)),
         ("timestamp", string(&s.timestamp)),
         ("spline_config", encode_spline_config(&s.spline_config)),
         ("optimization_config", encode_optimization_config(&s.optimization_config)),
@@ -554,29 +627,29 @@ fn encode_search(s: &ToleranceSearch) -> Json {
 
 fn encode_project(p: &ProjectFile) -> Json {
     let m = &p.metadata;
-    let mut json = obj(vec![
-        ("format_version", string(&m.format_version)),
+    let airfoil = |a: &ProjectAirfoil| {
+        let mut json = encode_airfoil(&a.data);
+        if let Json::Object(fields) = &mut json {
+            fields.insert(0, ("airfoil_id".into(), string(&a.id)));
+        }
+        json
+    };
+    // This format, whatever format the project was read from.
+    obj(vec![
+        ("format_version", string(FORMAT_VERSION)),
         (
             "metadata",
             obj(vec![
-                ("format_version", string(&m.format_version)),
                 ("created", string(&m.created)),
                 ("modified", string(&m.modified)),
                 ("app_version", string(&m.app_version)),
                 ("platform", string(&m.platform)),
             ]),
         ),
-        ("airfoil", encode_airfoil(&p.airfoil)),
+        ("airfoils", Json::Array(p.airfoils.iter().map(airfoil).collect())),
         ("optimization_runs", Json::Array(p.runs.iter().map(encode_run).collect())),
-    ]);
-    // Written only when there are searches, so other projects keep the
-    // layout of format 1.0.
-    if !p.searches.is_empty() {
-        if let Json::Object(fields) = &mut json {
-            fields.push(("tolerance_searches".into(), Json::Array(p.searches.iter().map(encode_search).collect())));
-        }
-    }
-    json
+        ("tolerance_searches", Json::Array(p.searches.iter().map(encode_search).collect())),
+    ])
 }
 
 /// The text of a project file.
@@ -742,12 +815,12 @@ impl<'a> Part<'a> {
     }
 }
 
-/// The airfoil; its sections are rebuilt from the coordinates and the
-/// junction indices (the stored `sections` and `num_sections` are not read).
+/// An airfoil; its sections are built from the coordinates and the junction
+/// indices (the `sections` and `num_sections` of format 1 are not read).
 /// One cut at its corners says what each junction is; without that every
 /// junction is one of the layout, in order.
-fn decode_airfoil(json: &Json) -> Result<AirfoilData> {
-    let part = Part { json, place: "Airfoil" };
+fn decode_airfoil(json: &Json, place: &str) -> Result<AirfoilData> {
+    let part = Part { json, place };
     let coordinates = part.points_of("coordinates", part.field("coordinates")?)?;
     let junction_indices = part.counts("junction_indices")?;
     let n = coordinates.len();
@@ -913,8 +986,8 @@ fn decode_report(json: &Json, place: &str) -> Result<Report> {
     })
 }
 
-/// The result of a run; its degree is the run's spline degree (the stored
-/// `degree` is not read).
+/// The result of a run; its degree is the run's spline degree (the `degree`
+/// of format 1 is not read).
 fn decode_fit_result(json: &Json, place: &str, control_points: Vec<Vec<Vec2>>, degree: usize) -> Result<FitResult> {
     let part = Part { json, place };
     let section_knots = match part.optional("section_knots") {
@@ -936,6 +1009,36 @@ fn decode_fit_result(json: &Json, place: &str, control_points: Vec<Vec<Vec2>>, d
     })
 }
 
+/// The loss history: three lists of one length, or the records of format 1.
+fn decode_history(json: &Json, place: &str) -> Result<Vec<IterationRecord>> {
+    let part = Part { json, place };
+    let history = part.field("loss_history")?;
+    if !matches!(history, Json::Object(_)) {
+        return part
+            .list_of("loss_history", history)?
+            .iter()
+            .map(|r| {
+                let p = Part { json: r, place };
+                Ok(IterationRecord { iteration: p.count("iter")?, error: p.float("error")?, elapsed_seconds: p.float_or("time", 0.0)? })
+            })
+            .collect();
+    }
+    let lists = Part { json: history, place };
+    let iterations = lists.counts("iter")?;
+    let errors = lists.floats_of("error", lists.field("error")?)?;
+    let times = lists.floats_of("time", lists.field("time")?)?;
+    if errors.len() != iterations.len() || times.len() != iterations.len() {
+        return Err(part.error("its lists differ in length"));
+    }
+    Ok(iterations
+        .into_iter()
+        .zip(errors)
+        .zip(times)
+        .map(|((iteration, error), elapsed_seconds)| IterationRecord { iteration, error, elapsed_seconds })
+        .collect())
+}
+
+/// A run; one of format 1 names no airfoil (`airfoil` is empty).
 fn decode_run(json: &Json, place: &str, warnings: &mut Vec<String>) -> Result<OptimizationRun> {
     let run = Part { json, place };
     let control_points = Part { json, place: &format!("{place} control points") }.sections("section_control_points")?;
@@ -943,19 +1046,11 @@ fn decode_run(json: &Json, place: &str, warnings: &mut Vec<String>) -> Result<Op
     let (optimization_config, warning) = decode_optimization_config(run.field("optimization_config")?, &format!("{place} fit settings"))?;
     warnings.extend(warning);
     let result = decode_fit_result(run.field("result")?, &format!("{place} result"), control_points, spline_config.degree)?;
-    let history_place = format!("{place} loss history");
-    let history = Part { json, place: &history_place };
-    let loss_history = history
-        .list("loss_history")?
-        .iter()
-        .map(|r| {
-            let p = Part { json: r, place: &history_place };
-            Ok(IterationRecord { iteration: p.count("iter")?, error: p.float("error")?, elapsed_seconds: p.float_or("time", 0.0)? })
-        })
-        .collect::<Result<_>>()?;
+    let loss_history = decode_history(json, &format!("{place} loss history"))?;
     Ok(OptimizationRun {
         run_id: run.text("run_id")?.to_string(),
         number: run.count_or("number", 0)?,
+        airfoil: run.text_or("airfoil", "")?.to_string(),
         timestamp: run.text("timestamp")?.to_string(),
         spline_config,
         optimization_config,
@@ -976,6 +1071,7 @@ fn decode_search(json: &Json, place: &str, warnings: &mut Vec<String>) -> Result
     Ok(ToleranceSearch {
         search_id: s.text("search_id")?.to_string(),
         number: s.count_or("number", 0)?,
+        airfoil: s.text_or("airfoil", "")?.to_string(),
         timestamp: s.text_or("timestamp", "")?.to_string(),
         spline_config,
         optimization_config,
@@ -1022,7 +1118,7 @@ pub fn parse_project(text: &str) -> Result<LoadedProject> {
         .next()
         .and_then(|m| m.trim().parse().ok())
         .ok_or_else(|| Error::new(format!("Project file version {} is not valid.", bspline_varpro::numfmt::quoted(&version))))?;
-    if major > 1 {
+    if major > 2 {
         bail!("Project file version {version} is not supported. Please update the application.");
     }
     let minor: u32 = version.split('.').nth(1).and_then(|m| m.trim().parse().ok()).unwrap_or(0);
@@ -1043,7 +1139,7 @@ pub fn parse_project(text: &str) -> Result<LoadedProject> {
     let empty = Json::Object(vec![]);
     let m = Part { json: json.get("metadata").unwrap_or(&empty), place: "Metadata" };
     let metadata = ProjectMetadata {
-        format_version: m.text_or("format_version", FORMAT_VERSION)?.to_string(),
+        format_version: version.clone(),
         created: m.text_or("created", "")?.to_string(),
         modified: m.text_or("modified", "")?.to_string(),
         app_version: m.text_or("app_version", "")?.to_string(),
@@ -1067,8 +1163,39 @@ pub fn parse_project(text: &str) -> Result<LoadedProject> {
         }
     }
     number_searches(&mut searches);
-    let airfoil = decode_airfoil(Part { json: &json, place: "Airfoil" }.field("airfoil")?)?;
-    Ok(LoadedProject { project: ProjectFile { metadata, airfoil, runs, searches }, warnings })
+    let airfoils = if major < 2 {
+        // Format 1: one airfoil, which every run and search fitted.
+        let id = new_id();
+        runs.iter_mut().for_each(|r| r.airfoil = id.clone());
+        searches.iter_mut().for_each(|s| s.airfoil = id.clone());
+        vec![ProjectAirfoil { id, data: decode_airfoil(Part { json: &json, place: "Airfoil" }.field("airfoil")?, "Airfoil")? }]
+    } else {
+        let list = Part { json: &json, place: "Airfoil list" };
+        let airfoils: Vec<ProjectAirfoil> = list
+            .list("airfoils")?
+            .iter()
+            .enumerate()
+            .map(|(i, a)| {
+                let place = format!("Airfoil {}", i + 1);
+                let id = Part { json: a, place: &place }.text("airfoil_id")?.to_string();
+                Ok(ProjectAirfoil { id, data: decode_airfoil(a, &place)? })
+            })
+            .collect::<Result<_>>()?;
+        if let Some(i) = (1..airfoils.len()).find(|&i| airfoils[..i].iter().any(|a| a.id == airfoils[i].id)) {
+            bail!("Airfoil {}: another airfoil has its id.", i + 1);
+        }
+        let known = |id: &str| airfoils.iter().any(|a| a.id == id);
+        if let Some(i) = runs.iter().position(|r| !known(&r.airfoil)) {
+            bail!("Run {}: its airfoil is not in the project.", i + 1);
+        }
+        // A search fitted the airfoil of its runs.
+        for s in &mut searches {
+            let run = runs.iter().find(|r| r.search.as_deref() == Some(s.search_id.as_str())).expect("a search kept has a run");
+            s.airfoil = run.airfoil.clone();
+        }
+        airfoils
+    };
+    Ok(LoadedProject { project: ProjectFile { metadata, airfoils, runs, searches }, warnings })
 }
 
 /// Messages between the browser version's window and its fitting worker
@@ -1094,7 +1221,7 @@ pub mod wire {
         let part = Part { json: &json, place: "Fit request" };
         let config = decode_spline_config(part.field("spline_config")?, "Fit request")?;
         let (options, _) = decode_optimization_config(part.field("optimization_config")?, "Fit request")?;
-        let airfoil = decode_airfoil(part.field("airfoil")?)?;
+        let airfoil = decode_airfoil(part.field("airfoil")?, "Airfoil")?;
         Ok((config, options, airfoil))
     }
 
@@ -1301,8 +1428,9 @@ mod tests {
             report: None,
             rms_error: Some(1e-7),
         };
-        let mut p = ProjectFile::new(airfoil);
+        let (mut p, id) = ProjectFile::new(airfoil);
         p.runs.push(OptimizationRun::new(
+            &id,
             SplineConfig::default(),
             OptimizationConfig::default(),
             result,
@@ -1382,21 +1510,113 @@ mod tests {
         json.to_string()
     }
 
-    #[test]
-    fn sections_and_degree_are_rebuilt_not_read() {
-        let text = edited(|j| {
-            j["airfoil"]["num_sections"] = 7.into();
-            j["airfoil"]["sections"] = serde_json::json!([]);
-            j["optimization_runs"][0]["result"]["degree"] = 9.into();
-        });
-        let loaded = parse_project(&text).unwrap().project;
-        assert_eq!(loaded.airfoil, project().airfoil);
-        assert_eq!(loaded.runs[0].result.degree, 5);
-        let junctions = |v: serde_json::Value| parse_project(&edited(|j| j["airfoil"]["junction_indices"] = v.clone()));
-        for bad in [serde_json::json!([0]), serde_json::json!([20]), serde_json::json!([5, 5]), serde_json::json!([8, 4])] {
-            assert_eq!(junctions(bad.clone()).unwrap_err().0, "Airfoil: the junction indices do not split the coordinates.", "{bad}");
+    /// The project as format 1 held it (one airfoil, which the runs do not
+    /// name, with the copies it carried), with `change` applied.
+    fn format_1(project: &ProjectFile, version: &str, change: impl Fn(&mut serde_json::Value)) -> String {
+        let mut json: serde_json::Value = serde_json::from_str(&project_text(project)).unwrap();
+        json["format_version"] = version.into();
+        json["metadata"]["format_version"] = version.into();
+        let mut airfoil = json["airfoils"][0].take();
+        let map = json.as_object_mut().unwrap();
+        map.remove("airfoils");
+        if map["tolerance_searches"].as_array().unwrap().is_empty() {
+            map.remove("tolerance_searches");
         }
-        assert_eq!(junctions(serde_json::json!([3, 6])).unwrap().project.airfoil.sections.len(), 3);
+        airfoil.as_object_mut().unwrap().remove("airfoil_id");
+        airfoil["num_sections"] = 7.into();
+        airfoil["sections"] = serde_json::json!([]);
+        json["airfoil"] = airfoil;
+        let unnamed = |list: &mut serde_json::Value| {
+            for item in list.as_array_mut().into_iter().flatten() {
+                item.as_object_mut().unwrap().remove("airfoil");
+            }
+        };
+        unnamed(&mut json["optimization_runs"]);
+        unnamed(&mut json["tolerance_searches"]);
+        for run in json["optimization_runs"].as_array_mut().unwrap() {
+            run["result"]["degree"] = 9.into();
+            let h = run["loss_history"].take();
+            let records: Vec<_> = (0..h["iter"].as_array().unwrap().len())
+                .map(|i| serde_json::json!({"iter": h["iter"][i], "error": h["error"][i], "time": h["time"][i]}))
+                .collect();
+            run["loss_history"] = records.into();
+        }
+        change(&mut json);
+        json.to_string()
+    }
+
+    #[test]
+    fn format_1_is_read() {
+        let p = project();
+        let loaded = parse_project(&format_1(&p, "1.2.0", |_| {})).unwrap().project;
+        // One airfoil, which every run names; the copies are not read.
+        assert_eq!(loaded.airfoils.len(), 1);
+        assert_eq!(loaded.airfoils[0].data, p.airfoils[0].data);
+        assert_eq!(loaded.runs[0].airfoil, loaded.airfoils[0].id);
+        assert_eq!(loaded.runs[0].result.degree, 5);
+        assert_eq!(loaded.runs[0].loss_history, p.runs[0].loss_history);
+        assert_eq!(loaded.metadata.format_version, "1.2.0");
+        // Written in this format, and read back the same.
+        let text = project_text(&loaded);
+        assert!(text.starts_with("{\n  \"format_version\": \"2.0.0\""), "{text}");
+        let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let keys = |v: &serde_json::Value| v.as_object().unwrap().keys().cloned().collect::<Vec<_>>().join(" ");
+        assert_eq!(keys(&json["airfoils"][0]), "airfoil_id name filename precision coordinates junction_indices");
+        assert_eq!(keys(&json["metadata"]), "created modified app_version platform");
+        assert!(json["optimization_runs"][0]["result"].get("degree").is_none());
+        let again = parse_project(&text).unwrap().project;
+        assert_eq!((&again.airfoils, &again.runs), (&loaded.airfoils, &loaded.runs));
+        assert_eq!(parse_project(&format_1(&p, "1.2.0", |j| j["airfoil"] = serde_json::Value::Null)).unwrap_err().0, "Airfoil: it is not an object.");
+    }
+
+    #[test]
+    fn junction_indices_split_the_coordinates() {
+        let junctions = |v: serde_json::Value| parse_project(&edited(|j| j["airfoils"][0]["junction_indices"] = v.clone()));
+        for bad in [serde_json::json!([0]), serde_json::json!([20]), serde_json::json!([5, 5]), serde_json::json!([8, 4])] {
+            assert_eq!(junctions(bad.clone()).unwrap_err().0, "Airfoil 1: the junction indices do not split the coordinates.", "{bad}");
+        }
+        assert_eq!(junctions(serde_json::json!([3, 6])).unwrap().project.airfoils[0].data.sections.len(), 3);
+    }
+
+    /// A project holds several airfoils; every run and search names its own.
+    #[test]
+    fn several_airfoils_round_trip() {
+        let mut p = project();
+        let first = p.airfoils[0].id.clone();
+        let other = AirfoilData::new(bspline_varpro::airfoil::Naca4::new("2412", true).unwrap().points(11), 2, "naca2412", "NACA 2412", 6).unwrap();
+        let second = p.add_airfoil(other.clone());
+        assert_ne!(first, second);
+        // The same airfoil again, however it is split, is the one it holds.
+        assert_eq!(p.add_airfoil(other.resplit(Split::from(1)).unwrap()), second);
+        assert_eq!(p.airfoils.len(), 2);
+        assert_eq!(p.airfoil(&second).unwrap().num_sections(), 2);
+        let mut run = p.runs[0].clone();
+        run.run_id = new_id();
+        run.number = 0;
+        run.airfoil = second.clone();
+        p.runs.push(run);
+        number_runs(&mut p.runs, 0);
+        let loaded = parse_project(&project_text(&p)).unwrap().project;
+        assert_eq!(loaded, p);
+        assert_eq!(loaded.airfoil_runs(&second).map(|r| r.number).collect::<Vec<_>>(), vec![2]);
+        assert_eq!(loaded.airfoil(&first).unwrap().name, "NACA 0012");
+        // A run names an airfoil of the project; ids are the airfoils' own.
+        let text = |change: &dyn Fn(&mut serde_json::Value)| {
+            let mut json: serde_json::Value = serde_json::from_str(&project_text(&p)).unwrap();
+            change(&mut json);
+            parse_project(&json.to_string()).unwrap_err().0
+        };
+        assert_eq!(text(&|j| j["optimization_runs"][1]["airfoil"] = "gone".into()), "Run 2: its airfoil is not in the project.");
+        assert_eq!(text(&|j| j["airfoils"][1]["airfoil_id"] = j["airfoils"][0]["airfoil_id"].clone()), "Airfoil 2: another airfoil has its id.");
+        assert_eq!(text(&|j| { j["airfoils"][1].as_object_mut().unwrap().remove("airfoil_id"); }), "Airfoil 2: the 'airfoil_id' field is missing.");
+    }
+
+    #[test]
+    fn the_loss_history_is_three_lists() {
+        let text = project_text(&project());
+        assert!(text.contains("\"loss_history\": {\n        \"iter\": [1],\n        \"error\": [0.5],\n        \"time\": [0.0]\n      }"), "{text}");
+        let uneven = edited(|j| j["optimization_runs"][0]["loss_history"]["time"] = serde_json::json!([]));
+        assert_eq!(parse_project(&uneven).unwrap_err().0, "Run 1 loss history: its lists differ in length.");
     }
 
     /// An airfoil cut at its corners says what every junction is, and
@@ -1410,31 +1630,31 @@ mod tests {
         let cut = AirfoilData::new(crate::geometry::tests::saratov(), config.split(), "saratov", "Saratov", 5).unwrap();
         assert_eq!(cut.seams[2], Seam { corner: true, layout: Some(2) });
         let mut p = project();
-        p.airfoil = cut.clone();
+        p.airfoils[0].data = cut.clone();
         p.runs[0].spline_config = config.clone();
         let text = project_text(&p);
         let loaded = parse_project(&text).unwrap().project;
-        assert_eq!((&loaded.airfoil, &loaded.runs[0].spline_config), (&cut, &config));
-        assert_eq!(loaded.airfoil.split, Split::at_corners(4, 7));
+        assert_eq!((&loaded.airfoils[0].data, &loaded.runs[0].spline_config), (&cut, &config));
+        assert_eq!(loaded.airfoils[0].data.split, Split::at_corners(4, 7));
         // Cut by the count alone, with settings that leave corners alone:
-        // the keys of format 1.0 and no others.
+        // the junction indices and no other keys.
         let plain = SplineConfig { split_at_corners: false, ..config.clone() };
-        p.airfoil = cut.resplit(plain.split()).unwrap();
+        p.airfoils[0].data = cut.resplit(plain.split()).unwrap();
         p.runs[0].spline_config = plain.clone();
         let text = project_text(&p);
         assert!(!text.contains("corner") && !text.contains("layout"), "{text}");
         let loaded = parse_project(&text).unwrap().project;
-        assert_eq!((&loaded.airfoil, &loaded.runs[0].spline_config), (&p.airfoil, &plain));
-        assert_eq!(loaded.airfoil.split, Split::from(4));
+        assert_eq!((&loaded.airfoils[0].data, &loaded.runs[0].spline_config), (&p.airfoils[0].data, &plain));
+        assert_eq!(loaded.airfoils[0].data.split, Split::from(4));
         // What the junctions are has to describe them.
         let json = |change: &dyn Fn(&mut serde_json::Value)| {
             let mut p = project();
-            p.airfoil = cut.clone();
+            p.airfoils[0].data = cut.clone();
             let mut json: serde_json::Value = serde_json::from_str(&project_text(&p)).unwrap();
-            change(&mut json["airfoil"]);
+            change(&mut json["airfoils"][0]);
             parse_project(&json.to_string())
         };
-        assert_eq!(json(&|_| {}).unwrap().project.airfoil, cut);
+        assert_eq!(json(&|_| {}).unwrap().project.airfoils[0].data, cut);
         let wrong: [&dyn Fn(&mut serde_json::Value); 5] = [
             &|a| a["corner_junctions"] = serde_json::json!([false, false]),
             &|a| a["layout_junctions"] = serde_json::json!([0, 1, 1]),
@@ -1443,9 +1663,9 @@ mod tests {
             &|a| a["layout_sections"] = 2.into(),
         ];
         for change in wrong {
-            assert_eq!(json(change).unwrap_err().0, "Airfoil: the corner and layout junctions do not describe the junction indices.");
+            assert_eq!(json(change).unwrap_err().0, "Airfoil 1: the corner and layout junctions do not describe the junction indices.");
         }
-        assert_eq!(json(&|a| a["corner_junctions"] = serde_json::json!([0, 0, 1])).unwrap_err().0, "Airfoil: 'corner_junctions' holds something other than true or false.");
+        assert_eq!(json(&|a| a["corner_junctions"] = serde_json::json!([0, 0, 1])).unwrap_err().0, "Airfoil 1: 'corner_junctions' holds something other than true or false.");
     }
 
     #[test]
@@ -1453,15 +1673,14 @@ mod tests {
         let text = project_text(&project()).replace("\"degree\": 5,", "");
         assert_eq!(parse_project(&text).unwrap_err().0, "Run 1 spline settings: the 'degree' field is missing.");
         assert_eq!(parse_project("[1]").unwrap_err().0, "The file is not a project file: it holds no project.");
-        let newer = project_text(&project()).replacen("\"1.2.0\"", "\"2.0.0\"", 1);
-        assert_eq!(parse_project(&newer).unwrap_err().0, "Project file version 2.0.0 is not supported. Please update the application.");
+        let newer = project_text(&project()).replacen("\"2.0.0\"", "\"3.0.0\"", 1);
+        assert_eq!(parse_project(&newer).unwrap_err().0, "Project file version 3.0.0 is not supported. Please update the application.");
     }
 
     #[test]
     fn older_tolerance_runs_were_fitted_with_old_smoothing() {
         let tolerance_run = |version: &str| {
-            edited(|j| {
-                j["format_version"] = version.into();
+            format_1(&project(), version, |j| {
                 j["optimization_runs"][0]["optimization_config"]["tolerance"] = 1e-5.into();
                 j["optimization_runs"][0]["optimization_config"]["smoothing_weight"] = 1e-3.into();
             })
@@ -1470,8 +1689,7 @@ mod tests {
         assert_eq!(smoothing(&tolerance_run("1.0.0")), OLD_TOLERANCE_SMOOTHING);
         assert_eq!(smoothing(&tolerance_run("1.1.0")), 1e-3);
         // A fixed-count run always used its own weight.
-        let fixed = edited(|j| {
-            j["format_version"] = "1.0.0".into();
+        let fixed = format_1(&project(), "1.0.0", |j| {
             j["optimization_runs"][0]["optimization_config"]["tolerance"] = serde_json::Value::Null;
             j["optimization_runs"][0]["optimization_config"]["smoothing_weight"] = 1e-3.into();
         });
@@ -1498,6 +1716,7 @@ mod tests {
         p.searches.push(ToleranceSearch {
             search_id: "s1".into(),
             number: 1,
+            airfoil: p.airfoils[0].id.clone(),
             timestamp: "2026-11-19T10:00:00".into(),
             spline_config: SplineConfig::default(),
             optimization_config: OptimizationConfig {
@@ -1525,12 +1744,26 @@ mod tests {
         let text = edited(|j| j["optimization_runs"][0]["search"] = "gone".into());
         let lone = parse_project(&text).unwrap().project;
         assert!(lone.runs[0].search.is_none() && lone.searches.is_empty());
+        // Format 1 held the searches of its one airfoil.
+        let old = parse_project(&format_1(&p, "1.2.0", |_| {})).unwrap().project;
+        assert_eq!(old.searches[0].airfoil, old.airfoils[0].id);
+        assert_eq!(old.runs.iter().filter(|r| r.airfoil == old.airfoils[0].id).count(), 2);
     }
 
+    /// Python's layout, with a list of plain values on one line.
     #[test]
-    fn python_layout() {
-        let text = Json::Object(vec![("a".into(), Json::Array(vec![Json::Float(1e-7), Json::Int(2)])), ("b".into(), Json::Array(vec![]))])
-            .to_text();
-        assert_eq!(text, "{\n  \"a\": [\n    1e-07,\n    2\n  ],\n  \"b\": []\n}");
+    fn layout() {
+        let point = || Json::Array(vec![Json::Float(1e-7), Json::Int(2)]);
+        let text = Json::Object(vec![
+            ("a".into(), point()),
+            ("b".into(), Json::Array(vec![])),
+            ("c".into(), Json::Array(vec![point(), point()])),
+            ("d".into(), Json::Array(vec![Json::Str("G3".into()), Json::Null, Json::Bool(true), Json::Float(f64::INFINITY)])),
+        ])
+        .to_text();
+        assert_eq!(
+            text,
+            "{\n  \"a\": [1e-07, 2],\n  \"b\": [],\n  \"c\": [\n    [1e-07, 2],\n    [1e-07, 2]\n  ],\n  \"d\": [\"G3\", null, true, \"Infinity\"]\n}"
+        );
     }
 }

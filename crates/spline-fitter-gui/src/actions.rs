@@ -145,18 +145,11 @@ impl App {
         }
     }
 
-    /// Makes `coords` the airfoil (a file's `path` goes to the recent
-    /// files); false when the coordinates cannot be split, or while the
-    /// user is asked about unsaved runs (the answer finishes it).
+    /// Puts `coords` on screen as an airfoil of the project: added to it,
+    /// or the one it holds already, with its latest fit (a file's `path`
+    /// goes to the recent files); false when the coordinates cannot be
+    /// split.
     pub fn set_airfoil(&mut self, coords: Vec<Vec2>, filename: &str, name: &str, precision: i32, path: &str, verb: &str) -> bool {
-        let args = (coords.clone(), filename.to_string(), name.to_string(), precision, path.to_string(), verb.to_string());
-        let retry = move |app: &mut App| {
-            let (coords, filename, name, precision, path, verb) = args;
-            app.set_airfoil(coords, &filename, &name, precision, &path, &verb);
-        };
-        if !self.confirm_discard("Cancelled: the project stays open", retry) {
-            return false;
-        }
         // The airfoil is built before anything changes, so a failure leaves
         // the window as it was.
         let most = coords.len().saturating_sub(1).max(1);
@@ -171,27 +164,117 @@ impl App {
                 return false;
             }
         };
+        let id = self.projects.file.get_or_insert_with(ProjectFile::default).add_airfoil(airfoil);
+        self.projects.touch();
+        if !path.is_empty() {
+            self.projects.sources.insert(id.clone(), path.to_string());
+            self.store.add_recent(Path::new(path));
+        }
+        self.show_airfoil(&id);
+        if let Some(run) = self.projects.last_run_of(&id).cloned() {
+            self.show_run(&run);
+        }
+        if let Some(a) = &self.airfoil {
+            let status =
+                format!("{verb}: {} ({} points, {} sections: {})", a.display_name(), a.coordinates.len(), a.num_sections(), a.section_sizes());
+            self.set_status(status);
+        }
+        true
+    }
+
+    /// Puts an airfoil of the project on screen, without a fit; false when
+    /// the project does not hold it.
+    pub fn show_airfoil(&mut self, id: &str) -> bool {
+        let Some(airfoil) = self.projects.file.as_ref().and_then(|f| f.airfoil(id)).cloned() else { return false };
+        self.projects.current = Some(id.to_string());
+        self.projects.shown_run = None;
         self.quiet = true;
-        self.settings.sections.value.set_max(most);
+        self.settings.sections.value.set_max(airfoil.coordinates.len().saturating_sub(1).max(1));
         self.fit = None;
-        self.reset_project();
-        self.airfoil_path = path.to_string();
         self.main_plot.set_data(&airfoil.coordinates);
         self.loss.reset();
-        self.set_status(format!(
-            "{verb}: {} ({} points, {} sections: {})",
-            airfoil.display_name(),
-            airfoil.coordinates.len(),
-            airfoil.num_sections(),
-            airfoil.section_sizes()
-        ));
         self.airfoil = Some(airfoil);
         self.update_auto_tolerance();
         self.accept_settings_quietly();
-        if !path.is_empty() {
-            self.store.add_recent(Path::new(path));
-        }
         true
+    }
+
+    /// Puts another airfoil of the project on screen, with its latest fit
+    /// (the sidebar's list of airfoils).
+    pub fn switch_airfoil(&mut self, id: &str) {
+        if self.fitting() {
+            return self.set_status("Cancel the running fit to show another airfoil");
+        }
+        if !self.show_airfoil(id) {
+            return;
+        }
+        let last = self.projects.last_run_of(id).cloned();
+        if let Some(run) = &last {
+            self.show_run(run);
+        }
+        let Some(a) = &self.airfoil else { return };
+        let fit = last.map_or_else(|| "not fitted yet".to_string(), |r| format!("run {}", r.number));
+        let status = format!("Showing {} ({} points), {fit}", a.display_name(), a.coordinates.len());
+        self.set_status(status);
+    }
+
+    /// The airfoil on screen cut another way, in the window and the project.
+    pub fn set_current_split(&mut self, airfoil: AirfoilData) {
+        if let (Some(file), Some(id)) = (self.projects.file.as_mut(), self.projects.current.as_deref()) {
+            if let Some(kept) = file.airfoil_mut(id) {
+                *kept = airfoil.clone();
+            }
+        }
+        self.airfoil = Some(airfoil);
+    }
+
+    /// No airfoil on screen: the window as at its start.
+    pub fn clear_airfoil(&mut self) {
+        self.airfoil = None;
+        self.fit = None;
+        self.projects.current = None;
+        self.projects.shown_run = None;
+        self.main_plot.set_data(&[]);
+        self.loss.reset();
+    }
+
+    /// The file the airfoil on screen was read from, else the project's.
+    pub fn airfoil_source(&self) -> String {
+        let read = self.projects.current.as_ref().and_then(|id| self.projects.sources.get(id)).cloned();
+        read.or_else(|| self.projects.path.as_ref().map(|p| p.to_string_lossy().into_owned())).unwrap_or_default()
+    }
+
+    /// File > New project: an empty project.
+    pub fn on_new_project(&mut self) {
+        if self.fitting() {
+            return;
+        }
+        if !self.confirm_discard("Cancelled: the project stays open", |app| app.on_new_project()) {
+            return;
+        }
+        self.clear_airfoil();
+        self.reset_project();
+        self.set_status("New project");
+    }
+
+    /// Edit > Remove airfoil from project: asks when it has runs.
+    pub fn confirm_remove_airfoil(&mut self) {
+        let Some(id) = self.projects.current.clone().filter(|_| !self.fitting()) else { return };
+        let k = self.projects.runs().iter().filter(|r| r.airfoil == id).count();
+        if k == 0 {
+            return self.remove_current_airfoil();
+        }
+        let name = self.projects.airfoil_name(&id).to_string();
+        self.dialog = Some(Dialog::Confirm(crate::dialogs::Confirm {
+            title: "Remove airfoil".into(),
+            message: format!("Remove {name} and its {k} run{} from the project? Edit > Restore deleted runs brings them back.", plural(k)),
+            accept: "Remove".into(),
+            other: None,
+            save_first: false,
+            default_accept: true,
+            cancelled: String::new(),
+            then: Box::new(|app: &mut App| app.remove_current_airfoil()),
+        }));
     }
 
     /// Records this frame's program changes as quiet ones.
@@ -441,6 +524,7 @@ impl App {
 
     pub fn reset_project(&mut self) {
         self.projects = crate::explorer::Projects::default();
+        self.projects.touch();
         self.explorer.forget_points();
         self.refresh_comparison();
     }
@@ -481,10 +565,14 @@ impl App {
         };
         let path = path.as_path();
         let loaded = match read.and_then(|l| {
-            // Pre-check: the airfoil splits and the last run's curves build.
-            l.project.airfoil.resplit(l.project.airfoil.split)?;
+            // Pre-check: the airfoils split and the last run's curves build.
+            for a in &l.project.airfoils {
+                a.data.resplit(a.data.split)?;
+            }
             if let Some(last) = l.project.runs.last() {
-                l.project.airfoil.resplit(last.spline_config.split())?;
+                if let Some(a) = l.project.airfoil(&last.airfoil) {
+                    a.resplit(last.spline_config.split())?;
+                }
                 for (i, c) in last.result.section_control_points.iter().enumerate() {
                     spline_fitter::BSpline::new(last.result.degree, last.result.knots(i), c.clone())?;
                 }
@@ -503,26 +591,29 @@ impl App {
         }) {
             return false;
         }
-        let ProjectFile { metadata, airfoil, runs, searches } = loaded.project;
-        let run_count = runs.len();
-        self.quiet = true;
-        self.fit = None;
-        self.settings.sections.value.set_max(airfoil.coordinates.len().saturating_sub(1).max(1));
-        self.settings.sections.value.set(airfoil.split.sections);
-        self.airfoil_path = path.to_string_lossy().into_owned();
-        self.main_plot.set_data(&airfoil.coordinates);
-        self.loss.reset();
-        self.airfoil = Some(airfoil.clone());
+        let project = loaded.project;
+        let (airfoil_count, run_count) = (project.airfoils.len(), project.runs.len());
+        let last = project.runs.last().cloned();
+        // The airfoil of the last run shows, else the first.
+        let shown = last.as_ref().map(|r| r.airfoil.clone()).or_else(|| project.airfoils.first().map(|a| a.id.clone()));
+        self.clear_airfoil();
         self.projects = crate::explorer::Projects::default();
-        self.projects.last_number = runs.iter().map(|r| r.number).max().unwrap_or(0);
-        self.projects.file = Some(ProjectFile { metadata, airfoil, runs, searches });
+        self.projects.last_number = project.runs.iter().map(|r| r.number).max().unwrap_or(0);
+        self.projects.file = Some(project);
         self.projects.path = Some(path.to_path_buf());
-        self.accept_settings_quietly();
-        if let Some(last) = self.projects.file.as_ref().and_then(|f| f.runs.last()).cloned() {
+        self.projects.touch();
+        if shown.is_some_and(|id| self.show_airfoil(&id)) {
+            let sections = self.airfoil.as_ref().map_or(1, |a| a.split.sections);
+            self.quiet = true;
+            self.settings.sections.value.set(sections);
+            self.accept_settings_quietly();
+        }
+        if let Some(last) = last {
             self.apply_run_settings(&last);
             self.show_run(&last);
+            let airfoils = if airfoil_count == 1 { String::new() } else { format!("{airfoil_count} airfoils and ") };
             self.set_status(format!(
-                "Loaded project with {run_count} run{}, showing {}",
+                "Loaded project with {airfoils}{run_count} run{}, showing {}",
                 plural(run_count),
                 last.optimization_config.optimizer.display_name()
             ));
@@ -558,13 +649,15 @@ impl App {
 
     /// File > Save project as.
     pub fn on_save_project_as(&mut self) {
-        let Some(airfoil) = self.airfoil.clone() else {
+        let Some(file) = &self.projects.file else {
             return self.set_status("No airfoil loaded to save.");
         };
-        if self.projects.file.is_none() {
-            self.projects.file = Some(ProjectFile::new(airfoil.clone()));
-        }
-        let default = format!("{}.asfproj", file_stem(airfoil.file_base(), "project"));
+        // Named after its airfoil while it has one.
+        let base = match &file.airfoils[..] {
+            [only] => only.data.file_base(),
+            _ => "",
+        };
+        let default = format!("{}.asfproj", file_stem(base, "project"));
         // The browser downloads the file under its default name.
         #[cfg(target_arch = "wasm32")]
         self.save_project_to(PathBuf::from(default));

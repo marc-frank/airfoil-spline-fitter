@@ -118,10 +118,13 @@ fn projects_round_trip_with_python() {
     let report = project.runs[0].result.report.as_ref().unwrap();
     assert!(report.fairness.as_ref().unwrap().leading_edge_radius.is_some());
     assert!(report.shape.is_some());
-    // Rust writes what it read, field for field and in Python's layout.
+    // Python's project has one airfoil, which its runs fitted.
+    assert_eq!(project.airfoils.len(), 1);
+    assert!(project.runs.iter().all(|r| r.airfoil == project.airfoils[0].id));
+    // Rust writes what it read, field for field, in its own format.
     let mut again = parse_project(&project_text(project)).unwrap().project;
-    assert_eq!(&again, project);
-    assert_eq!(project_text(project), text.replace("\r\n", "\n").trim_end());
+    assert_eq!((&again.airfoils, &again.runs, &again.searches), (&project.airfoils, &project.runs, &project.searches));
+    assert_eq!((project.metadata.format_version.as_str(), again.metadata.format_version.as_str()), ("1.0.0", "2.0.0"));
     if let Some(path) = std::env::var_os("SPLINE_FITTER_PROJECT_OUT") {
         save_project(&mut again, std::path::Path::new(&path)).unwrap();
     }

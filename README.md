@@ -29,9 +29,11 @@ where sections meet, written exactly to STEP, IGES or DXF.
   runs; convergence; and a comparison of the project's runs along any column.
 - **Projects**: every fit is kept as a run in an `.asfproj` file (standard
   JSON), each refit of a tolerance search too; the explorer filters, sorts
-  and pivots the runs and applies a run's settings.
+  and pivots the runs and applies a run's settings. A project holds any
+  number of airfoils: each one opened joins it, and the runs of all of them
+  compare in one table.
 - **Sweeps** of degree, control points, sections and smoothing, and **batch
-  conversion** of a folder of airfoils.
+  conversion** of a folder of airfoils, whose fits are kept in the project.
 - Reads Selig and Lednicer files in many number formats (decimal commas,
   Fortran exponents, fixed-width columns, 0-100 scaling), keeping the file's
   chord line, and drops common file mistakes that make a fit loop: a point
@@ -310,6 +312,34 @@ Python results), and differs on purpose where the behaviour was a defect:
   settings replaces it. Project files are format 1.2.0: searches are under
   `tolerance_searches`, each run names its search (`search`); readers of
   format 1.0 see the runs as plain fixed-count runs.
+- A project holds several airfoils, where Python's held one. Opening,
+  pasting or creating an airfoil adds it to the open project and shows it
+  (one the project holds already is shown again, with its latest fit)
+  instead of asking about unsaved runs and starting a new project; File >
+  New project starts an empty one, and Edit > Remove airfoil from project
+  removes the one on screen with its runs (Restore deleted runs brings them
+  back). Every run and search names its airfoil: the run table has an
+  Airfoil column, selecting a run shows its airfoil, and the Data section
+  lists the airfoils once there are several. A fit replaces the run of the
+  same settings of its own airfoil only, and a sweep compares the runs of
+  the airfoil on screen. The table and the runs plot show the runs of every
+  airfoil; the Airfoil column's filter narrows them to one.
+- Batch conversion keeps every finished fit in the project, on its
+  airfoil, beside the file it writes (a fit that missed its tolerance writes
+  no file and is kept too), so a batch can be sorted, filtered and looked
+  through in the explorer and saved as a project.
+- Project files are format 2.0.0, written on every save: `airfoils` (each
+  with an `airfoil_id`), every run and search with its `airfoil`. The copies
+  format 1 carried are gone (the airfoil's `sections` and `num_sections`,
+  the result's `degree`, the metadata's `format_version`), a list of numbers
+  is written on one line and the loss history as three lists, which makes a
+  file less than half as large (a project of 1171 runs: 44 MB, from 104).
+  Projects of format 1, Python's too, are read; release 0.1.0 and the
+  Python version do not open format 2 and say to update.
+- The run table lays its rows out when the runs, the filters or the sorting
+  change instead of on every frame, and writing a project no longer expands
+  every number to 800 digits to look for a rounding tie: a project of
+  12 000 runs draws in under 10 ms a frame and saves in about 9 s.
 - The run table has one Control points column: per section, of the fit
   (a search: of the fit it ended on). Python showed the count as set (for
   a tolerance run, its start count) and the fitted count of the whole

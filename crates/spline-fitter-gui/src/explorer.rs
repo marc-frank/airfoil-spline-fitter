@@ -9,7 +9,7 @@ use egui_extras::{Column as TableColumn, TableBuilder};
 use spline_fitter::bspline_varpro::KnotPlacement;
 use spline_fitter::formatting::{format_duration, number};
 use spline_fitter::models::{FitResult, IterationRecord, OptimizationConfig, SplineConfig, ToleranceMetric};
-use spline_fitter::project::{number_runs, OptimizationRun, ProjectFile, ToleranceSearch};
+use spline_fitter::project::{number_runs, OptimizationRun, ProjectAirfoil, ProjectFile, ToleranceSearch};
 
 use crate::app::App;
 use crate::runs::{compare, parse_filter, row, term_matches, Cell, Filters, Term, COLUMNS, CONTROL_POINTS_COLUMN, RMS_DEVIATION_COLUMN};
@@ -30,11 +30,25 @@ pub struct Projects {
     pub selected: BTreeSet<String>,
     /// The run whose fit is shown.
     pub shown_run: Option<String>,
+    /// The airfoil on screen (its id in the project).
+    pub current: Option<String>,
+    /// The file each airfoil was read from in this session, by its id.
+    pub sources: BTreeMap<String, String>,
+    /// Set anew ([`Self::touch`]) with every change to the airfoils, runs
+    /// and searches: what was made from them is out of date when it differs.
+    pub stamp: u64,
+}
+
+/// A number no earlier call returned.
+fn next_stamp() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 /// What one deletion took away, to restore.
 #[derive(Default)]
 pub struct Deleted {
+    airfoils: Vec<(usize, ProjectAirfoil)>,
     runs: Vec<(usize, OptimizationRun)>,
     searches: Vec<(usize, ToleranceSearch)>,
 }
@@ -52,6 +66,40 @@ pub fn row_search(row: &str) -> Option<&str> {
 }
 
 impl Projects {
+    /// Says that the airfoils, runs or searches changed.
+    pub fn touch(&mut self) {
+        self.stamp = next_stamp();
+    }
+
+    pub fn airfoils(&self) -> &[ProjectAirfoil] {
+        self.file.as_ref().map_or(&[], |f| &f.airfoils)
+    }
+
+    /// The name of an airfoil of the project, as the window shows it.
+    pub fn airfoil_name(&self, id: &str) -> &str {
+        self.file.as_ref().and_then(|f| f.airfoil(id)).map_or("", |a| a.display_name())
+    }
+
+    /// The airfoils' names by their ids, to name the airfoil of many runs.
+    pub fn airfoil_names(&self) -> BTreeMap<&str, &str> {
+        self.airfoils().iter().map(|a| (a.id.as_str(), a.data.display_name())).collect()
+    }
+
+    /// The runs by their ids, to find many of them.
+    pub fn runs_by_id(&self) -> std::collections::HashMap<&str, &OptimizationRun> {
+        self.runs().iter().map(|r| (r.run_id.as_str(), r)).collect()
+    }
+
+    /// The latest run of an airfoil.
+    pub fn last_run_of(&self, airfoil: &str) -> Option<&OptimizationRun> {
+        self.runs().iter().rev().find(|r| r.airfoil == airfoil)
+    }
+
+    /// Whether a run or search fitted the airfoil on screen.
+    pub fn of_current(&self, airfoil: &str) -> bool {
+        self.current.as_deref() == Some(airfoil)
+    }
+
     pub fn runs(&self) -> &[OptimizationRun] {
         self.file.as_ref().map_or(&[], |f| &f.runs)
     }
@@ -111,17 +159,19 @@ impl Projects {
         match &self.file {
             None => "No project".into(),
             Some(f) => {
-                let k = f.runs.len();
+                let (a, k) = (f.airfoils.len(), f.runs.len());
                 let searches = match f.searches.len() {
                     0 => String::new(),
                     1 => ", 1 tolerance search".into(),
                     n => format!(", {n} tolerance searches"),
                 };
+                let s = |n: usize| if n == 1 { "" } else { "s" };
                 format!(
-                    "{}{}\n{k} optimization run{}{searches}",
+                    "{}{}\n{a} airfoil{}, {k} optimization run{}{searches}",
                     self.name(),
                     if self.modified { "*" } else { "" },
-                    if k == 1 { "" } else { "s" }
+                    s(a),
+                    s(k)
                 )
             }
         }
@@ -180,6 +230,36 @@ pub struct ExplorerState {
     reveal: bool,
     /// The tolerance searches shown open, their runs below them.
     pub expanded: BTreeSet<String>,
+    /// The run table's rows, as last made.
+    table: Option<std::rc::Rc<Table>>,
+}
+
+/// The rows of the run table, kept until what they are made from changes
+/// (a project of thousands of runs takes a while to lay out).
+struct Table {
+    key: TableKey,
+    rows: Vec<(String, Vec<(Cell, String)>)>,
+    /// The ids of the rows.
+    order: Vec<String>,
+    kinds: Vec<RowKind>,
+    /// How far the runs of a search stand in.
+    indent: f32,
+    /// Of the ids of the rows and the indent: other rows are another table
+    /// to its scroll state.
+    generation: u64,
+    /// The column widths, for an order of the columns and a font scale.
+    widths: std::cell::RefCell<Option<(Vec<usize>, u32, Vec<f32>)>>,
+}
+
+/// What the rows are made from.
+#[derive(PartialEq)]
+struct TableKey {
+    stamp: u64,
+    /// Airfoils, runs and searches (a change that was not stamped).
+    counts: [usize; 3],
+    filters: Filters,
+    sort: (usize, bool),
+    expanded: BTreeSet<String>,
 }
 
 /// A row of the run table.
@@ -214,6 +294,7 @@ impl Default for ExplorerState {
             scroll_to: None,
             reveal: false,
             expanded: BTreeSet::new(),
+            table: None,
         }
     }
 }
@@ -232,7 +313,7 @@ impl ExplorerState {
 
     /// The explorer with its columns in the order `names` (the stored
     /// [`column_names`](Self::column_names)); unknown names are skipped
-    /// and columns not named follow in their usual order.
+    /// and a column not named follows the one it usually follows.
     pub fn with_column_names(names: &str) -> Self {
         let mut order: Vec<usize> = Vec::new();
         for name in names.split(',') {
@@ -240,8 +321,14 @@ impl ExplorerState {
                 order.push(c);
             }
         }
-        let rest: Vec<usize> = (0..COLUMNS.len()).filter(|c| !order.contains(c)).collect();
-        order.extend(rest);
+        // A column not named (a new one) stands after the column it usually
+        // follows.
+        for c in 0..COLUMNS.len() {
+            if !order.contains(&c) {
+                let at = c.checked_sub(1).and_then(|before| order.iter().position(|&o| o == before)).map_or(0, |i| i + 1);
+                order.insert(at, c);
+            }
+        }
         ExplorerState { order, ..ExplorerState::default() }
     }
 
@@ -301,7 +388,8 @@ impl App {
     /// The cells of a tolerance search's row: its settings, the fit it
     /// ended on, its effort; the Run column names it.
     fn search_cells(&self, search: &ToleranceSearch) -> Option<Vec<(Cell, String)>> {
-        let mut cells = row(&self.projects.search_as_run(search, true)?);
+        let run = self.projects.search_as_run(search, true)?;
+        let mut cells = row(&run, self.projects.airfoil_name(&run.airfoil));
         let name = format!("Search {}", search.number);
         cells[0] = (Cell::Text(name.clone()), name);
         Some(cells)
@@ -313,6 +401,8 @@ impl App {
     /// it or one of its runs passes the filters.
     pub(crate) fn visible_rows(&self) -> Vec<(String, Vec<(Cell, String)>)> {
         let shows = |cells: &Vec<(Cell, String)>| self.explorer.filters.shows(cells);
+        let names = self.projects.airfoil_names();
+        let row = |r: &OptimizationRun| row(r, names.get(r.airfoil.as_str()).copied().unwrap_or(""));
         let runs_of = |id: &str| -> Vec<(String, Vec<(Cell, String)>)> {
             self.projects.runs().iter().filter(|r| r.search.as_deref() == Some(id)).map(|r| (r.run_id.clone(), row(r))).collect()
         };
@@ -344,18 +434,55 @@ impl App {
         all
     }
 
+    /// The run table's rows ([`Self::visible_rows`]), made anew only when
+    /// the project, the filters, the sorting or the open searches changed.
+    fn table(&mut self) -> std::rc::Rc<Table> {
+        let key = TableKey {
+            stamp: self.projects.stamp,
+            counts: [self.projects.airfoils().len(), self.projects.runs().len(), self.projects.searches().len()],
+            filters: self.explorer.filters.clone(),
+            sort: self.explorer.sort,
+            expanded: self.explorer.expanded.clone(),
+        };
+        if let Some(table) = self.explorer.table.as_ref().filter(|t| t.key == key) {
+            return table.clone();
+        }
+        let rows = self.visible_rows();
+        let order: Vec<String> = rows.iter().map(|(id, _)| id.clone()).collect();
+        // The row of a search opens and closes at its chevron; its runs
+        // below it are indented as far.
+        let in_search: std::collections::HashSet<&str> =
+            self.projects.runs().iter().filter(|r| r.search.is_some()).map(|r| r.run_id.as_str()).collect();
+        let kinds: Vec<RowKind> = order
+            .iter()
+            .map(|id| match row_search(id) {
+                Some(s) => RowKind::Search { open: self.explorer.expanded.contains(s) },
+                None if in_search.contains(id.as_str()) => RowKind::InSearch,
+                None => RowKind::Run,
+            })
+            .collect();
+        let indent = if kinds.iter().any(|k| *k != RowKind::Run) { size::GLYPH + size::TIGHT } else { 0.0 };
+        let generation = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            order.hash(&mut h);
+            indent.to_bits().hash(&mut h);
+            h.finish()
+        };
+        let table = std::rc::Rc::new(Table { key, rows, order, kinds, indent, generation, widths: Default::default() });
+        self.explorer.table = Some(table.clone());
+        table
+    }
+
     /// Every run that passes the filters, the runs of searches open or not
     /// (what the runs plot shows).
     fn filtered_runs(&self) -> Vec<(String, Vec<(Cell, String)>)> {
+        let names = self.projects.airfoil_names();
+        let row = |r: &OptimizationRun| row(r, names.get(r.airfoil.as_str()).copied().unwrap_or(""));
         let mut rows: Vec<_> =
             self.projects.runs().iter().map(|r| (r.run_id.clone(), row(r))).filter(|(_, c)| self.explorer.filters.shows(c)).collect();
         self.sort_rows(&mut rows);
         rows
-    }
-
-    /// Whether a row is a run inside a search.
-    fn in_search(&self, id: &str) -> bool {
-        self.projects.run(id).is_some_and(|r| r.search.is_some())
     }
 
     /// Opens or closes a search's row.
@@ -387,23 +514,24 @@ impl App {
         });
     }
 
-    /// Adds a fit as a run (replacing the run of the same settings); false
-    /// when a cancelled fit would replace a finished run.
+    /// Adds a fit of an airfoil of the project as a run (replacing that
+    /// airfoil's run of the same settings); false when a cancelled fit
+    /// would replace a finished run.
     pub fn add_run(
         &mut self,
+        airfoil: &str,
         config: &SplineConfig,
         opt: &OptimizationConfig,
         fit: FitResult,
         history: Vec<IterationRecord>,
         replot: bool,
     ) -> bool {
-        let Some(airfoil) = self.airfoil.clone() else { return false };
-        let existing = self.projects.runs().iter().position(|r| same_settings(r, config, opt, &fit));
-        if fit.cancelled && existing.is_some_and(|i| !self.projects.runs()[i].result.cancelled) {
+        let Some(file) = self.projects.file.as_mut() else { return false };
+        let existing = file.runs.iter().position(|r| r.airfoil == airfoil && same_settings(r, config, opt, &fit));
+        if fit.cancelled && existing.is_some_and(|i| !file.runs[i].result.cancelled) {
             return false;
         }
-        let file = self.projects.file.get_or_insert_with(|| ProjectFile::new(airfoil));
-        let mut run = OptimizationRun::new(config.clone(), opt.clone(), fit, history);
+        let mut run = OptimizationRun::new(airfoil, config.clone(), opt.clone(), fit, history);
         let id = run.run_id.clone();
         match existing {
             Some(i) => {
@@ -415,8 +543,12 @@ impl App {
                 self.projects.last_number = number_runs(&mut file.runs, self.projects.last_number);
             }
         }
-        self.projects.shown_run = Some(id);
+        // The fit of the airfoil on screen is the one shown.
+        if self.projects.of_current(airfoil) {
+            self.projects.shown_run = Some(id);
+        }
         self.projects.modified = true;
+        self.projects.touch();
         self.retain_selection();
         if replot {
             self.explorer.forget_points();
@@ -425,9 +557,14 @@ impl App {
         true
     }
 
-    fn retain_selection(&mut self) {
+    /// Keeps the selection to the runs and searches the project has.
+    pub(crate) fn retain_selection(&mut self) {
+        if self.projects.selected.is_empty() {
+            return;
+        }
         let ids: BTreeSet<String> = self.projects.runs().iter().map(|r| r.run_id.clone()).collect();
-        self.projects.selected.retain(|id| ids.contains(id));
+        let rows: BTreeSet<String> = self.projects.searches().iter().map(|s| search_row(&s.search_id)).collect();
+        self.projects.selected.retain(|id| ids.contains(id) || rows.contains(id));
     }
 
     /// Sets the sidebar to a run's settings (one undo step).
@@ -435,8 +572,11 @@ impl App {
         self.as_one_step(|app| app.settings.apply_run(run));
     }
 
-    /// Shows a run's fit and history.
+    /// Shows a run's fit and history, on the airfoil it fitted.
     pub fn show_run(&mut self, run: &OptimizationRun) {
+        if !self.projects.of_current(&run.airfoil) && !self.show_airfoil(&run.airfoil) {
+            return;
+        }
         self.fit = Some(run.result.clone());
         self.projects.shown_run = Some(run.run_id.clone());
         self.loss.set_data(run.loss_history.iter().map(|r| (r.iteration, r.elapsed_seconds, r.error)).collect());
@@ -514,6 +654,7 @@ impl App {
         let n = removed.searches.len();
         self.projects.deleted.push(removed);
         self.projects.modified = true;
+        self.projects.touch();
         self.explorer.forget_points();
         self.refresh_comparison();
         let searches = match n {
@@ -528,6 +669,11 @@ impl App {
         let (Some(batch), Some(file)) = (self.projects.deleted.pop(), self.projects.file.as_mut()) else { return };
         let k = batch.runs.len();
         self.projects.selected.clear();
+        let airfoil = batch.airfoils.first().map(|(_, a)| (a.id.clone(), a.data.display_name().to_string()));
+        for (index, airfoil) in batch.airfoils {
+            let at = index.min(file.airfoils.len());
+            file.airfoils.insert(at, airfoil);
+        }
         let restored: BTreeSet<String> = batch.searches.iter().map(|(_, s)| s.search_id.clone()).collect();
         for (index, search) in batch.searches {
             self.projects.selected.insert(search_row(&search.search_id));
@@ -541,10 +687,64 @@ impl App {
             let at = index.min(file.runs.len());
             file.runs.insert(at, run);
         }
-        self.projects.modified = true;
+        self.projects.modified |= k > 0;
+        self.projects.touch();
         self.explorer.forget_points();
         self.refresh_comparison();
-        self.set_status(format!("Restored {k} run{}", if k == 1 { "" } else { "s" }));
+        let runs = format!("{k} run{}", if k == 1 { "" } else { "s" });
+        match airfoil {
+            // A removed airfoil is back on screen.
+            Some((id, name)) => {
+                self.switch_airfoil(&id);
+                self.set_status(format!("Restored {name} and its {runs}"));
+            }
+            None => self.set_status(format!("Restored {runs}")),
+        }
+    }
+
+    /// Removes the airfoil on screen from the project, with its runs and
+    /// searches; Edit > Restore deleted runs brings them back.
+    pub fn remove_current_airfoil(&mut self) {
+        let (Some(file), Some(id)) = (self.projects.file.as_mut(), self.projects.current.clone()) else { return };
+        let Some(at) = file.airfoils.iter().position(|a| a.id == id) else { return };
+        let mut removed = Deleted::default();
+        removed.airfoils.push((at, file.airfoils.remove(at)));
+        let mut i = 0;
+        while i < file.runs.len() {
+            if file.runs[i].airfoil == id {
+                removed.runs.push((i + removed.runs.len(), file.runs.remove(i)));
+            } else {
+                i += 1;
+            }
+        }
+        let mut i = 0;
+        while i < file.searches.len() {
+            if file.searches[i].airfoil == id {
+                removed.searches.push((i + removed.searches.len(), file.searches.remove(i)));
+            } else {
+                i += 1;
+            }
+        }
+        // The airfoil that took its place in the list, else the one before.
+        let next = file.airfoils.get(at).or(file.airfoils.last()).map(|a| a.id.clone());
+        let k = removed.runs.len();
+        let name = removed.airfoils[0].1.data.display_name().to_string();
+        self.projects.modified |= k > 0;
+        self.projects.touch();
+        self.projects.deleted.push(removed);
+        self.retain_selection();
+        match next {
+            Some(next) => self.switch_airfoil(&next),
+            None => self.clear_airfoil(),
+        }
+        self.explorer.forget_points();
+        self.refresh_comparison();
+        let runs = match k {
+            0 => String::new(),
+            1 => " and its run".into(),
+            k => format!(" and its {k} runs"),
+        };
+        self.set_status(format!("Removed {name}{runs} from the project; Edit > Restore deleted runs brings them back"));
     }
 
     /// Redraws the comparison plot from the visible runs.
@@ -580,8 +780,9 @@ impl App {
         // The runs' shared tolerance (of their search), where the y axis is
         // the metric it limits.
         let y = COLUMNS[yc].name;
+        let runs = self.projects.runs_by_id();
         let tolerance_of = |id: &str| {
-            let run = self.projects.run(id)?;
+            let run = *runs.get(id)?;
             match run.search.as_deref().and_then(|s| self.projects.search(s)) {
                 Some(search) => {
                     let o = &search.optimization_config;
@@ -598,7 +799,7 @@ impl App {
         // "Run 12: 30 control points, max deviation 8.71e-06"
         let label = |id: &str, y: f64| {
             let value = if y.fract() == 0.0 { format!("{y}") } else { spline_fitter::formatting::format_error(y) };
-            self.projects.run(id).map_or_else(String::new, |r| {
+            runs.get(id).map_or_else(String::new, |r| {
                 // "max deviation", but "RMS deviation".
                 let name = COLUMNS[yc].name;
                 let name = if name.starts_with("RMS") { name.to_string() } else { name.to_lowercase() };
@@ -618,10 +819,15 @@ impl App {
         }
         let points = self.explorer.points.as_ref().unwrap();
         // A selected search marks its runs.
-        let selected = |id: &String| {
-            self.projects.selected.contains(id)
-                || self.projects.run(id).and_then(|r| r.search.as_deref()).is_some_and(|s| self.projects.selected.contains(&search_row(s)))
-        };
+        let searches: BTreeSet<&str> = self.projects.selected.iter().filter_map(|id| row_search(id)).collect();
+        let of_selected: std::collections::HashSet<&str> = self
+            .projects
+            .runs()
+            .iter()
+            .filter(|r| r.search.as_deref().is_some_and(|s| searches.contains(s)))
+            .map(|r| r.run_id.as_str())
+            .collect();
+        let selected = |id: &String| self.projects.selected.contains(id) || of_selected.contains(id.as_str());
         self.comparison.marked = points.iter().filter(|(id, _)| selected(id)).map(|(_, p)| *p).collect();
     }
 
@@ -914,26 +1120,15 @@ impl App {
     /// The runs, one per row; the body's scroll state (no rows: none).
     fn run_table(&mut self, ui: &mut Ui) -> Option<egui::scroll_area::ScrollAreaOutput<()>> {
         let p = self.palette.clone();
-        let rows = self.visible_rows();
-        let order: Vec<String> = rows.iter().map(|(id, _)| id.clone()).collect();
+        let table = self.table();
+        let (rows, order, kinds, indent) = (&table.rows, &table.order, &table.kinds, table.indent);
         let mut clicked: Option<(String, egui::Modifiers)> = None;
         let mut double: Option<String> = None;
         let delete = ui.input(|i| i.key_pressed(egui::Key::Delete));
         let page = ((ui.available_height() - HEADER_HEIGHT) / ROW_HEIGHT).floor().max(1.0) as usize;
-        let reveal = self.table_keys(ui, &order, false, page).or_else(|| self.take_reveal(&order));
+        let reveal = self.table_keys(ui, order, false, page).or_else(|| self.take_reveal(order));
         let columns: Vec<usize> = self.explorer.order.clone();
         self.explorer.sections.clear();
-        // A search's row opens and closes at its chevron; its runs below it
-        // are indented as far.
-        let kinds: Vec<RowKind> = rows
-            .iter()
-            .map(|(id, _)| match row_search(id) {
-                Some(s) => RowKind::Search { open: self.explorer.expanded.contains(s) },
-                None if self.in_search(id) => RowKind::InSearch,
-                None => RowKind::Run,
-            })
-            .collect();
-        let indent = if kinds.iter().any(|k| *k != RowKind::Run) { size::GLYPH + size::TIGHT } else { 0.0 };
         let mut toggle: Option<(String, bool)> = None;
         // Columns fit their contents when the runs change: the header with
         // room for its glyphs, or the widest cell.
@@ -941,27 +1136,25 @@ impl App {
         let mono = egui::FontId::monospace(crate::theme::typeface::BASE);
         let measure = |s: &str, font: &egui::FontId| crate::fonts::layout_width(ui, s, font, false);
         let header_width = |c: usize| crate::fonts::layout_width(ui, COLUMNS[c].name, &text, false) + HEADER_EXTRA;
-        let widths: Vec<f32> = columns
-            .iter()
-            .map(|&c| {
-                let header = header_width(c);
-                let cells = rows
-                    .iter()
-                    .map(|(_, cells)| measure(&cells[c].1, if cells[c].0.is_number() { &mono } else { &text }) + CELL_EXTRA)
-                    .fold(0.0, f32::max);
-                let first = columns.first() == Some(&c);
-                header.max(cells + if first { indent } else { 0.0 }).ceil()
-            })
-            .collect();
-        let generation = {
-            use std::hash::{Hash, Hasher};
-            let mut h = std::collections::hash_map::DefaultHasher::new();
-            for (id, _) in &rows {
-                id.hash(&mut h);
-            }
-            indent.to_bits().hash(&mut h);
-            h.finish()
-        };
+        let scale = ui.ctx().pixels_per_point().to_bits();
+        let kept = table.widths.borrow().as_ref().filter(|(c, s, _)| *c == columns && *s == scale).map(|(_, _, w)| w.clone());
+        let widths: Vec<f32> = kept.unwrap_or_else(|| {
+            let widths: Vec<f32> = columns
+                .iter()
+                .map(|&c| {
+                    let header = header_width(c);
+                    let cells = rows
+                        .iter()
+                        .map(|(_, cells)| measure(&cells[c].1, if cells[c].0.is_number() { &mono } else { &text }) + CELL_EXTRA)
+                        .fold(0.0, f32::max);
+                    let first = columns.first() == Some(&c);
+                    header.max(cells + if first { indent } else { 0.0 }).ceil()
+                })
+                .collect();
+            *table.widths.borrow_mut() = Some((columns.clone(), scale, widths.clone()));
+            widths
+        });
+        let generation = table.generation;
         ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
         // As wide as its columns: wider than the panel, it scrolls.
         ui.set_min_width(widths.iter().sum());
@@ -1045,7 +1238,7 @@ impl App {
             self.explorer.current = Some(search_row(&search));
         } else {
             if let Some((id, modifiers)) = clicked {
-                self.click_run(&id, &order, modifiers);
+                self.click_run(&id, order, modifiers);
             }
             if let Some(id) = double {
                 self.load_settings(&id);
@@ -1061,8 +1254,8 @@ impl App {
     /// shown order, as row names that stay in view), one column per run.
     fn pivot_table(&mut self, ui: &mut Ui) {
         let p = self.palette.clone();
-        let rows = self.visible_rows();
-        let order: Vec<String> = rows.iter().map(|(id, _)| id.clone()).collect();
+        let table = self.table();
+        let (rows, order) = (&table.rows, &table.order);
         let columns: Vec<usize> = self.explorer.order.clone();
         self.explorer.sections.clear();
         let text = egui::FontId::proportional(crate::theme::typeface::BASE);
@@ -1237,6 +1430,7 @@ impl App {
                 "tolerance not reached"
             };
             let mut pairs = vec![
+                ("Airfoil".to_string(), self.projects.airfoil_name(&search.airfoil).to_string()),
                 ("Target".to_string(), o.tolerance_metric.name().to_string()),
                 ("Tolerance".to_string(), number(search.tolerance(), ".3e")),
                 ("Start count".to_string(), start),
@@ -1251,7 +1445,7 @@ impl App {
             if o.tolerance_metric == ToleranceMetric::RmsDeviation {
                 let rms = self.projects.search_result(search).and_then(|r| r.result.report.as_ref()).map(|r| r.rms_deviation);
                 if let Some(rms) = rms {
-                    pairs.insert(4, ("RMS deviation".to_string(), number(rms, ".3e")));
+                    pairs.insert(5, ("RMS deviation".to_string(), number(rms, ".3e")));
                 }
             }
             return widgets::readout_list(ui, &p, &format!("Tolerance search {}", search.number), &pairs);
@@ -1260,6 +1454,7 @@ impl App {
         let (c, o, r) = (&run.spline_config, &run.optimization_config, &run.result);
         let count = run.control_points_per_section();
         let mut pairs = vec![
+            ("Airfoil".to_string(), self.projects.airfoil_name(&run.airfoil).to_string()),
             ("Degree".to_string(), c.degree.to_string()),
             ("Control points".to_string(), count.to_string()),
             ("Continuity".to_string(), c.continuity_label()),
@@ -1289,6 +1484,8 @@ impl App {
     fn column_values(&self, column: usize) -> Vec<(Cell, String)> {
         let mut seen: BTreeMap<String, Cell> = BTreeMap::new();
         let searches = self.projects.searches().iter().filter_map(|s| self.search_cells(s));
+        let names = self.projects.airfoil_names();
+        let row = |r: &OptimizationRun| row(r, names.get(r.airfoil.as_str()).copied().unwrap_or(""));
         for cells in self.projects.runs().iter().map(row).chain(searches) {
             if self.explorer.filters.matches_except(&cells, Some(column))
                 || self.explorer.filters.excluded.get(&column).is_some_and(|e| e.contains(&cells[column].1))

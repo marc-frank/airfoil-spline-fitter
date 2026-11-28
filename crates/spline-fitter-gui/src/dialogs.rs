@@ -446,7 +446,7 @@ impl App {
             Dialog::Batch => {
                 let (mut source, mut target) = (self.batch_source.clone(), self.batch_target.clone());
                 let answer = open_dialog(ctx, "Batch convert", size::DIALOG_MIN_WIDTH, DIALOG_MARGIN, |ui| {
-                    muted(ui, &p, "Fit every .dat file in the source folder with the current settings\nand save each as .spline.dat in the target folder.");
+                    muted(ui, &p, "Fit every .dat file in the source folder with the current settings,\nsave each as .spline.dat in the target folder and keep the fits in the project.");
                     for (label, folder) in [("Source", &mut source), ("Target", &mut target)] {
                         form_row(ui, &p, label, true, "", |ui| {
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

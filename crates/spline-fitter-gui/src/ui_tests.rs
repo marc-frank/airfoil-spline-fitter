@@ -73,7 +73,7 @@ fn reference_session() {
         let app = h.state();
         assert!(app.status.starts_with("Completed (VarPro LM): 31 evaluations in "), "{}", app.status);
         assert!(app.status.ends_with(" | RMS error 8.978e-07 | max deviation 4.59e-06, RMS 8.98e-07, 49 control points"), "{}", app.status);
-        assert_eq!(app.projects.label(), "Unsaved project*\n1 optimization run");
+        assert_eq!(app.projects.label(), "Unsaved project*\n1 airfoil, 1 optimization run");
         assert_eq!(app.fit.as_ref().unwrap().section_counts(), vec![25, 25]);
     }
     h.state_mut().main_plot.comb_on = true;
@@ -638,14 +638,20 @@ fn dialogs_focus_their_first_control() {
 fn the_column_order_is_kept_by_name() {
     use crate::explorer::ExplorerState;
     let default = ExplorerState::default().column_names();
-    assert!(default.starts_with("Run,Optimizer,Goal,"), "{default}");
+    assert!(default.starts_with("Run,Airfoil,Optimizer,Goal,"), "{default}");
     assert_eq!(ExplorerState::with_column_names("").column_names(), default);
-    // Named columns first, unknown and repeated names skipped, the rest after.
+    // Named columns in their order, unknown and repeated names skipped.
     let state = ExplorerState::with_column_names("Max deviation,Control points,Gone,Max deviation,Run");
     let names = state.column_names();
-    assert!(names.starts_with("Max deviation,Control points,Run,Optimizer,Goal,"), "{names}");
+    let at = |name: &str| names.split(',').position(|n| n == name).unwrap();
+    assert!(at("Max deviation") < at("Control points") && at("Control points") < at("Run"), "{names}");
     assert_eq!(names.split(',').count(), default.split(',').count());
     assert_eq!(ExplorerState::with_column_names(&names).column_names(), names);
+    // An order stored before a column existed: the new column stands after
+    // the one it usually follows, wherever that was moved to.
+    let before = default.replace("Run,Airfoil,", "") + ",Run";
+    let names = ExplorerState::with_column_names(&before).column_names();
+    assert!(names.starts_with("Optimizer,Goal,") && names.ends_with(",Date,Run,Airfoil"), "{names}");
 }
 
 /// The run table pages with its scroll bar, and a click on a point of the
@@ -945,8 +951,8 @@ fn questions_are_dialogs_of_the_app() {
     h.state_mut().on_fit();
     finish(&mut h);
     assert!(h.state().projects.modified);
-    // A new airfoil would lose the unsaved run: asked first.
-    h.state_mut().new_naca_airfoil("0012", 41, true);
+    // A new project would lose the unsaved run: asked first.
+    h.state_mut().on_new_project();
     h.run_steps(3);
     assert!(matches!(h.state().dialog, Some(crate::dialogs::Dialog::Confirm(_))));
     shot(&mut h, "q_unsaved_runs");
@@ -956,14 +962,19 @@ fn questions_are_dialogs_of_the_app() {
     assert!(h.state().dialog.is_none());
     assert_eq!(h.state().status, "Cancelled: the project stays open");
     assert_eq!(h.state().airfoil.as_ref().unwrap().name, "NACA 2412");
-    // Don't save goes on with the new airfoil.
-    h.state_mut().new_naca_airfoil("0012", 41, true);
+    // Don't save goes on to the new project.
+    h.state_mut().on_new_project();
     h.run_steps(3);
     h.get_by_label("Don't save").click();
     h.run_steps(3);
     assert!(h.state().dialog.is_none());
-    assert_eq!(h.state().airfoil.as_ref().unwrap().name, "NACA 0012");
+    assert_eq!(h.state().status, "New project");
+    assert!(h.state().airfoil.is_none() && h.state().fit.is_none());
     assert!(h.state().projects.file.is_none(), "the old project is gone");
+    h.state_mut().new_naca_airfoil("0012", 41, true);
+    h.run_steps(3);
+    assert!(h.state().dialog.is_none());
+    assert_eq!(h.state().airfoil.as_ref().unwrap().name, "NACA 0012");
     // Deleting runs asks too; Delete deletes.
     h.state_mut().on_fit();
     finish(&mut h);
@@ -1246,9 +1257,10 @@ fn corners_are_joined_with_g0() {
     h.state_mut().settings.corners = true;
     h.state_mut().paste_text(&outline("flapped", &|x| -half(x) - 0.5 * (x - 0.75).max(0.0)));
     h.run_steps(3);
-    // The wedge's run is not saved.
-    h.get_by_label("Don't save").click();
-    h.run_steps(3);
+    // It joins the wedge in the project; nothing is asked.
+    assert!(h.state().dialog.is_none());
+    let names: Vec<&str> = h.state().projects.airfoils().iter().map(|a| a.data.name.as_str()).collect();
+    assert_eq!(names[names.len() - 2..], ["wedge", "flapped"]);
     assert_eq!(h.state().airfoil.as_ref().unwrap().name, "flapped");
     assert!(h.query_by_label("At the leading edge and x 0.750").is_some());
     shot(&mut h, "n_flap_corner");
@@ -1267,4 +1279,198 @@ fn corners_are_joined_with_g0() {
     assert!(run.spline_config.split_at_corners);
     assert_eq!(run.control_points_per_section(), 8);
     shot(&mut h, "n_flap_corner_fit");
+}
+
+/// A project holds several airfoils: opening another adds it, every run
+/// names its own, and the runs table and the sidebar's list switch between
+/// them.
+#[test]
+fn a_project_holds_several_airfoils() {
+    use crate::runs::COLUMNS;
+    use egui_kittest::kittest::Queryable;
+    let mut h = harness();
+    h.state_mut().new_naca_airfoil("2412", 41, true);
+    h.run_steps(2);
+    assert_eq!(h.state().projects.label(), "Unsaved project\n1 airfoil, 0 optimization runs");
+    h.state_mut().settings.control_points.value.set(10);
+    h.state_mut().on_fit();
+    finish(&mut h);
+    // A second airfoil joins the project, with nothing asked and no fit.
+    h.state_mut().new_naca_airfoil("0012", 41, true);
+    h.run_steps(3);
+    assert!(h.state().dialog.is_none());
+    {
+        let app = h.state();
+        assert_eq!(app.projects.label(), "Unsaved project*\n2 airfoils, 1 optimization run");
+        assert_eq!(app.airfoil.as_ref().unwrap().name, "NACA 0012");
+        assert!(app.fit.is_none() && app.projects.shown_run.is_none());
+        assert_eq!(app.projects.current, Some(app.projects.airfoils()[1].id.clone()));
+    }
+    h.state_mut().on_fit();
+    finish(&mut h);
+    h.state_mut().settings.control_points.value.set(12);
+    h.state_mut().on_fit();
+    finish(&mut h);
+    let ids: Vec<String> = h.state().projects.airfoils().iter().map(|a| a.id.clone()).collect();
+    {
+        let app = h.state();
+        // A run names the airfoil it fitted; the same settings on another
+        // airfoil are a run of their own.
+        let of: Vec<(usize, &str)> = app.projects.runs().iter().map(|r| (r.number, app.projects.airfoil_name(&r.airfoil))).collect();
+        assert_eq!(of, vec![(1, "NACA 2412"), (2, "NACA 0012"), (3, "NACA 0012")]);
+        let airfoil = COLUMNS.iter().position(|c| c.name == "Airfoil").unwrap();
+        let cells: Vec<String> = app.visible_rows().iter().map(|(_, cells)| cells[airfoil].1.clone()).collect();
+        assert_eq!(cells, vec!["NACA 2412", "NACA 0012", "NACA 0012"]);
+    }
+    shot(&mut h, "s_two_airfoils");
+    // The sidebar lists the airfoils once there are several.
+    assert!(h.query_all_by_label("NACA 0012").next().is_some());
+    // Selecting a run of the other airfoil shows that airfoil and the fit.
+    let first = h.state().projects.runs()[0].run_id.clone();
+    h.state_mut().select_run(&first);
+    h.run_steps(3);
+    {
+        let app = h.state();
+        assert_eq!(app.airfoil.as_ref().unwrap().name, "NACA 2412");
+        assert_eq!(app.projects.current.as_deref(), Some(ids[0].as_str()));
+        assert_eq!(app.projects.shown_run.as_deref(), Some(first.as_str()));
+        assert_eq!(app.fit.as_ref().unwrap().section_counts(), vec![10, 10]);
+    }
+    // The list shows an airfoil with its latest fit.
+    h.state_mut().switch_airfoil(&ids[1]);
+    h.run_steps(3);
+    assert_eq!(h.state().status, "Showing NACA 0012 (81 points), run 3");
+    assert_eq!(h.state().fit.as_ref().unwrap().section_counts(), vec![12, 12]);
+    // The same airfoil opened again is the one the project holds.
+    h.state_mut().new_naca_airfoil("2412", 41, true);
+    h.run_steps(3);
+    assert_eq!(h.state().projects.airfoils().len(), 2);
+    assert_eq!(h.state().projects.current.as_deref(), Some(ids[0].as_str()));
+    assert_eq!(h.state().projects.shown_run.as_deref(), Some(first.as_str()));
+    // A fit of these settings replaces the run of this airfoil only.
+    h.state_mut().on_fit();
+    finish(&mut h);
+    assert_eq!(h.state().projects.runs().len(), 4);
+
+    // Saved and opened again: the airfoils, and each run on its own.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("two.asfproj");
+    let mut project = h.state().projects.file.clone().unwrap();
+    spline_fitter::project::save_project(&mut project, &path).unwrap();
+    let mut again = harness();
+    assert!(again.state_mut().open_project(&path));
+    again.run_steps(3);
+    {
+        let app = again.state();
+        assert_eq!(app.status, "Loaded project with 2 airfoils and 4 runs, showing VarPro LM");
+        assert_eq!(app.projects.label(), "two.asfproj\n2 airfoils, 4 optimization runs");
+        // The airfoil of the last run shows, with that run.
+        assert_eq!(app.airfoil.as_ref().unwrap().name, "NACA 2412");
+        assert_eq!(app.projects.file.as_ref().unwrap().airfoil_runs(&ids[1]).count(), 2);
+    }
+
+    // Removing an airfoil takes its runs along; restoring brings both back.
+    h.state_mut().switch_airfoil(&ids[1]);
+    h.run_steps(3);
+    assert_eq!(h.query_all_by_label("NACA 0012").count(), 2, "its two runs in the table");
+    h.state_mut().confirm_remove_airfoil();
+    h.run_steps(3);
+    assert!(matches!(h.state().dialog, Some(crate::dialogs::Dialog::Confirm(_))), "it has runs: asked first");
+    shot(&mut h, "s_remove_airfoil");
+    h.get_by_label("Remove").click();
+    h.run_steps(3);
+    {
+        let app = h.state();
+        assert_eq!(app.status, "Removed NACA 0012 and its 2 runs from the project; Edit > Restore deleted runs brings them back");
+        assert_eq!((app.projects.airfoils().len(), app.projects.runs().len()), (1, 2));
+        assert_eq!(app.airfoil.as_ref().unwrap().name, "NACA 2412");
+    }
+    // The table shows the runs that are left, and the restored ones again.
+    assert!(h.query_all_by_label("NACA 0012").next().is_none());
+    h.state_mut().restore_deleted_runs();
+    h.run_steps(3);
+    assert_eq!(h.query_all_by_label("NACA 0012").count(), 2);
+    {
+        let app = h.state();
+        assert_eq!(app.status, "Restored NACA 0012 and its 2 runs");
+        assert_eq!(app.projects.airfoils().iter().map(|a| a.id.clone()).collect::<Vec<_>>(), ids);
+        assert_eq!(app.projects.runs().iter().map(|r| r.number).collect::<Vec<_>>(), vec![1, 2, 3, 4]);
+        assert_eq!(app.airfoil.as_ref().unwrap().name, "NACA 0012");
+    }
+    // An airfoil without runs goes without a question.
+    h.state_mut().new_naca_airfoil("4415", 41, true);
+    h.run_steps(3);
+    assert_eq!(h.state().projects.airfoils().len(), 3);
+    h.state_mut().confirm_remove_airfoil();
+    h.run_steps(3);
+    assert!(h.state().dialog.is_none());
+    assert_eq!(h.state().projects.airfoils().len(), 2);
+    assert_eq!(h.state().status, "Removed NACA 4415 from the project; Edit > Restore deleted runs brings them back");
+}
+
+/// A batch keeps every fit in the project, each on its own airfoil, beside
+/// the files it writes.
+#[test]
+fn a_batch_adds_its_fits_to_the_project() {
+    let dir = tempfile::tempdir().unwrap();
+    let (source, target) = (dir.path().join("in"), dir.path().join("out"));
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::create_dir_all(&target).unwrap();
+    for code in ["0012", "2412", "4415"] {
+        let points = spline_fitter::bspline_varpro::airfoil::Naca4::new(code, true).unwrap().points(41);
+        let lines: String = points.iter().map(|p| format!("{:.6} {:.6}\n", p.x, p.y)).collect();
+        std::fs::write(source.join(format!("naca{code}.dat")), format!("NACA {code}\n{lines}")).unwrap();
+    }
+    let mut h = harness();
+    h.state_mut().batch_source = source.to_string_lossy().into_owned();
+    h.state_mut().batch_target = target.to_string_lossy().into_owned();
+    h.state_mut().settings.control_points.value.set(10);
+    h.run_steps(2);
+    h.state_mut().start_batch();
+    finish(&mut h);
+    let ids: Vec<String> = h.state().projects.airfoils().iter().map(|a| a.id.clone()).collect();
+    {
+        let app = h.state();
+        assert!(app.status.starts_with("Batch complete: 3 files in "), "{}", app.status);
+        assert_eq!(std::fs::read_dir(&target).unwrap().count(), 3);
+        assert_eq!(app.projects.label(), "Unsaved project*\n3 airfoils, 3 optimization runs");
+        let of: Vec<&str> = app.projects.runs().iter().map(|r| app.projects.airfoil_name(&r.airfoil)).collect();
+        assert_eq!(of, vec!["NACA 0012", "NACA 2412", "NACA 4415"]);
+        assert!(app.projects.runs().iter().all(|r| !r.loss_history.is_empty() && r.result.report.is_some()));
+        // No airfoil was on screen: the last one fitted shows, with its fit.
+        assert_eq!(app.airfoil.as_ref().unwrap().name, "NACA 4415");
+        assert_eq!(app.projects.shown_run.as_deref(), Some(app.projects.runs()[2].run_id.as_str()));
+        assert_eq!(app.airfoil_source(), source.join("naca4415.dat").to_string_lossy());
+    }
+    // Again with these settings: the files are there, so nothing is fitted
+    // or added.
+    h.state_mut().start_batch();
+    finish(&mut h);
+    assert!(h.state().status.contains("Skipped 3 already in the target folder"), "{}", h.state().status);
+    assert_eq!(h.state().projects.runs().len(), 3);
+    // Other settings fit the same airfoils again: runs of the airfoils the
+    // project holds, and the airfoil on screen stays.
+    h.state_mut().switch_airfoil(&ids[0]);
+    {
+        let app = h.state_mut();
+        app.settings.tolerance_goal = true;
+        app.settings.auto_tolerance = false;
+        app.settings.tolerance = 1e-4;
+    }
+    h.run_steps(2);
+    h.state_mut().start_batch();
+    finish(&mut h);
+    let app = h.state();
+    assert!(app.status.starts_with("Batch complete: 3 files in "), "{}", app.status);
+    assert_eq!(app.projects.airfoils().iter().map(|a| a.id.clone()).collect::<Vec<_>>(), ids);
+    assert_eq!(app.projects.searches().iter().map(|s| s.airfoil.clone()).collect::<Vec<_>>(), ids);
+    for s in app.projects.searches() {
+        assert!(app.projects.runs().iter().filter(|r| r.search.as_deref() == Some(s.search_id.as_str())).all(|r| r.airfoil == s.airfoil));
+    }
+    assert_eq!(app.airfoil.as_ref().unwrap().name, "NACA 0012");
+    assert_eq!(app.projects.current.as_deref(), Some(ids[0].as_str()));
+    // It shows the fit the batch made of it.
+    let shown = app.projects.shown().unwrap();
+    assert_eq!((shown.airfoil.as_str(), shown.search.as_deref()), (ids[0].as_str(), Some(app.projects.searches()[0].search_id.as_str())));
+    assert_eq!(app.fit.as_ref(), Some(&shown.result));
 }

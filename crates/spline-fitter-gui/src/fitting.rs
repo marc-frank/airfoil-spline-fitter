@@ -48,6 +48,8 @@ pub struct Batch {
     skipped: usize,
     /// Files whose mistakes the reader removed.
     corrected: usize,
+    /// The airfoil of the latest fit kept in the project.
+    kept: Option<String>,
     started: Instant,
     /// The browser's batch: the source files read first and the names in
     /// the target folder, which it writes into as each fit finishes.
@@ -136,7 +138,7 @@ impl App {
                 Ok(a) => a,
                 Err(e) => return self.set_status(e.0),
             };
-            self.airfoil = Some(airfoil.clone());
+            self.set_current_split(airfoil.clone());
         }
         if self.settings.sweeping() {
             return self.start_sweep(config, opt);
@@ -233,15 +235,18 @@ impl App {
         }
     }
 
-    /// Stores a tolerance search: a folder of its fits, each a fixed-count
-    /// run of its own count (as that run made alone) with the loss history
-    /// of its own fit, and the search's settings and outcome. A search of the
-    /// same settings is replaced, its number kept; a cancelled search does
-    /// not replace a finished one (then false).
-    fn add_search(&mut self, job: &FitJob, outcome: &Outcome, history: &[IterationRecord], replot: bool) -> bool {
-        let (Some(found), Some(airfoil)) = (outcome.raw.search.clone(), self.airfoil.clone()) else { return false };
-        let file = self.projects.file.get_or_insert_with(|| ProjectFile::new(airfoil));
-        let existing = file.searches.iter().position(|s| s.spline_config == job.config && s.optimization_config == job.options);
+    /// Stores a tolerance search of an airfoil of the project: a folder of
+    /// its fits, each a fixed-count run of its own count (as that run made
+    /// alone) with the loss history of its own fit, and the search's
+    /// settings and outcome. That airfoil's search of the same settings is
+    /// replaced, its number kept; a cancelled search does not replace a
+    /// finished one (then false).
+    fn add_search(&mut self, airfoil: &str, job: &FitJob, outcome: &Outcome, history: &[IterationRecord], replot: bool) -> bool {
+        let (Some(found), Some(file)) = (outcome.raw.search.clone(), self.projects.file.as_mut()) else { return false };
+        let existing = file
+            .searches
+            .iter()
+            .position(|s| s.airfoil == airfoil && s.spline_config == job.config && s.optimization_config == job.options);
         if outcome.cancelled && existing.is_some_and(|i| !file.searches[i].cancelled) {
             return false;
         }
@@ -281,7 +286,7 @@ impl App {
             let mut config = job.config.clone();
             config.num_control_points = fit.section_control_points.iter().map(Vec::len).max().unwrap_or(0);
             let opt = OptimizationConfig { tolerance: None, grow_control_points: false, ..job.options.clone() };
-            let mut run = OptimizationRun::new(config, opt, fit, own);
+            let mut run = OptimizationRun::new(airfoil, config, opt, fit, own);
             run.search = Some(search_id.clone());
             if last {
                 result_run = run.run_id.clone();
@@ -293,6 +298,7 @@ impl App {
         file.searches.push(ToleranceSearch {
             search_id,
             number,
+            airfoil: airfoil.to_string(),
             timestamp: spline_fitter::project::now_iso(),
             spline_config: job.config.clone(),
             optimization_config: job.options.clone(),
@@ -306,11 +312,13 @@ impl App {
             elapsed_seconds: found.seconds,
             cancelled: outcome.cancelled,
         });
-        self.projects.shown_run = Some(result_run);
+        // The fit of the airfoil on screen is the one shown.
+        if self.projects.of_current(airfoil) {
+            self.projects.shown_run = Some(result_run);
+        }
         self.projects.modified = true;
-        let ids: std::collections::BTreeSet<String> = self.projects.runs().iter().map(|r| r.run_id.clone()).collect();
-        let rows: std::collections::BTreeSet<String> = self.projects.searches().iter().map(|s| crate::explorer::search_row(&s.search_id)).collect();
-        self.projects.selected.retain(|id| ids.contains(id) || rows.contains(id));
+        self.projects.touch();
+        self.retain_selection();
         if replot {
             self.explorer.forget_points();
             self.refresh_comparison();
@@ -333,10 +341,12 @@ impl App {
             Ok(outcome) => {
                 let history: Vec<IterationRecord> =
                     log.history().map(|(i, t, e)| IterationRecord { iteration: i, error: e, elapsed_seconds: t }).collect();
+                // A fit is of the airfoil on screen.
+                let airfoil = self.projects.current.clone().unwrap_or_default();
                 let kept = if outcome.raw.search.is_some() {
-                    !self.add_search(job, &outcome, &history, true)
+                    !self.add_search(&airfoil, job, &outcome, &history, true)
                 } else {
-                    !self.add_run(&job.config, &job.options, outcome.fit.clone(), history, true)
+                    !self.add_run(&airfoil, &job.config, &job.options, outcome.fit.clone(), history, true)
                 };
                 if kept {
                     // Not added, so not replotted: the runs plot may show the search's refits.
@@ -503,10 +513,11 @@ impl App {
             Ok(outcome) => {
                 let history: Vec<IterationRecord> =
                     log.history().map(|(i, t, e)| IterationRecord { iteration: i, error: e, elapsed_seconds: t }).collect();
+                let airfoil = self.projects.current.clone().unwrap_or_default();
                 if outcome.raw.search.is_some() {
-                    self.add_search(job, &outcome, &history, false);
+                    self.add_search(&airfoil, job, &outcome, &history, false);
                 } else {
-                    self.add_run(&job.config, &job.options, outcome.fit.clone(), history, false);
+                    self.add_run(&airfoil, &job.config, &job.options, outcome.fit.clone(), history, false);
                 }
                 if outcome.cancelled {
                     sweep.cancelled = true;
@@ -543,9 +554,9 @@ impl App {
         self.comparison.marked = best.map(|(c, f)| vec![[x_of(c), f.rms_deviation()]]).unwrap_or_default();
     }
 
-    /// `(axis value, comparison error)` of the project runs that match the
-    /// configuration in everything but the swept settings, sorted; of runs
-    /// at the same swept values the latest counts.
+    /// `(axis value, comparison error)` of the runs of the airfoil on screen
+    /// that match the configuration in everything but the swept settings,
+    /// sorted; of runs at the same swept values the latest counts.
     fn sweep_series(&self, base: &SplineConfig, opt: &OptimizationConfig, swept: &[Axis], axis: Axis) -> Vec<[f64; 2]> {
         let fixed = |c: &SplineConfig, o: &OptimizationConfig, a: Axis| match a {
             Axis::ControlPoints => c.num_control_points as f64,
@@ -565,7 +576,7 @@ impl App {
         } else {
             self.projects.runs().to_vec()
         };
-        for run in &candidates {
+        for run in candidates.iter().filter(|r| self.projects.of_current(&r.airfoil)) {
             let (c, o) = (&run.spline_config, &run.optimization_config);
             // Along the sections axis the junction count changes: compare the
             // continuity setting instead of the junctions themselves.
@@ -741,6 +752,7 @@ impl App {
             failed: 0,
             skipped: 0,
             corrected: 0,
+            kept: None,
             started: Instant::now(),
             read,
         };
@@ -799,12 +811,27 @@ impl App {
         let total = batch.files.len();
         let idx = batch.index;
         let file = batch.files[idx - 1].clone();
-        self.loss.set_data(job.live.history());
+        let log = job.live.log();
+        self.loss.set_data(log.history().collect());
         let item = batch.item.take().expect("a batch job has its item");
         let result = job.join().and_then(|outcome| {
             if outcome.cancelled {
                 return Ok(None);
             }
+            // Every finished fit is kept in the project, on its airfoil
+            // (also one that missed its tolerance, which is not written).
+            let history: Vec<IterationRecord> =
+                log.history().map(|(i, t, e)| IterationRecord { iteration: i, error: e, elapsed_seconds: t }).collect();
+            let id = self.projects.file.get_or_insert_with(ProjectFile::default).add_airfoil(item.airfoil.clone());
+            if batch.read.is_none() {
+                self.projects.sources.insert(id.clone(), batch.source.join(&file).to_string_lossy().into_owned());
+            }
+            if outcome.raw.search.is_some() {
+                self.add_search(&id, job, &outcome, &history, false);
+            } else {
+                self.add_run(&id, &job.config, &job.options, outcome.fit.clone(), history, false);
+            }
+            batch.kept = Some(id);
             if let Some(search) = outcome.raw.search.as_ref().filter(|s| !s.met) {
                 return Err(spline_fitter::Error::new(search.message.clone()));
             }
@@ -861,10 +888,27 @@ impl App {
             status += &format!(" | Corrected mistakes in {} source files", batch.corrected);
         }
         self.set_status(status);
-        let coords = self.airfoil.as_ref().map(|a| a.coordinates.clone()).unwrap_or_default();
-        self.main_plot.set_data(&coords);
-        if self.airfoil.is_some() {
-            self.show_current_fit();
+        // The runs it added show in the runs plot.
+        self.explorer.forget_points();
+        self.refresh_comparison();
+        match (&self.airfoil, batch.kept) {
+            // The airfoil that was on screen is back, with its fit (the
+            // batch's, when the batch fitted it).
+            (Some(a), _) => {
+                let coords = a.coordinates.clone();
+                self.main_plot.set_data(&coords);
+                match self.projects.shown().cloned() {
+                    Some(run) => self.show_run(&run),
+                    None => self.show_current_fit(),
+                }
+            }
+            // None was: the last one fitted shows.
+            (None, Some(id)) => {
+                if let Some(run) = self.projects.last_run_of(&id).cloned() {
+                    self.show_run(&run);
+                }
+            }
+            (None, None) => self.main_plot.set_data(&[]),
         }
     }
 }

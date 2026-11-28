@@ -188,10 +188,31 @@ impl App {
                     Some(a) => (a.display_name().to_string(), format!("{} points, {} decimals", a.coordinates.len(), a.precision)),
                     None => ("No airfoil loaded".to_string(), "Open a .dat file or a project".to_string()),
                 };
-                let tip = crate::store::shown_path(&self.airfoil_path).to_string();
+                let source = self.airfoil_source();
+                let tip = crate::store::shown_path(&source).to_string();
+                // A project of several airfoils lists them, to show another.
+                let ids: Vec<String> = self.projects.airfoils().iter().map(|a| a.id.clone()).collect();
+                let several = ids.len() > 1;
+                let mut chosen = None;
                 ui.vertical(|ui| {
                     ui.set_width(ui.available_width() - 80.0);
                     ui.spacing_mut().item_spacing.y = 0.0;
+                    if several {
+                        let names: Vec<&str> = self.projects.airfoils().iter().map(|a| a.data.display_name()).collect();
+                        let shown = ids.iter().position(|id| self.projects.of_current(id)).unwrap_or(0);
+                        let mut at = shown;
+                        let width = ui.available_width();
+                        ui.add_enabled_ui(!fitting, |ui| widgets::combo(ui, &p, "airfoil", &mut at, &names, width, "The airfoils of the project"));
+                        if at != shown {
+                            chosen = Some(ids[at].clone());
+                        }
+                        ui.add_space(size::TIGHT);
+                        let m = muted(ui, &p, detail);
+                        if !tip.is_empty() {
+                            m.on_hover_text(&tip);
+                        }
+                        return;
+                    }
                     let r = ui.add(
                         egui::Label::new(RichText::new(name).font(crate::fonts::semibold_id(typeface::BASE)).color(p.text)).truncate(),
                     );
@@ -201,11 +222,15 @@ impl App {
                         m.on_hover_text(&tip);
                     }
                 });
+                if let Some(id) = chosen {
+                    self.switch_airfoil(&id);
+                }
                 // Centered on the two lines of text as Qt centers it: their
-                // 16 and 15 px, the rest halved and rounded down.
+                // 16 and 15 px, the rest halved and rounded down; beside the
+                // list of airfoils, level with it.
                 let row = ui.max_rect();
                 let width = widgets::push_button_width(ui, "Open...");
-                let drop = ((16.0 + 15.0 - size::CONTROL_HEIGHT) / 2.0_f32).floor();
+                let drop = if several { 0.0 } else { ((16.0 + 15.0 - size::CONTROL_HEIGHT) / 2.0_f32).floor() };
                 let rect = egui::Rect::from_min_size(
                     egui::pos2(row.right() - width, row.top() + drop),
                     egui::vec2(width, size::CONTROL_HEIGHT),

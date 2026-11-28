@@ -50,9 +50,9 @@ pub struct App {
     pub quiet: bool,
     pub baseline: AdvancedBaseline,
     pub advanced_open: bool,
+    /// The airfoil on screen: the project's `current` one, cut as it was
+    /// last fitted.
     pub airfoil: Option<AirfoilData>,
-    /// Path of the airfoil file (empty for pasted or created airfoils).
-    pub airfoil_path: String,
     pub fit: Option<FitResult>,
     pub status: String,
     pub running: Option<Running>,
@@ -131,7 +131,6 @@ impl App {
             quiet: false,
             advanced_open: false,
             airfoil: None,
-            airfoil_path: String::new(),
             fit: None,
             status: "Ready".into(),
             running: None,
@@ -386,6 +385,9 @@ impl App {
         if pressed(ctrl_shift(Key::O)) {
             self.on_open_project();
         }
+        if pressed(ctrl_shift(Key::N)) && self.projects.file.is_some() {
+            self.on_new_project();
+        }
         if pressed(ctrl_shift(Key::E)) {
             self.set_explorer_visible(!self.explorer_visible);
         }
@@ -536,6 +538,7 @@ impl App {
                     ("Save fitted airfoil (.dat)...", ""),
                     ("Save spline (.spline.dat)...", ""),
                     ("Export CAD (STEP, IGES, DXF)...", "Ctrl+E"),
+                    ("Ne&w project", "Ctrl+Shift+N"),
                     ("Open &project...", "Ctrl+Shift+O"),
                     ("&Save project", "Ctrl+S"),
                     ("Save project &as...", ""),
@@ -587,26 +590,35 @@ impl App {
                     self.on_export_cad();
                 }
                 menu_separator(ui);
-                if m.item(ui, &p, entries[6], !fitting, None) {
+                if m.item(ui, &p, entries[6], !fitting && has_project, None) {
+                    self.on_new_project();
+                }
+                if m.item(ui, &p, entries[7], !fitting, None) {
                     self.on_open_project();
                 }
-                if m.item(ui, &p, entries[7], has_project, None) {
+                if m.item(ui, &p, entries[8], has_project, None) {
                     self.on_save_project();
                 }
-                if m.item(ui, &p, entries[8], has_project, None) {
+                if m.item(ui, &p, entries[9], has_project, None) {
                     self.on_save_project_as();
                 }
                 menu_separator(ui);
-                if m.item(ui, &p, entries[9], !fitting && keeps_files(), None) {
+                if m.item(ui, &p, entries[10], !fitting && keeps_files(), None) {
                     self.dialog = Some(Dialog::batch());
                 }
                 menu_separator(ui);
-                if m.item(ui, &p, entries[10], !WEB, None) {
+                if m.item(ui, &p, entries[11], !WEB, None) {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             }));
             titles.push(bar_menu(ui, "&Edit", |ui| {
-                let entries = [("&Undo", "Ctrl+Z"), ("&Redo", "Ctrl+Y"), ("Restore &deleted runs", ""), ("&Paste airfoil", "Ctrl+V")];
+                let entries = [
+                    ("&Undo", "Ctrl+Z"),
+                    ("&Redo", "Ctrl+Y"),
+                    ("Restore &deleted runs", ""),
+                    ("&Paste airfoil", "Ctrl+V"),
+                    ("Re&move airfoil from project", ""),
+                ];
                 let m = MenuLayout::of(ui, &entries, false);
                 if m.item(ui, &p, entries[0], !fitting && self.history.can_undo(), None) {
                     self.undo();
@@ -620,6 +632,9 @@ impl App {
                 menu_separator(ui);
                 if m.item(ui, &p, entries[3], !fitting, None) {
                     self.on_paste();
+                }
+                if m.item(ui, &p, entries[4], !fitting && self.projects.current.is_some(), None) {
+                    self.confirm_remove_airfoil();
                 }
             }));
             titles.push(bar_menu(ui, "&View", |ui| {

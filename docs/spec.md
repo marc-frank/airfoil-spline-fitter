@@ -1169,6 +1169,20 @@ The two blocks above show the keys, their order and example values; they are not
 
 The file is standard JSON `[D2]`. A non-finite number is written as one of the strings `"NaN"`, `"Infinity"`, `"-Infinity"` (the encoder runs with `allow_nan=False` after replacing such values, so a bare token can never be written). They occur in practice: `report.leading_edge_radius` is infinite for a straight leading edge (13.2). On loading, a string equal to one of the three becomes the float wherever a number is read: the `result` fields, every value of `report` (at any depth), `loss_history`, `tolerance`, `smoothing_weight`, `custom_parameters`, the control points and the airfoil coordinates. For files of earlier versions the reader also accepts the bare tokens `NaN`, `Infinity` and `-Infinity` (Python's `json` reads them by default).
 
+[Rust: format 2.0.0, written on every save. A project holds several airfoils (19.16):
+
+```json
+{
+  "format_version": "2.0.0",
+  "metadata": {"created": "<ISO>", "modified": "<ISO>", "app_version": "0.1.0", "platform": "<system>"},
+  "airfoils": [{"airfoil_id": "<uuid4>", "name": "...", "filename": "...", "precision": d, "coordinates": [[x, y], ...], "junction_indices": [..]}, ...],
+  "optimization_runs": [run, ...],
+  "tolerance_searches": [search, ...]
+}
+```
+
+An airfoil cut at its corners also has `split_at_corners`, `layout_sections`, `section_points`, `corner_junctions` and `layout_junctions`. A run has `"airfoil": "<airfoil_id>"` after `number`, a search after its `number`; a run that names an airfoil the project does not hold is an error (`Run i: its airfoil is not in the project.`), as are two airfoils with one id (`Airfoil i: another airfoil has its id.`); a search has the airfoil of its runs. The copies of format 1 are not written: `airfoil.sections`, `airfoil.num_sections`, `result.degree`, `metadata.format_version`. `tolerance_searches` is always written. The loss history is three lists of one length, `"loss_history": {"iter": [...], "error": [...], "time": [...]}`. The layout is Python's, except that a list holding no list or object (a point, a knot vector, a list of the loss history) is written on one line, its items separated by `, `. A project of format 1 of 104 MB (1171 runs) is 44 MB in format 2. Format 1 is read as before: its one airfoil gets a new id, which every run and search then names.]
+
 Redundant fields `[D17]`. The format stores some facts more than once; one copy is authoritative and the others are written for readers of format 1.0.0 and ignored on loading, so two copies can never disagree inside the application:
 
 | Fact | Authoritative | Written, ignored on loading |
@@ -1197,7 +1211,7 @@ Redundant fields `[D17]`. The format stores some facts more than once; one copy 
 ### 15.4 Loading (`load_project(path)`)
 
 1. Read as `utf-8-sig`. Invalid JSON or UTF-8: `ProjectFormatError("The file is not a project file: {error}.")` (`ProjectFormatError` subclasses `ValueError`). A non-object: `ProjectFormatError("The file is not a project file: it holds no project.")`.
-2. `version = str(data.get("format_version", "1.0.0"))`; `int(version.split(".")[0])` fails: `ValueError("Project file version {version!r} is not valid.")`; major `> 1`: `ValueError("Project file version {version} is not supported. Please update the application.")`. [Rust: the format is `1.1.0`, written on every save. In files before 1.1, tolerance runs were fitted with smoothing `1e-7` whatever their `smoothing_weight` says, so loading sets it to `1e-7` for them; from 1.1 a tolerance run's `smoothing_weight` is the weight it was fitted with. Readers of 1.0.0 accept 1.1.0 (same major).] [Rust 1.2.0: `tolerance_searches` (written only when there are searches) holds the search records, and a run of a search has `search` (its `search_id`). A search without runs is dropped on loading; a run naming a missing search becomes a run of its own.]
+2. `version = str(data.get("format_version", "1.0.0"))`; `int(version.split(".")[0])` fails: `ValueError("Project file version {version!r} is not valid.")`; major `> 1`: `ValueError("Project file version {version} is not supported. Please update the application.")`. [Rust 2.0.0: major `> 2`; major 1 reads `airfoil`, major 2 `airfoils` (15.1).] [Rust: the format is `1.1.0`, written on every save. In files before 1.1, tolerance runs were fitted with smoothing `1e-7` whatever their `smoothing_weight` says, so loading sets it to `1e-7` for them; from 1.1 a tolerance run's `smoothing_weight` is the weight it was fitted with. Readers of 1.0.0 accept 1.1.0 (same major).] [Rust 1.2.0: `tolerance_searches` (written only when there are searches) holds the search records, and a run of a search has `search` (its `search_id`). A search without runs is dropped on loading; a run naming a missing search becomes a run of its own.]
 3. `runs = list(data.get("optimization_runs", []))` (errors reported as "Run list"); decode each (where = `"Run {i}"`, 1-based); `number_runs(runs)`; decode `metadata` ("Metadata") and `airfoil` ("Airfoil").
 4. Errors inside a part: a missing key -> `ProjectFormatError("{where}: the {key!r} field is missing.")`; `TypeError`, `ValueError`, `IndexError`, `AttributeError` -> `ProjectFormatError("{where}: {error}.")`; nested `ProjectFormatError` propagates unchanged. Parts of a run: `"Run i control points"`, `"Run i spline settings"`, `"Run i fit settings"`, `"Run i result"`, `"Run i loss history"`, then `"Run i"` for the run fields.
 
@@ -1744,6 +1758,19 @@ Shape plot: axis labels `Chord (%)` and `Percent of the chord`; minimum height 2
 
 State: project, path, `modified`, selected runs, a stack of deletions, `last_number` (highest number given), comparison points.
 
+[Rust: a project holds several airfoils, and one of them is on screen (`current`). State also: the current airfoil's id and, for the session, the file each airfoil was read from.
+
+- Opening, pasting or creating an airfoil (19.11) does not ask about unsaved runs and does not reset the project: the airfoil is added to it (a project is made when there is none) and shown without a fit. An airfoil the project holds already (the same coordinates, name, file name and decimals, however it is split) is not added again: it is shown, with its latest run. Adding an airfoil does not set `modified`.
+- `File > New project` (Ctrl+Shift+N, enabled with a project and no running fit): `confirm_discard()` (status `Cancelled: the project stays open`), then no airfoil, no fit and `reset()`; status `New project`.
+- The Data section (19.5) shows, for a project of more than one airfoil, a combo box of the airfoils' names (tooltip `The airfoils of the project`, disabled while fitting) in place of the name label, the `Open...` button level with it. Choosing one shows that airfoil with its latest run, status `Showing {name} ({N} points), run {number}` or `..., not fitted yet`. The sidebar's settings stay.
+- Every run and search names its airfoil. Loading a run into the plots (19.16.7), also by selecting it, first shows its airfoil when another is on screen. A run or search replaces one of the same settings (19.16.4) only of the same airfoil. A sweep's comparison series (19.13) are the runs of the airfoil on screen.
+- `Edit > Remove airfoil from project` (enabled with an airfoil and no running fit) removes the airfoil on screen with its runs and searches, as one deletion that `Restore deleted runs` brings back (status `Restored {name} and its {k} run{s}`, the airfoil on screen again). With runs it asks first: title `Remove airfoil`, text `Remove {name} and its {k} run{s} from the project? Edit > Restore deleted runs brings them back.`, buttons `Remove` (default) and `Cancel`. Then the airfoil that took its place in the list shows (else the one before, else none); status `Removed {name}[ and its run| and its {k} runs] from the project; Edit > Restore deleted runs brings them back`. `modified` is set when runs went or came back.
+- Opening a project shows the airfoil of its last run with that run, else its first airfoil; status `Loaded project with {a} airfoils and {k} run{s}, showing {optimizer}` (`{a} airfoils and ` only when `a != 1`). The pre-check splits every airfoil.
+- `Save project as` proposes `{file base of the airfoil}.asfproj` for a project of one airfoil, else `project.asfproj`.
+- The label (19.16.5) is `"{name}{'*' if modified}\n{a} airfoil{s}, {k} optimization run{s}{searches}"`. A project exists from the first airfoil on, so with an airfoil and no run it reads `Unsaved project\n1 airfoil, 0 optimization runs`.
+- The run table (19.17.1) has a second column `Airfoil` (the airfoil's name, tooltip `The airfoil the run fitted`), and the details of a run or search begin with `Airfoil`. The table and the runs plot show the runs of every airfoil; the column's filter narrows them to one. A column order stored without a column places it after the column it usually follows.
+- The rows of the run table and its column widths are made when the project, the filters, the sorting or the open searches change, not on every frame (a project of 12 000 runs draws in under 10 ms).]
+
 #### 19.16.1 Reset and unsaved changes
 
 `reset()` (on a new airfoil): clear project, path, modified, deletions and `last_number`; label and title (19.16.5); disable Save project actions; empty the explorer; refresh the comparison plot; update run buttons.
@@ -1874,6 +1901,8 @@ Behaviour: `excluded` starts as the column's current exclusions. While a conditi
 ### 19.18 Batch conversion (dialog and run)
 
 Dialog `Batch convert` (minimum width 480, form): a muted note `Fit every .dat file in the source folder with the current settings` / `and save each as .spline.dat in the target folder.`; rows `Source` and `Target`: a muted, wrapping path label (the folder chosen earlier in this session, else `Not chosen`) and `Choose...` (directory dialog titled `Source folder` / `Target folder`, starting at home). A button box (19.21 item 13) with `Convert` (accept role, default) and `Close` (reject role). Convert closes the dialog and runs:
+
+[Rust: the note reads `Fit every .dat file in the source folder with the current settings,` / `save each as .spline.dat in the target folder and keep the fits in the project.` Every fit that finishes (not a cancelled one) is kept in the project as a run or a tolerance search of its airfoil, which is added to the project when it does not hold it (19.16); also a fit that fails step 8's checks (a missed tolerance, no convergence), which writes no file. Files skipped because their output exists are not fitted and add nothing. The explorer follows as the fits arrive; the runs plot is redrawn at the end. Afterwards the airfoil that was on screen shows again, with the batch's fit of it if there is one; with none on screen before, the last airfoil fitted shows.]
 
 1. Missing or non-existent source: `Choose a source folder first.`; target: `Choose a target folder first.`.
 2. Files: names in the source folder (not recursive), sorted by name (Python string order), ending in `.dat` (case-insensitive) and not containing `.spline.` (case-insensitive). None: `No .dat files in the source folder.`.
