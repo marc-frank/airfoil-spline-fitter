@@ -119,6 +119,26 @@ fn strip_zeros(text: &str) -> &str {
 /// `1157348994281339.25` is `1157348994281339.2` in Python.
 fn tie_to_even(v: f64, digits: String, exponent: i32) -> String {
     let n = digits.len();
+    // Halfway between two n-digit numbers, v is half a unit of their last
+    // digit from the one that reads back as it, so that half unit is at most
+    // half the gap between doubles (2^-52 of v at most): n is 16 or 17.
+    if n < 16 {
+        return digits;
+    }
+    // Halfway, the digits after the nth are a 5 and zeros: looked for in a
+    // few digits first, as nearly no number is.
+    const LOOK: usize = 8;
+    let (_, some, _) = decompose(&format!("{v:.*e}", n + LOOK - 1));
+    let after = &some.as_bytes()[n..];
+    if after[0] != b'5' || after[1..].iter().any(|&d| d != b'0') {
+        return digits;
+    }
+    exact_tie_to_even(v, digits, exponent)
+}
+
+/// [`tie_to_even`] from the exact value of `v`, for any `v`.
+fn exact_tie_to_even(v: f64, digits: String, exponent: i32) -> String {
+    let n = digits.len();
     // The exact value of v, digit by digit (a double has at most 767).
     let (_, exact, exact_exponent) = decompose(&format!("{v:.800e}"));
     let tail = &exact.as_bytes()[n..];
@@ -198,6 +218,35 @@ mod tests {
 
     #[test]
     fn halfway_digits_round_to_even_as_in_python() {
+        // The quick ways out of the tie rule leave no number out: as from
+        // the exact value, for doubles of every size and for ties.
+        let mut state = 0x9E3779B97F4A7C15u64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let mut ties = 0;
+        for i in 0..200_000 {
+            let bits = next();
+            let v = match i % 4 {
+                0 => f64::from_bits(bits),
+                // Sixteen digits before the point and a quarter or a half after.
+                1 => (1e15 + (bits % 8_000_000_000_000_000) as f64) + [0.25, 0.5, 0.75][(bits >> 60) as usize % 3],
+                // Seventeen digits: every other integer is a double.
+                2 => 1e16 + (bits % 80_000_000_000_000_000) as f64,
+                _ => (bits % 1_000_000_000) as f64 / 1e6,
+            };
+            if !v.is_finite() {
+                continue;
+            }
+            let (_, digits, exponent) = decompose(&format!("{v:e}"));
+            let exact = exact_tie_to_even(v, digits.clone(), exponent);
+            ties += usize::from(exact != digits);
+            assert_eq!(tie_to_even(v, digits, exponent), exact, "{v:e}");
+        }
+        assert!(ties > 1000, "{ties} ties met");
         // Exactly 1157348994281339.25: .2 and .3 are equally close.
         assert_eq!(shortest(1157348994281339.0 + 0.25), "1157348994281339.2");
         assert_eq!(shortest(-(1157348994281339.0 + 0.25)), "-1157348994281339.2");
